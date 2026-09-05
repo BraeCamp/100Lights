@@ -6,11 +6,13 @@ import { useRegisterCommands } from '@/lib/commands'
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Plus, Square, Circle, ChevronRight, X } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip } from '@/lib/daw-state'
-import type { DawTrack, DawClip, LaunchQuantization, CrossfaderSide, Scene } from '@/lib/daw-types'
+import type { DawTrack, DawClip, MidiClip, LaunchQuantization, CrossfaderSide, Scene } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip } from '@/lib/daw-types'
 import { sessionCaptureToClips } from '@/lib/daw-session'
 import { LAUNCH_MODES, LAUNCH_MODE_LABEL, LAUNCH_MODE_HELP, modeOf } from '@/lib/launch'
 import { FOLLOW_ACTIONS, FOLLOW_LABEL, DEFAULT_FOLLOW, followOf, isIdle, describeFollow, type FollowSettings, type FollowAction } from '@/lib/follow-actions'
+import { moveSpot, clipAt, captureScene, type Spot, type GridMove } from '@/lib/session-keys'
+import { resolveKey } from '@/lib/keymap'
 import { apHeader, apTitle, apControl, apSelect, apDivider, apReadout } from './apollo-chrome'
 import { libraryGetAll } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
@@ -210,11 +212,13 @@ interface ClipSlotProps {
   onDragStart: (e: React.DragEvent, trackId: string, sceneIndex: number) => void
   onDrop: (e: React.DragEvent, destTrackId: string, destSceneIndex: number) => void
   // (follow actions moved to the engine — lib/follow-actions.ts)
+  /** Where the keyboard is pointing (lib/session-keys.ts). */
+  highlighted?: boolean
   /** The slot last pressed or right-clicked — what the ⌘K launch commands act on. */
   onTouch: (trackId: string, sceneIndex: number) => void
 }
 
-function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, onDragStart, onDrop, onTouch }: ClipSlotProps) {
+function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, onDragStart, onDrop, onTouch, highlighted }: ClipSlotProps) {
   const { dispatch, engine, project } = useDaw()
   const [displayState, setDisplayState] = useState<SlotDisplayState>('idle')
   const [progress, setProgress]         = useState(0)
@@ -653,6 +657,8 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
           width: SLOT_W, height: SLOT_H, flexShrink: 0,
           background: isRecordingHere ? 'rgba(239,68,68,0.08)' : isEmpty ? 'var(--bg-surface)' : `${clipColor}28`,
           border: `${borderWidth} solid ${borderColor}`,
+          // The keyboard highlight (lib/session-keys.ts): where Enter would fire.
+          boxShadow: highlighted ? 'inset 0 0 0 2px var(--accent)' : undefined,
           borderRadius: 3, position: 'relative', overflow: 'hidden',
           cursor: 'default', boxSizing: 'border-box',
           // A deactivated clip (Live's Clip Activator) is parked: dimmed, and
@@ -661,6 +667,7 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
           filter: clip?.active === false ? 'grayscale(1)' : undefined,
         }}
         data-clip-inactive={clip?.active === false || undefined}
+        data-highlighted={highlighted || undefined}
         onClick={isEmpty ? handleEmptyClick : undefined}
         onContextMenu={clip ? e => { e.preventDefault(); onTouch(track.id, sceneIndex); setCtxMenu({ x: e.clientX, y: e.clientY }) } : undefined}
         onMouseEnter={() => setHovered(true)}
@@ -988,6 +995,55 @@ export default function SessionView() {
     return () => clearInterval(iv)
   }, [engine])
 
+  // ── Playing the grid from the keyboard (lib/session-keys.ts) ─────────────
+  //
+  // The one input a performance does not have a spare hand for is a mouse.
+  // The highlight is a cell; arrows move it, Enter fires it, ⇧↵ fires the whole
+  // scene, ⌃↵ stops the track.
+  const [spot, setSpot] = useState<Spot>({ track: 0, scene: 0 })
+  const gridTracks = project.tracks.filter(t => t.kind !== 'group')
+  const onGridKey = (e: React.KeyboardEvent) => {
+    const id = resolveKey(e, ['session'])?.id
+    if (!id) return
+    // ⚠️ Not while somebody is typing a scene name or a tempo into the grid.
+    const el = e.target as HTMLElement | null
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA')) return
+    e.preventDefault(); e.stopPropagation()
+    const trackIds = gridTracks.map(t => t.id)
+    const move = ({ 'session.up': 'up', 'session.down': 'down', 'session.left': 'left', 'session.right': 'right',
+      'session.pageUp': 'pageUp', 'session.pageDown': 'pageDown' } as Record<string, GridMove>)[id]
+    if (move) { setSpot(s => moveSpot(s, move, trackIds.length, project.scenes.length)); return }
+    if (id === 'session.home' || id === 'session.end') { setSpot(s => moveSpot(s, id === 'session.home' ? 'home' : 'end', trackIds.length, project.scenes.length)); return }
+    if (id === 'session.launch') {
+      const clip = clipAt(project.sessionGrid, trackIds, spot)
+      const trackId = trackIds[spot.track]
+      if (clip && trackId) void (isAudioClip(clip) ? engine.queueSession(trackId, clip, clip.launchQuantization) : engine.queueSessionMidi(trackId, clip as MidiClip, clip.launchQuantization))
+      return
+    }
+    if (id === 'session.launchScene') { void launchScene(spot.scene); return }
+    // Immediate, like Stop All beside it: a key pressed during a performance
+    // means now, and a quantized stop reads as nothing having happened.
+    if (id === 'session.stopTrack') { const t = trackIds[spot.track]; if (t) { engine.stopSessionTrack(t); engine.stopSessionMidiTrack?.(t) } return }
+    if (id === 'session.stopAll') { stopAll(); return }
+    if (id === 'session.insertScene') { dispatch({ type: 'INSERT_SCENE', sceneIndex: spot.scene }); return }
+    if (id === 'session.captureScene') { captureIntoScene(); return }
+  }
+
+  /**
+   * Live's Capture and Insert Scene: what is playing right now becomes a new
+   * scene below the highlight, so a set found by hand can be kept.
+   */
+  function captureIntoScene() {
+    const playing: Record<string, string | null> = {}
+    for (const t of gridTracks) {
+      const row = project.sessionGrid[t.id] ?? []
+      const found = row.find(c => c && engine.getSessionState(t.id, c.id) === 'playing')
+      playing[t.id] = found?.id ?? null
+    }
+    const clips = captureScene(project.sessionGrid, playing, () => crypto.randomUUID())
+    dispatch({ type: 'INSERT_SCENE', sceneIndex: spot.scene + 1, clips })
+  }
+
   async function launchScene(sceneIndex: number) {
     const scene = project.scenes[sceneIndex]
     if (scene.tempo) {
@@ -1192,7 +1248,12 @@ export default function SessionView() {
       </div>
 
       {/* ── Scrollable body ─────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+      <div
+        data-help-id="session-grid"
+        tabIndex={0}
+        onKeyDown={onGridKey}
+        style={{ display: 'flex', flex: 1, overflowY: 'auto', overflowX: 'hidden', outline: 'none' }}
+      >
 
         {/* Track headers column */}
         <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
@@ -1250,6 +1311,7 @@ export default function SessionView() {
                   onDragStart={handleClipDragStart}
                   onDrop={handleClipDrop}
                   onTouch={touchSlot}
+                  highlighted={gridTracks[spot.track]?.id === track.id && spot.scene === si}
                 />
               ))}
             </div>

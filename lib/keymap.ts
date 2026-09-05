@@ -17,7 +17,7 @@
 // Tab, glance at the session grid, let go, you are back). One key, both
 // behaviours, no setting.
 
-export type KeyScope = 'global' | 'arrangement' | 'roll' | 'sample' | 'knob'
+export type KeyScope = 'global' | 'arrangement' | 'roll' | 'sample' | 'knob' | 'session'
 export type KeyMode = 'music' | 'podcast'
 
 export interface KeyBinding {
@@ -183,6 +183,24 @@ export const KEYMAP: KeyBinding[] = [
   { id: 'sample.markerNext', keys: '⌘→', scope: 'sample', group: 'Sample Editor', action: 'Select the next warp marker', modes: ['music'], hidden: true },
   { id: 'sample.nudgeLeft', keys: '←', scope: 'sample', group: 'Sample Editor', action: 'Nudge the selected marker earlier in the sample', modes: ['music'], hidden: true },
   { id: 'sample.nudgeRight', keys: '→', scope: 'sample', group: 'Sample Editor', action: 'Nudge the selected marker later in the sample', modes: ['music'], hidden: true },
+  // ── The session grid, played from the keyboard ───────────────────────────
+  { id: 'session.launch', keys: 'Enter', scope: 'session', group: 'Session', action: 'Launch the highlighted clip — or the whole scene, on the scene column', modes: ['music'] },
+  { id: 'session.launchScene', keys: '⇧Enter', scope: 'session', group: 'Session', action: 'Launch the whole scene the highlight is on', modes: ['music'] },
+  // ⚠️ ⌥, not Live's ⌃: '⌘' in this table already means Command OR Control so
+  // that one chord works on both platforms, which leaves Control with no way to
+  // be written. ⌥ is free on both.
+  { id: 'session.stopTrack', keys: '⌥Enter', scope: 'session', group: 'Session', action: 'Stop the highlighted track', modes: ['music'] },
+  { id: 'session.stopAll', keys: '⇧⌥Enter', scope: 'session', group: 'Session', action: 'Stop every clip', modes: ['music'] },
+  { id: 'session.up', keys: '↑', scope: 'session', group: 'Session', action: 'Move the highlight around the grid', modes: ['music'], display: '↑ ↓ ← →' },
+  { id: 'session.down', keys: '↓', scope: 'session', group: 'Session', action: 'Move the highlight down', modes: ['music'], hidden: true },
+  { id: 'session.left', keys: '←', scope: 'session', group: 'Session', action: 'Move the highlight left', modes: ['music'], hidden: true },
+  { id: 'session.right', keys: '→', scope: 'session', group: 'Session', action: 'Move the highlight right', modes: ['music'], hidden: true },
+  { id: 'session.pageUp', keys: 'PageUp', scope: 'session', group: 'Session', action: 'Jump eight scenes up or down', modes: ['music'], display: 'Page Up / Down' },
+  { id: 'session.pageDown', keys: 'PageDown', scope: 'session', group: 'Session', action: 'Jump eight scenes down', modes: ['music'], hidden: true },
+  { id: 'session.home', keys: 'Home', scope: 'session', group: 'Session', action: 'Jump the highlight to the first or last scene', modes: ['music'], display: 'Home / End' },
+  { id: 'session.end', keys: 'End', scope: 'session', group: 'Session', action: 'Jump to the last scene', modes: ['music'], hidden: true },
+  { id: 'session.insertScene', keys: '⌘I', scope: 'session', group: 'Session', action: 'Insert a scene above the highlight', modes: ['music'] },
+  { id: 'session.captureScene', keys: '⇧⌘I', scope: 'session', group: 'Session', action: 'Capture what is playing into a new scene', modes: ['music'] },
   { id: 'sample.crop', keys: '⇧⌘J', scope: 'sample', group: 'Sample Editor', action: 'Crop the sample to what the clip plays — the audio past its end goes', modes: ['music'] },
   { id: 'sample.slipLeft', keys: '⇧⌥←', scope: 'sample', group: 'Sample Editor', action: 'Slip the audio under the clip by 10 ms (⇧⌥-drag the waveform to slide it)', modes: ['music'], display: '⇧⌥← / ⇧⌥→' },
   { id: 'sample.slipRight', keys: '⇧⌥→', scope: 'sample', group: 'Sample Editor', action: 'Slip the audio later under the clip', modes: ['music'], hidden: true },

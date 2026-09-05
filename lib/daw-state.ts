@@ -50,6 +50,7 @@ export type DawAction =
   | { type: 'SET_LANE_OVERRIDDEN'; laneId: string; overridden: boolean }
   | { type: 'REENABLE_ALL_AUTOMATION' }
   | { type: 'ADD_SCENE'; id?: string }
+  | { type: 'INSERT_SCENE'; sceneIndex: number; id?: string; name?: string; clips?: Record<string, DawClip | null> }
   | { type: 'REMOVE_SCENE'; sceneIndex: number }
   | { type: 'UPDATE_SCENE'; sceneIndex: number; patch: Partial<Scene> }
   // Transport / project
@@ -462,6 +463,36 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       const grid = { ...project.sessionGrid }
       for (const id of Object.keys(grid)) grid[id] = [...(grid[id] ?? []), null]
       return { ...project, scenes: [...project.scenes, scene], sessionGrid: grid }
+    }
+
+    /**
+     * A scene put BETWEEN two others, rather than on the end — with the clips
+     * that belong in it, when they were captured from what is playing.
+     *
+     * Every track's row grows at the same index, or the grid and the scene
+     * list would drift apart and every slot below would belong to the wrong
+     * scene. `clips` is keyed by track and may name only some of them.
+     */
+    case 'INSERT_SCENE': {
+      const at = Math.max(0, Math.min(project.scenes.length, action.sceneIndex))
+      const scene: Scene = { id: action.id ?? crypto.randomUUID(), name: action.name ?? `Scene ${project.scenes.length + 1}` }
+      const scenes = [...project.scenes.slice(0, at), scene, ...project.scenes.slice(at)]
+      const grid = { ...project.sessionGrid }
+      for (const id of Object.keys(grid)) {
+        const row = [...(grid[id] ?? [])]
+        while (row.length < project.scenes.length) row.push(null)
+        row.splice(at, 0, action.clips?.[id] ?? null)
+        grid[id] = row
+      }
+      // A track with no row yet still needs one, or a captured clip would have
+      // nowhere to land.
+      for (const id of Object.keys(action.clips ?? {})) {
+        if (grid[id]) continue
+        const row = Array(project.scenes.length).fill(null)
+        row.splice(at, 0, action.clips![id] ?? null)
+        grid[id] = row
+      }
+      return { ...project, scenes, sessionGrid: grid }
     }
 
     case 'REMOVE_SCENE': {
