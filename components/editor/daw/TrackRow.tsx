@@ -1,6 +1,7 @@
 'use client'
 
 import { useDisplaySettings } from '@/lib/display-settings'
+import { autoNumber, isNumbered, nextToRename } from '@/lib/rename'
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import { useAppear } from '@/components/ui/Appear'
 import { nearestBarBeat, meterSegments } from '@/lib/tempo-map'
@@ -721,6 +722,47 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   const [editing,    setEditing]    = useState(false)
   const [draft,      setDraft]      = useState(track.name)
   const cancelRenameRef = useRef(false)
+  // ── Renaming a run of tracks (lib/rename.ts) ────────────────────────────────
+  //
+  // ⌘R opens this track's name; Tab commits it and opens the next one. `#` in
+  // the name is the auto-number, so "Gtr #" down a run gives Gtr 1, Gtr 2, …
+  // The counter is per-run and resets when the run ends (blur, Enter, Escape).
+  const renameRunRef = useRef(0)
+  const applyName = (name: string) => {
+    const trimmed = name.trim()
+    if (!trimmed) return
+    const n = isNumbered(trimmed) ? (renameRunRef.current += 1) : 0
+    dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: n ? autoNumber(trimmed, n) : trimmed } })
+  }
+  const commitRename = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') { cancelRenameRef.current = true; setEditing(false); renameRunRef.current = 0; return }
+    if (e.key === 'Enter') { applyName(draft); setEditing(false); renameRunRef.current = 0; return }
+    if (e.key === 'Tab') {
+      // ⚠️ preventDefault, or focus walks out of the studio entirely — the one
+      // thing a rename run must not do halfway through.
+      e.preventDefault()
+      applyName(draft)
+      cancelRenameRef.current = true      // the blur that follows must not write again
+      setEditing(false)
+      const order = project.tracks.map(t => t.id)
+      const next = nextToRename(order, track.id)
+      // The run's counter travels with the event, so the next row carries on
+      // from where this one got to rather than starting again at 1.
+      if (next) window.dispatchEvent(new CustomEvent('100lights:rename-track', { detail: { trackId: next, draft, run: renameRunRef.current } }))
+      else renameRunRef.current = 0
+    }
+  }
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ trackId: string; draft?: string; run?: number }>).detail
+      if (d?.trackId !== track.id) return
+      renameRunRef.current = d.run ?? 0
+      setDraft(d.draft ?? track.name)
+      setEditing(true)
+    }
+    window.addEventListener('100lights:rename-track', on)
+    return () => window.removeEventListener('100lights:rename-track', on)
+  }, [track.id, track.name])
   const [croppingClipId, setCroppingClipId] = useState<string | null>(null)
   const [rollTall, setRollTall] = useState(false)  // expanded piano roll fills most of the viewport
   const rollResize = useResizable({ key: 'piano-roll', initial: 260, min: 150, max: 760, axis: 'y' })
@@ -1252,8 +1294,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             <span style={{ fontSize: 8, color: 'var(--text-muted)', flexShrink: 0 }}>▤</span>
             {editing ? (
               <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
-                onBlur={() => { if (!cancelRenameRef.current) dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); cancelRenameRef.current = false; setEditing(false) }}
-                onKeyDown={e => { if (e.key === 'Enter') { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); setEditing(false) } else if (e.key === 'Escape') { cancelRenameRef.current = true; setEditing(false) } e.stopPropagation() }}
+                onBlur={() => { if (!cancelRenameRef.current) applyName(draft); cancelRenameRef.current = false; setEditing(false); renameRunRef.current = 0 }}
+                onKeyDown={e => { commitRename(e); e.stopPropagation() }}
                 style={{ flex: 1, fontSize: 11, background: 'var(--bg-base)', border: '1px solid var(--accent)', color: 'var(--text-primary)', borderRadius: 3, padding: '1px 4px', outline: 'none', minWidth: 0 }} />
             ) : (
               <span onDoubleClick={() => { setEditing(true); setDraft(track.name) }} style={{ flex: 1, fontSize: 11, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', userSelect: 'none' }}>
@@ -1381,8 +1423,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               {trackNumber != null && <span data-help-id="track-number" title={`Track ${trackNumber}`} style={{ fontSize: 8, fontWeight: 700, color: 'var(--text-muted)', minWidth: 12, textAlign: 'right', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{trackNumber}</span>}
             {editing ? (
               <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
-                onBlur={() => { if (!cancelRenameRef.current) dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); cancelRenameRef.current = false; setEditing(false) }}
-                onKeyDown={e => { if (e.key === 'Enter') { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); setEditing(false) } else if (e.key === 'Escape') { cancelRenameRef.current = true; setEditing(false) } e.stopPropagation() }}
+                onBlur={() => { if (!cancelRenameRef.current) applyName(draft); cancelRenameRef.current = false; setEditing(false); renameRunRef.current = 0 }}
+                onKeyDown={e => { commitRename(e); e.stopPropagation() }}
                 style={{ flex: 1, fontSize: 11, background: 'var(--bg-base)', border: '1px solid var(--accent)', color: 'var(--text-primary)', borderRadius: 3, padding: '1px 4px', outline: 'none', minWidth: 0 }}
               />
             ) : (

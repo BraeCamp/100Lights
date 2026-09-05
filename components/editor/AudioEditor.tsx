@@ -2821,6 +2821,13 @@ export default function AudioEditor(props: AudioEditorProps) {
         return true
       // Punch in / out (lib/punch.ts) — project state, so it goes through the
       // reducer here rather than through the transport's record flow.
+      // Rename the selected track in place (lib/rename.ts) — Tab walks the run.
+      case 'track.rename': {
+        const id = selectedTrackIdRef.current
+        if (!id) return false
+        window.dispatchEvent(new CustomEvent('100lights:rename-track', { detail: { trackId: id } }))
+        return true
+      }
       // Bounce the selected track (lib/bounce.ts). Nothing selected is not an
       // error — it just has no track to print.
       case 'track.bounce': {
@@ -3538,12 +3545,12 @@ export default function AudioEditor(props: AudioEditorProps) {
       { id: 'audio.track.remove', group: 'Track', label: `Delete ${paletteTrack.name}`,
         keywords: 'remove track erase', when: () => editable,
         run: () => { if (window.confirm(`Delete "${paletteTrack.name}" and its clips?`)) dispatch({ type: 'REMOVE_TRACK', trackId: paletteTrack.id }) } },
-      { id: 'audio.track.rename', group: 'Track', label: `Rename ${paletteTrack.name}`,
-        keywords: 'name title label track', when: () => editable,
-        run: () => {
-          const name = window.prompt('Track name', paletteTrack.name)
-          if (name) dispatch({ type: 'UPDATE_TRACK', trackId: paletteTrack.id, patch: { name } })
-        } },
+      // ⚠️ The inline editor, not a prompt(). ⌘R and this have to be the same
+      // gesture or Tab-to-the-next-track exists in one of them and not the
+      // other — and a browser prompt cannot chain at all. `#` numbers the run.
+      { id: 'audio.track.rename', group: 'Track', label: `Rename ${paletteTrack.name} (Tab for the next track, # numbers them)`,
+        keywords: 'name title label track number numbering run', shortcut: keysFor('track.rename'), when: () => editable,
+        run: () => window.dispatchEvent(new CustomEvent('100lights:rename-track', { detail: { trackId: paletteTrack.id } })) },
       { id: 'audio.track.arm', group: 'Track', label: `${paletteTrack.armed ? 'Disarm' : 'Arm'} ${paletteTrack.name} for recording`,
         keywords: 'record input enable ready', when: () => editable,
         run: () => dispatch({ type: 'UPDATE_TRACK', trackId: paletteTrack.id, patch: { armed: !paletteTrack.armed } }) },

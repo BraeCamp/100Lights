@@ -89,6 +89,7 @@ export const KEYMAP: KeyBinding[] = [
   { id: 'launch.bar', keys: '⌥8', scope: 'global', group: 'Transport & Global', action: 'Global launch quantization: 1 bar', modes: ['music'], hidden: true },
   { id: 'launch.2bar', keys: '⌥9', scope: 'global', group: 'Transport & Global', action: 'Global launch quantization: 2 bars', modes: ['music'], hidden: true },
   { id: 'launch.4bar', keys: '⌥0', scope: 'global', group: 'Transport & Global', action: 'Global launch quantization: 4 bars', modes: ['music'], hidden: true },
+  { id: 'track.rename', keys: '⌘R', scope: 'global', group: 'Transport & Global', action: 'Rename the selected track — Tab moves to the next one, and # numbers them as you go', modes: ['music'], command: 'audio.track.rename' },
   { id: 'edit.history', keys: '⌘⌥Z', scope: 'global', group: 'Transport & Global', action: 'Undo History — everything you have done, and a way back to any of it', command: 'audio.edit.history' },
   { id: 'track.bounce', keys: '⌘B', scope: 'global', group: 'Transport & Global', action: 'Bounce the selected track to a new track — its devices printed as audio', modes: ['music'], command: 'audio.track.bounce' },
   { id: 'edit.consolidate', keys: '⌘J', scope: 'global', group: 'Transport & Global', action: 'Consolidate — print a looping MIDI clip’s repeats as real notes' },
