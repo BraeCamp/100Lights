@@ -117,6 +117,7 @@ export type DawAction =
   | { type: 'SET_WAVEFORM_ZOOM'; zoom: number }
   // Swing + key/scale
   | { type: 'SET_SWING'; swing: number }
+  | { type: 'SET_DELAY_COMPENSATION'; on: boolean }
   | { type: 'SET_KEY_SCALE'; key: number; scale: string }
   // Cue markers
   | { type: 'ADD_CUE_MARKER'; marker: CueMarker }
@@ -831,6 +832,9 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
 
     case 'SET_SWING':
       return { ...project, swing: Math.max(0, Math.min(1, action.swing)) }
+
+    case 'SET_DELAY_COMPENSATION':
+      return { ...project, delayCompensation: action.on ? undefined : false }
 
     case 'SET_KEY_SCALE':
       return { ...project, key: action.key, scale: action.scale }

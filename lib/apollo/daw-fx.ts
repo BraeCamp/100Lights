@@ -302,6 +302,8 @@ export interface HeliosChain {
    * it — the caller has to be able to hear about that, not just Sentry.
    */
   onCrash(fn: () => void): void
+  /** Frames the chain holds the signal for — none: it renders in-quantum. */
+  latencySamples(): number
   /**
    * Declare this chain dead and run everyone's onCrash.
    *
@@ -352,6 +354,8 @@ export function buildHeliosMasterBus(ctx: BaseAudioContext): HeliosChain {
     setTempo(bpm) { if (bpm > 0) engine.setTransport({ bpm }) },
     meters() { return (engine.meters as { fxGr?: Record<string, number[]> } | undefined)?.fxGr ?? {} },
     onCrash(fn) { engine.addEventListener('processorError', () => fn()) },
+    // The whole chain renders inside one worklet quantum: nothing is held back.
+    latencySamples() { return 0 },
     crash() { engine.crashed = true; engine.dispatchEvent(new CustomEvent('processorError')) },
     dispose() {
       alive = false
@@ -476,6 +480,8 @@ export function buildHeliosFxChain(ctx: BaseAudioContext, effects: TrackEffect[]
     },
     meters() { return (engine.meters as { fxGr?: Record<string, number[]> } | undefined)?.fxGr ?? {} },
     onCrash(fn) { engine.addEventListener('processorError', () => fn()) },
+    // The whole chain renders inside one worklet quantum: nothing is held back.
+    latencySamples() { return 0 },
     crash() { engine.crashed = true; engine.dispatchEvent(new CustomEvent('processorError')) },
     dispose() {
       alive = false

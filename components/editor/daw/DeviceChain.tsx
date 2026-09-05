@@ -8,6 +8,7 @@ import { X, PictureInPicture2 } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { useMidiLearn } from '@/lib/midi-learn'
 import { type KnobSpec, isLogSpec, knobFromNorm } from '@/lib/knob-math'
+import { describeLatency } from '@/lib/latency'
 import type {
   TrackEffect, Eq3Params, CompressorParams, ReverbParams,
   DelayParams, FilterParams, SaturatorParams, ReduxParams, AutoPanParams, UtilityParams, LfoParams, EffectType,
@@ -1740,6 +1741,7 @@ export default function DeviceChain({ trackId }: { trackId: string }) {
         <HeliosFxChip trackId={trackId} />
         <VoiceChainButton trackId={trackId} />
         <AddDeviceButton trackId={trackId} />
+        <LatencyChip trackId={trackId} />
       </div>
       {/* MIDI FX row */}
       {(midiEffects.length > 0 || track.instrument) && (
@@ -1754,6 +1756,28 @@ export default function DeviceChain({ trackId }: { trackId: string }) {
         </div>
       )}
     </div>
+  )
+}
+
+// The track's latency and the compensation it is getting (lib/latency.ts),
+// shown only when there is any — most chains hold nothing back.
+function LatencyChip({ trackId }: { trackId: string }) {
+  const { engine, project } = useDaw()
+  const [, bump] = useState(0)
+  useEffect(() => {
+    const on = () => bump(n => n + 1)
+    engine.addEventListener('latency', on)
+    return () => engine.removeEventListener('latency', on)
+  }, [engine])
+  const own = engine.trackLatencySamples(trackId)
+  const comp = engine.trackCompensationSamples(trackId)
+  if (!own && !comp) return null
+  const pdc = project.delayCompensation !== false
+  return (
+    <span data-help-id="track-latency" title={`This track's devices hold the signal ${describeLatency(own, engine.ctx.sampleRate)}${pdc ? `; it is delayed ${describeLatency(comp, engine.ctx.sampleRate)} so every track arrives together` : ' — delay compensation is off'}`}
+      style={{ alignSelf: 'center', fontSize: 9, fontVariantNumeric: 'tabular-nums', color: pdc ? 'var(--text-muted)' : '#f59e0b', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 6px', whiteSpace: 'nowrap' }}>
+      Δ {describeLatency(own, engine.ctx.sampleRate)}{comp ? ` +${describeLatency(comp, engine.ctx.sampleRate)}` : ''}
+    </span>
   )
 }
 

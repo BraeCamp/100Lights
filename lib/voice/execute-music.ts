@@ -1802,6 +1802,17 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
     }
 
     // MOVE — "move everything over by one bar"
+    case 'set_delay_compensation': {
+      const on = i.on === true || i.on === 'true'
+      const isOn = project.delayCompensation !== false
+      if (on === isOn) return { actions: [], say: `Delay compensation is already ${on ? 'on' : 'off'}.` }
+      return {
+        actions: [{ type: 'SET_DELAY_COMPENSATION', on }],
+        say: on ? 'Delay compensation on — every track is delayed to match the slowest one, so they all arrive together.'
+          : 'Delay compensation off — each track plays as its devices deliver it.',
+      }
+    }
+
     case 'modulate_parameter': {
       const found = resolveClip(target, project)
       const trackByName = !found ? project.tracks.find(t => foldName(t.name) === foldName(target)) : null

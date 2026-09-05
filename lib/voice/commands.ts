@@ -1397,6 +1397,29 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
   {
+    id: 'set_delay_compensation',
+    tool: 'set_delay_compensation',
+    group: 'Mixer',
+    what: 'Delay compensation on or off',
+    say: ['turn delay compensation off', 'turn latency compensation on'],
+    match(w) {
+      if (!w.has('compensation', 'compensate', 'pdc')) return null
+      if (!w.has('delay', 'latency', 'plugin', 'plug-in', 'pdc')) return null
+      const raw = w.raw.toLowerCase()
+      const off = /\boff\b/.test(raw) || w.has('disable', 'without', 'stop')
+      const on = /\bon\b/.test(raw) || w.has('enable', 'compensate')
+      if (off === on) return null
+      for (const word of w.all) w.markWord(word, 0)
+      // ⚠️ 0.92, not 0.9. The palette has a command whose label IS this
+      // sentence ("Turn delay compensation on"), and the generic by-name rule
+      // reads it at 0.86 with full coverage — within the ambiguity margin of a
+      // 0.9 reading, so the studio stopped to ask which of two identical
+      // things was meant. A dedicated rule for a sentence outranks the palette
+      // match for the same sentence by more than the margin.
+      return { calls: [{ name: 'set_delay_compensation', input: { on: !off } }], confidence: 0.92 }
+    },
+  },
+  {
     id: 'modulate_parameter',
     tool: 'modulate_parameter',
     group: 'Arrangement',

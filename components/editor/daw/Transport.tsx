@@ -1191,6 +1191,16 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
                       style={{ ...base, width: 'auto', padding: '0 5px', fontSize: 8, fontFamily: 'monospace', background: 'rgba(245,158,11,0.15)', border: '1px solid #f59e0b', color: '#f59e0b', flexShrink: 0 }}><RotateCcw size={12} /></button>
                   )}
                 </div>
+                {/* Delay compensation (lib/latency.ts) */}
+                <button
+                  onClick={() => { const on = project.delayCompensation === false; dispatch({ type: 'SET_DELAY_COMPENSATION', on }); engine.setDelayCompensation(on) }}
+                  data-help-id="delay-compensation"
+                  aria-pressed={project.delayCompensation !== false}
+                  title="Delay compensation — every track is delayed to match the slowest one's devices, so they all arrive together"
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 7, cursor: 'pointer', textAlign: 'left', background: project.delayCompensation !== false ? 'rgb(var(--accent-rgb) / 0.12)' : 'var(--bg-card)', border: project.delayCompensation !== false ? '1px solid var(--accent)' : '1px solid var(--border-light)', color: project.delayCompensation !== false ? 'var(--accent)' : 'var(--text-secondary)', fontSize: 10, fontWeight: 700 }}>
+                  <span style={{ letterSpacing: '0.06em' }}>PDC</span>
+                  <span style={{ fontSize: 8.5, fontWeight: 400, color: 'var(--text-muted)' }}>delay compensation {project.delayCompensation !== false ? 'on' : 'off'}</span>
+                </button>
                 {/* Masking detector */}
                 <button
                   onClick={() => setShowMask(v => !v)}

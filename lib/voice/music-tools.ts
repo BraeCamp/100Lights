@@ -216,6 +216,16 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'set_delay_compensation',
+    description:
+      'DELAY COMPENSATION — whether every track is delayed to match the slowest one\'s devices so they all arrive together. "turn delay compensation off", "turn latency compensation on", "compensate for plug-in latency". Off is what somebody wants while recording live through a slow device.',
+    input_schema: {
+      type: 'object',
+      properties: { on: { type: 'boolean', description: 'true to compensate (the default), false to play each track as its devices deliver it.' } },
+      required: ['on'],
+    },
+  },
+  {
     name: 'move_clips',
     description:
       'MOVE — shift clips later or earlier by a length. "move everything over by one bar", "push the drums back 2 bars". Negative moves earlier. Omit target to move the whole arrangement.',

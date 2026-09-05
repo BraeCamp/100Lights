@@ -12,6 +12,7 @@ import { barParamValue, activeBarFields } from './effect-bar'
 import { ensurePolySample } from './poly-sample-cache'
 import { evaluateModulators, type ModReadout, type ParamRange } from './daw-modulation'
 import { automatableParams } from './daw-effect-params'
+import { compensationDelays } from './latency'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { buildHeliosFxChain, buildHeliosMasterBus, type HeliosChain } from './apollo/daw-fx'
 import { apolloPatchFor, newApolloResolveCache } from './apollo/resolve-apollo'
@@ -56,6 +57,7 @@ interface TrackNodes {
   effectsInput: GainNode    // sources connect here
   midiInput: GainNode       // MIDI voices connect here → effectsInput; swapped on stop so ringing notes cut off
   effectsOutput: GainNode   // routes into panner
+  compDelay: DelayNode      // delay compensation: (slowest track − this track), see _updateDelayCompensation
   sendGains: Map<string, GainNode>     // returnTrackId → send gain (post-fader tap from analyser)
   preSendGains: Map<string, GainNode>  // returnTrackId → send gain (pre-fader tap from effectsOutput)
   sendModes: Map<string, 'pre' | 'post'>
@@ -647,7 +649,12 @@ export class DawEngine extends EventTarget {
       const eqHi = this.ctx.createBiquadFilter()
       eqHi.type = 'highshelf'; eqHi.frequency.value = 8000; eqHi.gain.value = 0
 
-      effectsOutput.connect(eqSub)
+      // Delay compensation sits right after the chain: the whole mixer path
+      // (tone EQ, fader, pan, sends) is then in the aligned time.
+      const compDelay = this.ctx.createDelay(2)
+      compDelay.delayTime.value = 0
+      effectsOutput.connect(compDelay)
+      compDelay.connect(eqSub)
       eqSub.connect(eqLow)
       eqLow.connect(eqMid)
       eqMid.connect(eqHi)
@@ -672,7 +679,7 @@ export class DawEngine extends EventTarget {
         sendModes.set(returnId, 'post')
       }
 
-      this.trackNodes.set(id, { gain, panner, analyser, effectsInput, midiInput, effectsOutput, sendGains, preSendGains, sendModes, mainDest: this.masterGain })
+      this.trackNodes.set(id, { gain, panner, analyser, effectsInput, midiInput, effectsOutput, compDelay, sendGains, preSendGains, sendModes, mainDest: this.masterGain })
 
       // High-res analyser for masking detection — separate from VU meter analyser
       const maskingAnalyser = this.ctx.createAnalyser()
@@ -741,6 +748,7 @@ export class DawEngine extends EventTarget {
       old?.dispose()
       this.effectsChains.delete(trackId)
       nodes.effectsInput.connect(nodes.effectsOutput)
+      this._updateDelayCompensation()
       return
     }
 
@@ -768,6 +776,7 @@ export class DawEngine extends EventTarget {
       nodes.effectsInput.connect(chain.input)
       chain.output.connect(nodes.effectsOutput)
       this._wireSidechains(trackId, effects)
+      this._updateDelayCompensation()
     }
     if (helios) void helios.ready.then(swap)
     else swap()
@@ -1400,6 +1409,7 @@ export class DawEngine extends EventTarget {
     this.loopStart    = project.loopStart
     this.loopEnd      = project.loopEnd
     this.swing        = project.swing ?? 0
+    this._delayCompensation = project.delayCompensation !== false
     this._beatsPerBar = project.timeSignatureNum ?? 4
     this._meterSegs   = meterSegments(project)
     // A deactivated clip (Live's Clip Activator, `active: false`) is parked:
@@ -1576,6 +1586,62 @@ export class DawEngine extends EventTarget {
     for (const id of this.trackNodes.keys()) {
       if (!project.tracks.find(t => t.id === id)) this.removeTrack(id)
     }
+    this._updateDelayCompensation()
+  }
+
+  // ── Delay compensation ─────────────────────────────────────────────────────
+  //
+  // A track's latency is what its chain reports (a lookahead, an FFT block —
+  // EffectHandle.latencySamples) plus what its instrument's host reports
+  // (an out-of-process plug-in's ring, via reportTrackLatency). The slowest
+  // track sets the time; every other track's compDelay makes up the
+  // difference (lib/latency.ts), so all of them arrive together. Off, every
+  // compDelay is zero and tracks play as their devices deliver them.
+
+  private _delayCompensation = true
+  private _instrumentLatency = new Map<string, number>()
+  private _compDelays = new Map<string, number>()
+
+  /** Frames this track holds the signal for before it reaches the mixer. */
+  trackLatencySamples(trackId: string): number {
+    const chain = this.effectsChains.get(trackId) as { latencySamples?: () => number } | undefined
+    return (chain?.latencySamples?.() ?? 0) + (this._instrumentLatency.get(trackId) ?? 0)
+  }
+
+  /** Frames of compensation the track is currently getting. */
+  trackCompensationSamples(trackId: string): number {
+    return this._compDelays.get(trackId) ?? 0
+  }
+
+  /** What an instrument host knows about its own delay — a bridge plug-in's ring, say. */
+  reportTrackLatency(trackId: string, samples: number): void {
+    if (samples > 0) this._instrumentLatency.set(trackId, samples)
+    else this._instrumentLatency.delete(trackId)
+    this._updateDelayCompensation()
+  }
+
+  get delayCompensation(): boolean { return this._delayCompensation }
+
+  setDelayCompensation(on: boolean): void {
+    if (this._delayCompensation === on) return
+    this._delayCompensation = on
+    this._updateDelayCompensation()
+  }
+
+  private _updateDelayCompensation(): void {
+    const latencies = new Map<string, number>()
+    for (const id of this.trackNodes.keys()) latencies.set(id, this.trackLatencySamples(id))
+    const delays = compensationDelays(latencies, this._delayCompensation)
+    let changed = false
+    for (const [id, frames] of delays) {
+      if (this._compDelays.get(id) === frames) continue
+      changed = true
+      this._compDelays.set(id, frames)
+      const nodes = this.trackNodes.get(id)
+      if (nodes) nodes.compDelay.delayTime.value = Math.min(2, frames / this.ctx.sampleRate)
+    }
+    for (const id of [...this._compDelays.keys()]) if (!delays.has(id)) { this._compDelays.delete(id); changed = true }
+    if (changed) this.dispatchEvent(new CustomEvent('latency'))
   }
 
   // ── Session launch (quantized) ─────────────────────────────────────────────

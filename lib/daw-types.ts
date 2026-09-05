@@ -1078,6 +1078,12 @@ export interface DawProject {
   automationLanes: AutomationLane[]
   /** LFOs on tracks, driving parameters every tick (see Modulator). */
   modulators?: Modulator[]
+  /**
+   * Delay compensation: every track is delayed to match the slowest one's
+   * reported latency (lib/latency.ts), so a slow device does not put its
+   * track behind the rest. Absent = on.
+   */
+  delayCompensation?: boolean
   clipEffects: ClipEffect[]
   returnTracks: ReturnTrack[]
   takeLanes: TakeLane[]

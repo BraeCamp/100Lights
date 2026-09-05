@@ -57,6 +57,7 @@ const EXPECTED = [
   ['clip pane',            ['clip pane']],
   ['device pane',          ['device pane']],
   ['detail area full size', ['full size']],
+  ['delay compensation',   ['latency', 'compensation']],
   ['split / splice clip',  ['splice', 'split']],
   ['rename clip',          ['rename clip', 'rename ']],
 

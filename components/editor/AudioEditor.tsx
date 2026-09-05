@@ -2807,6 +2807,9 @@ export default function AudioEditor(props: AudioEditorProps) {
       shortcut: keysFor('detail.device'), run: () => toggleDetail('device') },
     { id: 'audio.detail.full', group: 'Audio', label: detailLabel(detail, 'full'), keywords: 'detail area full size bigger maximize normal',
       shortcut: keysFor('detail.full'), run: () => toggleDetail('full') },
+    { id: 'audio.settings.delayComp', group: 'Sound', label: `Turn delay compensation ${project.delayCompensation === false ? 'on' : 'off'}`,
+      keywords: 'latency compensation pdc plugin delay align', when: () => !props.readOnly,
+      run: () => { const on = projectRef.current.delayCompensation === false; dispatch({ type: 'SET_DELAY_COMPENSATION', on }); engineRef.current?.setDelayCompensation(on) } },
     {
       id: 'audio.library', group: 'Audio', label: 'Open Sound Library', keywords: 'instruments sounds browser', shortcut: keysFor('view.library'),
       when: () => !isPodcast,
@@ -2868,7 +2871,7 @@ export default function AudioEditor(props: AudioEditorProps) {
       keywords: `density spacing compact smaller bigger room ${DENSITY_INFO[d].blurb}`,
       run: () => setDensity(d),
     })),
-  ], [view, isPodcast, props.onSave, props.readOnly, dispatch, density, setDensity, detail])
+  ], [view, isPodcast, props.onSave, props.readOnly, dispatch, density, setDensity, detail, project.delayCompensation])
 
   // ── Sounds and tracks, by name ───────────────────────────────────────────────
   //
