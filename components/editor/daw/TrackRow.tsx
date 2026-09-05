@@ -1,5 +1,6 @@
 'use client'
 
+import { useDisplaySettings } from '@/lib/display-settings'
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import { useAppear } from '@/components/ui/Appear'
 import { nearestBarBeat, meterSegments } from '@/lib/tempo-map'
@@ -675,6 +676,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   onSelectionLoopCommit?: (region: { start: number; end: number }, blocks: number) => void
 }) {
   const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId, expandedStepSeqClipId, setExpandedStepSeqClipId, recording, audioMode, blinkIds, collabPeers, notifyLocked } = useDaw()
+  const display = useDisplaySettings()
 
   // Flatten: render THIS track solo through the offline path into an audio
   // clip on a fresh track (sound-library backed, so it survives reload), then
@@ -2335,8 +2337,11 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
         document.body
       )}
 
-      {/* Inline Piano Roll — shown when a MIDI clip on this track is expanded */}
+      {/* Inline Piano Roll — shown when a MIDI clip on this track is expanded
+          and the Display setting keeps the clip editor inline; in 'pane' mode
+          the clip pane at the bottom of the studio hosts it (DetailArea). */}
       {(() => {
+        if (display.clipEditor !== 'inline') return null
         const expandedClip = clips.find(c => isMidiClip(c) && c.id === expandedPianoRollClipId)
         if (!expandedClip || isMobile) return null   // on mobile the roll opens in the Sounds tab
         return (
@@ -2369,6 +2374,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
 
       {/* Inline Step Sequencer — sibling to the roll, for a drum clip on this track */}
       {(() => {
+        if (display.clipEditor !== 'inline') return null
         const seqClip = clips.find(c => isMidiClip(c) && c.id === expandedStepSeqClipId)
         if (!seqClip || isMobile) return null   // on mobile the beat editor opens in the Sounds tab
         return (

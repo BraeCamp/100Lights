@@ -60,6 +60,7 @@ import SoundLibraryPanel from './SoundLibrary'
 import { useRegisterCommands } from '@/lib/commands'
 import { resolveKey, releasedMomentary, MomentaryLatch, keysFor } from '@/lib/keymap'
 import { useDetail, toggleDetail, detailLabel } from '@/lib/detail-area'
+import { useDisplaySettings, setDisplay } from '@/lib/display-settings'
 import SendToProjectButton from './SendToProjectButton'
 import PolyCodePanel from './daw/PolyCodePanel'
 import GuestPanel from './daw/GuestPanel'
@@ -2186,6 +2187,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   }, [isPodcast])
   const [view, setView] = useState<DawView>(wsInit.view)
   const detail = useDetail()
+  const display = useDisplaySettings()
   const [editTarget, setEditTarget] = useState<EditTarget>(null)
   const [selectedTrackId_,  setSelectedTrackId_]  = useState<string | null>(null)
   const [selectedReturnId_, setSelectedReturnId_] = useState<string | null>(null)
@@ -2807,6 +2809,9 @@ export default function AudioEditor(props: AudioEditorProps) {
       shortcut: keysFor('detail.device'), run: () => toggleDetail('device') },
     { id: 'audio.detail.full', group: 'Audio', label: detailLabel(detail, 'full'), keywords: 'detail area full size bigger maximize normal',
       shortcut: keysFor('detail.full'), run: () => toggleDetail('full') },
+    { id: 'audio.settings.clipEditor', group: 'Audio', label: display.clipEditor === 'pane' ? 'Clip editor: inline under the track' : 'Clip editor: bottom pane',
+      keywords: 'piano roll notes editor place bottom pane inline display setting',
+      run: () => setDisplay({ clipEditor: display.clipEditor === 'pane' ? 'inline' : 'pane' }) },
     { id: 'audio.settings.delayComp', group: 'Sound', label: `Turn delay compensation ${project.delayCompensation === false ? 'on' : 'off'}`,
       keywords: 'latency compensation pdc plugin delay align', when: () => !props.readOnly,
       run: () => { const on = projectRef.current.delayCompensation === false; dispatch({ type: 'SET_DELAY_COMPENSATION', on }); engineRef.current?.setDelayCompensation(on) } },
@@ -2871,7 +2876,7 @@ export default function AudioEditor(props: AudioEditorProps) {
       keywords: `density spacing compact smaller bigger room ${DENSITY_INFO[d].blurb}`,
       run: () => setDensity(d),
     })),
-  ], [view, isPodcast, props.onSave, props.readOnly, dispatch, density, setDensity, detail, project.delayCompensation])
+  ], [view, isPodcast, props.onSave, props.readOnly, dispatch, density, setDensity, detail, display, project.delayCompensation])
 
   // ── Sounds and tracks, by name ───────────────────────────────────────────────
   //

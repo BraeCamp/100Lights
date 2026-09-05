@@ -1472,6 +1472,8 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       ref={rootRef}
       style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-surface)', outline: 'none' }}
       tabIndex={-1}
+      data-help-id="piano-roll"
+      data-clip-editor={clip.id}
       onKeyDown={handleKeyDown}
       // Scrolling inside the roll must not also pan the arrangement behind it
       // (ArrangementView has a handleWheel on the whole track area)
@@ -1895,6 +1897,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           {/* Note grid */}
           <div
             ref={gridRef}
+            data-help-id="roll-grid"
             style={{ flex: 1, overflow: 'hidden', position: 'relative', cursor: tool === 'edit' ? (hoverEdge ? 'ew-resize' : 'crosshair') : 'cell', touchAction: isMobile ? 'none' : undefined }}
             onMouseDown={handleGridMouseDown}
             onMouseMove={handleGridMouseMove}

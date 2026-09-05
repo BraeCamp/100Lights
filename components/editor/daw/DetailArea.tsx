@@ -3,29 +3,36 @@
 // The detail area: the bottom of the screen, two panes tall.
 //
 // Live's screen ends in a detail area — the Clip View (what the selected clip
-// IS: its name, where it sits, how long it is, whether it loops) sitting
-// above the Device View (what the selected track does to its sound). Beacon
-// had only the device half, and the clip's own settings were scattered over
-// a context menu, a modal and the inspector. This is the container both live
-// in: each pane shows or hides on its own (⌘⌥3, ⌘⌥4, the toggles at the
-// bottom right), each keeps its own dragged height, Shift+Tab flips keyboard
-// focus between them, and ⌘⌥E stretches the whole area for close work.
+// IS: its name, where it sits, how long it is, whether it loops, and its
+// notes) sitting above the Device View (what the selected track does to its
+// sound). Beacon had only the device half, and the clip's own settings were
+// scattered over a context menu, a modal and the inspector. This is the
+// container both live in: each pane shows or hides on its own (⌘⌥3, ⌘⌥4, the
+// toggles at the bottom right), each keeps its own dragged height, Shift+Tab
+// flips keyboard focus between them, and ⌘⌥E stretches the whole area for
+// close work.
 //
-// The clip pane here is the frame and the essentials; Batch 2 (the note
-// editor) and Batch 3 (the audio clip editor) render into it.
+// The clip pane follows the selection. For a MIDI clip it hosts the note
+// editor — the piano roll, or the step sequencer for a drum clip — under a
+// Notes | Envelopes tab bar, when the Display setting says the clip editor
+// lives in the pane (lib/display-settings.ts; 'inline' keeps the roll under
+// its track for a release). Batch 3 puts the audio clip editor here too.
 
 import { useEffect, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { X, Keyboard, PanelBottom, Music2, Maximize2, Minimize2 } from 'lucide-react'
 import { useDaw, formatBeat } from '@/lib/daw-state'
-import { isMidiClip, isAudioClip } from '@/lib/daw-types'
+import { isMidiClip, isAudioClip, type DawClip } from '@/lib/daw-types'
 import { useResizable, ResizeHandle } from './useResizable'
-import { useDetail, toggleDetail } from '@/lib/detail-area'
+import { useDetail, toggleDetail, setDetail } from '@/lib/detail-area'
+import { useDisplaySettings } from '@/lib/display-settings'
 import { keysFor } from '@/lib/keymap'
 
 const DeviceChain = dynamic(() => import('./DeviceChain'), { ssr: false })
 const ReturnDeviceChain = dynamic(() => import('./DeviceChain').then(m => ({ default: m.ReturnDeviceChain })), { ssr: false })
 const InstrumentPicker = dynamic(() => import('./InstrumentPicker'), { ssr: false })
+const PianoRoll = dynamic(() => import('./PianoRoll'), { ssr: false })
+const StepSequencer = dynamic(() => import('./StepSequencer'), { ssr: false })
 
 const tabBtn = (on: boolean): React.CSSProperties => ({
   background: on ? 'var(--bg-card)' : 'transparent',
@@ -34,6 +41,8 @@ const tabBtn = (on: boolean): React.CSSProperties => ({
   cursor: 'pointer', fontSize: 11, padding: '2px 10px', textTransform: 'capitalize',
 })
 
+type ClipTab = 'notes' | 'envelopes'
+
 export default function DetailArea() {
   const {
     project, dispatch,
@@ -41,16 +50,31 @@ export default function DetailArea() {
     selectedClipId, setSelectedClipId,
     showPads, setShowPads,
     expandedPianoRollClipId, setExpandedPianoRollClipId,
+    expandedStepSeqClipId,
+    setSoundPanel,
   } = useDaw()
   const detail = useDetail()
+  const display = useDisplaySettings()
+  const paneEditor = display.clipEditor === 'pane'
   const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
+  const [clipTab, setClipTab] = useState<ClipTab>('notes')
   useEffect(() => { setBottomTab('devices') }, [selectedTrackId])
 
-  const clipResize = useResizable({ key: 'detail-clip', initial: 96, min: 64, max: 320, axis: 'y', invert: true })
+  const clipResize = useResizable({ key: 'detail-clip', initial: 280, min: 96, max: 640, axis: 'y', invert: true })
   const deviceResize = useResizable({ key: 'bottom-panel', initial: 220, min: 120, max: 560, axis: 'y', invert: true })
 
   const clipRef = useRef<HTMLDivElement>(null)
   const deviceRef = useRef<HTMLDivElement>(null)
+
+  // Opening a clip's editor (double-click, the context menu, voice) in pane
+  // mode means: show the clip pane, and let that clip lead the selection.
+  const opened = expandedPianoRollClipId ?? expandedStepSeqClipId ?? null
+  useEffect(() => {
+    if (!paneEditor || !opened) return
+    setDetail({ clip: true })
+    setSelectedClipId(opened)
+    setClipTab('notes')
+  }, [paneEditor, opened, setSelectedClipId])
 
   // Shift+Tab flips focus between the two panes (lib/keymap.ts 'detail.flip'
   // arrives as an event from the studio's key handler).
@@ -72,8 +96,9 @@ export default function DetailArea() {
   if (!showClip && !showDevice) return null
 
   const full = detail.full
-  const clipH = full ? Math.max(clipResize.size, 160) : clipResize.size
-  const deviceH = full ? '48vh' : deviceResize.size
+  const editorHere = !!clip && isMidiClip(clip) && paneEditor
+  const clipH = full ? Math.max(clipResize.size, editorHere ? 360 : 160) : clipResize.size
+  const deviceH = full ? '40vh' : deviceResize.size
 
   return (
     <div data-help-id="detail-area" data-detail-full={full || undefined}
@@ -83,8 +108,15 @@ export default function DetailArea() {
         <div ref={clipRef} data-help-id="detail-clip" data-detail-pane="clip" tabIndex={-1}
           style={{ position: 'relative', borderBottom: showDevice ? '1px solid var(--border)' : undefined, outline: 'none' }}>
           <ResizeHandle axis="y" edge="top" onPointerDown={clipResize.handleProps.onPointerDown} />
-          <div style={{ height: clipH, overflow: 'auto' }}>
-            <ClipPane clip={clip} />
+          <div style={{ height: editorHere ? clipH : Math.min(clipH, 96), overflow: editorHere ? 'hidden' : 'auto', display: 'flex', flexDirection: 'column' }}>
+            <ClipHeader clip={clip} />
+            {editorHere && clip && (
+              <div style={{ flex: 1, minHeight: 0, position: 'relative', borderTop: '1px solid var(--border)' }} data-help-id="clip-editor">
+                {clipTab === 'notes'
+                  ? (clip.isDrumClip ? <StepSequencer clipId={clip.id} /> : <PianoRoll clipId={clip.id} />)
+                  : <Envelopes clip={clip} />}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -92,8 +124,7 @@ export default function DetailArea() {
       {/* ── Device pane ── */}
       {showDevice && (
         <div ref={deviceRef} data-help-id="detail-device" data-detail-pane="device" tabIndex={-1} style={{ position: 'relative', outline: 'none' }}>
-          {!showClip && <ResizeHandle axis="y" edge="top" onPointerDown={deviceResize.handleProps.onPointerDown} />}
-          {showClip && <ResizeHandle axis="y" edge="top" onPointerDown={deviceResize.handleProps.onPointerDown} />}
+          <ResizeHandle axis="y" edge="top" onPointerDown={deviceResize.handleProps.onPointerDown} />
           {/* Tab bar */}
           <div style={{ height: 28, display: 'flex', alignItems: 'center', gap: 1, padding: '0 8px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
             {selectedTrackId && (['devices', 'instrument'] as const).map(tab => (
@@ -143,13 +174,14 @@ export default function DetailArea() {
     </div>
   )
 
-  // The clip pane: what the selected clip is, and the few things about it a
-  // person changes most — its name, whether it plays, whether it loops.
-  function ClipPane({ clip }: { clip: (typeof project.arrangementClips)[number] | null }) {
+  // The clip's header: what it is, and the few things about it a person
+  // changes most — its name, whether it plays, whether it loops. With the
+  // editor in the pane, the Notes | Envelopes tabs sit on the right.
+  function ClipHeader({ clip }: { clip: DawClip | null }) {
     if (!clip) {
       return (
         <div style={{ padding: '10px 12px', fontSize: 11, color: 'var(--text-muted)' }}>
-          Select a clip to see it here — its name, where it sits, and whether it loops.
+          Select a clip to see it here — its name, where it sits, and its notes.
         </div>
       )
     }
@@ -170,9 +202,9 @@ export default function DetailArea() {
       color: on ? 'var(--accent)' : 'var(--text-secondary)',
     })
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '8px 12px', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '6px 12px', flexWrap: 'wrap', flexShrink: 0 }}>
         <div style={{ ...field, minWidth: 140 }}>
-          <span style={lab}>{midi ? 'MIDI clip' : 'Audio clip'}{track ? ` · ${track.name}` : ''}</span>
+          <span style={lab}>{midi ? (clip.isDrumClip ? 'Drum clip' : 'MIDI clip') : 'Audio clip'}{track ? ` · ${track.name}` : ''}</span>
           <input
             value={clip.name}
             aria-label="Clip name"
@@ -195,12 +227,46 @@ export default function DetailArea() {
             onClick={() => dispatch({ type: 'SET_CLIPS_ACTIVE', clipIds: [clip.id], active: !active })}>
             {active ? 'On' : 'Off'}
           </button>
-          {midi && (
-            <button style={btn(inRoll)} aria-pressed={inRoll} data-help-id="clip-open-roll" title="Open this clip in the piano roll"
+          {midi && !paneEditor && (
+            <button style={btn(inRoll)} aria-pressed={inRoll} data-help-id="clip-open-roll" title="Open this clip in the piano roll under its track"
               onClick={() => { setExpandedPianoRollClipId(inRoll ? null : clip.id); setSelectedClipId(clip.id) }}>
               Piano roll
             </button>
           )}
+          {midi && paneEditor && (
+            <div role="tablist" aria-label="Clip view" style={{ display: 'flex', gap: 2, marginLeft: 6, borderLeft: '1px solid var(--border)', paddingLeft: 8 }}>
+              {(['notes', 'envelopes'] as const).map(t => (
+                <button key={t} role="tab" aria-selected={clipTab === t} data-help-id={`clip-tab-${t}`} style={tabBtn(clipTab === t)} onClick={() => setClipTab(t)}>{t}</button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // The Envelopes tab: what already shapes this clip over time — the
+  // effect bars drawn under it and its graphs — with the way in to draw more.
+  // Batch 5's clip envelopes land here too.
+  function Envelopes({ clip }: { clip: DawClip }) {
+    const bars = (project.clipEffects ?? []).filter(b => b.trackId === clip.trackId
+      && b.startBeat < clip.startBeat + clip.durationBeats && b.startBeat + b.durationBeats > clip.startBeat)
+    const num = project.timeSignatureNum ?? 4
+    return (
+      <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 6, fontSize: 11, color: 'var(--text-secondary)', overflow: 'auto', height: '100%' }} data-help-id="clip-envelopes">
+        {bars.length === 0
+          ? <span style={{ color: 'var(--text-muted)' }}>Nothing shapes this clip over time yet. Open the Sound panel to draw a graph, or drop an effect bar under the clip.</span>
+          : bars.map(b => (
+            <div key={b.id} style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <span style={{ fontWeight: 600, color: 'var(--text-primary)', minWidth: 80 }}>{b.type}</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-muted)' }}>{formatBeat(b.startBeat, num)} → {formatBeat(b.startBeat + b.durationBeats, num)}</span>
+            </div>
+          ))}
+        <div>
+          <button data-help-id="clip-sound-panel" onClick={() => { setSelectedClipId(clip.id); setSoundPanel({ x: 240, y: 200 }) }}
+            style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>
+            Open the Sound panel
+          </button>
         </div>
       </div>
     )

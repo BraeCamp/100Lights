@@ -1,5 +1,6 @@
 'use client'
 
+import { useDisplaySettings, setDisplay } from '@/lib/display-settings'
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X, RotateCcw, Save, Upload, Trash2, Check, ExternalLink } from 'lucide-react'
@@ -18,6 +19,7 @@ import {
 const TEXT_KEYS: ThemeColorKey[] = ['textPrimary', 'textSecondary', 'textMuted']
 
 export default function AppearancePanel({ onClose, editorKind }: { onClose: () => void; editorKind?: EditorKind }) {
+  const display = useDisplaySettings()
   const { theme, setTheme, update, reset, isSignedIn } = useWorkshopTheme()
   const [perfMode, setPerfMode] = usePerfMode()
   const { isPro, ent } = usePlan()
@@ -133,6 +135,25 @@ export default function AppearancePanel({ onClose, editorKind }: { onClose: () =
               </span>
             </span>
           </label>
+        </div>
+
+        {/* Display & Input — layout and size, not colour (lib/display-settings.ts) */}
+        <div style={section} data-help-id="display-settings">
+          <p style={label}>Display &amp; Input</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)' }}>Clip editor</span>
+            {([['pane', 'Bottom pane', 'The notes of the selected clip open in the clip pane at the bottom of the studio, above the devices — the selection leads.'],
+               ['inline', 'Inline under the track', 'The piano roll unfolds under its track in the arrangement, the way it used to.']] as const).map(([v, name, why]) => (
+              <label key={v} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+                <input type="radio" name="clip-editor-place" value={v} checked={display.clipEditor === v}
+                  onChange={() => setDisplay({ clipEditor: v })} style={{ accentColor: 'var(--accent)', marginTop: 2, flexShrink: 0 }} />
+                <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{name}</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.45 }}>{why}</span>
+                </span>
+              </label>
+            ))}
+          </div>
         </div>
 
         {/* Presets */}
