@@ -63,6 +63,7 @@ const EXPECTED = [
   ['follow playhead',      ['follow']],
   ['info view',            ['info view']],
   ['ui scale',             ['ui scale', 'bigger interface']],
+  ['second window',        ['own window']],
   ['overview strip',       ['overview']],
   ['waveform db scale',    ['waveforms']],
   ['split / splice clip',  ['splice', 'split']],

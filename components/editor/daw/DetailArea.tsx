@@ -20,12 +20,12 @@
 
 import { useEffect, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
-import { X, Keyboard, PanelBottom, Music2, Maximize2, Minimize2 } from 'lucide-react'
+import { X, Keyboard, PanelBottom, Music2, Maximize2, Minimize2, ExternalLink } from 'lucide-react'
 import { useDaw, formatBeat } from '@/lib/daw-state'
 import { isMidiClip, isAudioClip, type DawClip } from '@/lib/daw-types'
 import { useResizable, ResizeHandle } from './useResizable'
 import { useDetail, toggleDetail, setDetail } from '@/lib/detail-area'
-import { useDisplaySettings } from '@/lib/display-settings'
+import { useDisplaySettings, setDisplay } from '@/lib/display-settings'
 import { keysFor } from '@/lib/keymap'
 
 const DeviceChain = dynamic(() => import('./DeviceChain'), { ssr: false })
@@ -56,6 +56,9 @@ export default function DetailArea() {
   const detail = useDetail()
   const display = useDisplaySettings()
   const paneEditor = display.clipEditor === 'pane'
+  // The clip view can be out in its own window (Batch 1.7); the pane then
+  // holds its place with a way to bring it back.
+  const clipOut = display.popout === 'clip'
   const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
   const [clipTab, setClipTab] = useState<ClipTab>('notes')
   useEffect(() => { setBottomTab('devices') }, [selectedTrackId])
@@ -110,11 +113,18 @@ export default function DetailArea() {
           <ResizeHandle axis="y" edge="top" onPointerDown={clipResize.handleProps.onPointerDown} />
           <div style={{ height: editorHere ? clipH : Math.min(clipH, 96), overflow: editorHere ? 'hidden' : 'auto', display: 'flex', flexDirection: 'column' }}>
             <ClipHeader clip={clip} />
-            {editorHere && clip && (
+            {editorHere && clip && !clipOut && (
               <div style={{ flex: 1, minHeight: 0, position: 'relative', borderTop: '1px solid var(--border)' }} data-help-id="clip-editor">
                 {clipTab === 'notes'
                   ? (clip.isDrumClip ? <StepSequencer clipId={clip.id} /> : <PianoRoll clipId={clip.id} />)
                   : <Envelopes clip={clip} />}
+              </div>
+            )}
+            {editorHere && clip && clipOut && (
+              <div data-help-id="clip-editor-away" style={{ flex: 1, minHeight: 0, borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, fontSize: 11, color: 'var(--text-muted)' }}>
+                The clip view is in its own window.
+                <button onClick={() => setDisplay({ popout: null })} data-help-id="clip-window-back"
+                  style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>Bring it back</button>
               </div>
             )}
           </div>
@@ -238,6 +248,11 @@ export default function DetailArea() {
               {(['notes', 'envelopes'] as const).map(t => (
                 <button key={t} role="tab" aria-selected={clipTab === t} data-help-id={`clip-tab-${t}`} style={tabBtn(clipTab === t)} onClick={() => setClipTab(t)}>{t}</button>
               ))}
+              <button onClick={() => setDisplay({ popout: clipOut ? null : 'clip' })} data-help-id="clip-window" aria-pressed={clipOut}
+                title={clipOut ? 'Bring the clip view back into the studio' : 'Open the clip view in its own window'}
+                style={{ ...tabBtn(clipOut), padding: '2px 6px', display: 'inline-flex', alignItems: 'center' }}>
+                {clipOut ? <Minimize2 size={11} /> : <ExternalLink size={11} />}
+              </button>
             </div>
           )}
         </div>
@@ -280,5 +295,30 @@ function PaneToggle({ on, title, label, onClick, children }: { on: boolean; titl
         width: 22, height: 18, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 3, cursor: 'pointer',
         border: '1px solid var(--border)', background: on ? 'rgb(var(--accent-rgb) / 0.18)' : 'var(--bg-surface)', color: on ? 'var(--accent)' : 'var(--text-muted)',
       }}>{children}</button>
+  )
+}
+
+/**
+ * The clip view as its own window's content (components/PopOut.tsx renders it
+ * there through a portal — one React tree, one engine). The selected clip's
+ * notes, with its name; the pane in the studio holds its place meanwhile.
+ */
+export function ClipViewWindow() {
+  const { project, selectedClipId } = useDaw()
+  const clip = selectedClipId ? project.arrangementClips.find(c => c.id === selectedClipId) ?? null : null
+  const track = clip ? project.tracks.find(t => t.id === clip.trackId) : null
+  return (
+    <div data-help-id="clip-window-content" style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
+      <div style={{ height: 26, display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)', fontSize: 11, flexShrink: 0 }}>
+        <span style={{ fontWeight: 700, borderLeft: `3px solid ${track?.color ?? 'var(--accent)'}`, paddingLeft: 6 }}>{clip?.name ?? 'No clip selected'}</span>
+        {track && <span style={{ color: 'var(--text-muted)' }}>{track.name}</span>}
+        <span style={{ marginLeft: 'auto', color: 'var(--text-muted)', fontSize: 10 }}>follows the selection in the studio</span>
+      </div>
+      <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+        {clip && isMidiClip(clip)
+          ? (clip.isDrumClip ? <StepSequencer clipId={clip.id} /> : <PianoRoll clipId={clip.id} />)
+          : <div style={{ padding: 16, fontSize: 12, color: 'var(--text-muted)' }}>Select a MIDI clip in the studio to edit it here.</div>}
+      </div>
+    </div>
   )
 }

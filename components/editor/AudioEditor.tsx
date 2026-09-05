@@ -124,6 +124,7 @@ const InstrumentPicker = dynamic(() => import('./daw/InstrumentPicker'), { ssr: 
 const DetailArea = dynamic(() => import('./daw/DetailArea'), { ssr: false })
 const ArrangementMixer = dynamic(() => import('./daw/ArrangementMixer'), { ssr: false })
 const StatusBar = dynamic(() => import('./daw/StatusBar'), { ssr: false })
+const ClipViewWindow = dynamic(() => import('./daw/DetailArea').then(m => ({ default: m.ClipViewWindow })), { ssr: false })
 const PadInput = dynamic(() => import('./daw/PadInput'), { ssr: false })
 // Liveblocks only loads for saved projects — keeps collab out of the main editor chunk
 const CollabLayer = dynamic(() => import('./daw/CollabLayer'), { ssr: false })
@@ -2827,6 +2828,14 @@ export default function AudioEditor(props: AudioEditorProps) {
     { id: 'audio.view.arrMixer', group: 'Audio', label: `${display.arrangementMixer.open ? 'Hide' : 'Show'} the mixer under the arrangement`,
       keywords: 'mixer strip arrangement faders sends returns crossfader in out section', shortcut: keysFor('view.arrangementMixer'), when: () => !isPodcast,
       run: () => { if (view !== 'arrangement') setView('arrangement'); setDisplay({ arrangementMixer: { ...display.arrangementMixer, open: !display.arrangementMixer.open } }) } },
+    // A second window (components/PopOut.tsx): the mixer or the clip view leave
+    // the studio and draw in their own OS window, on any screen.
+    { id: 'audio.window.mixer', group: 'View', label: display.popout === 'mixer' ? 'Bring the mixer back into the studio' : 'Open the mixer in its own window',
+      keywords: 'mixer second window pop out detach separate screen monitor float',
+      run: () => { if (display.popout === 'mixer') setDisplay({ popout: null }); else { setDisplay({ popout: 'mixer' }); if (view === 'mixer') setView('arrangement') } } },
+    { id: 'audio.window.clip', group: 'View', label: display.popout === 'clip' ? 'Bring the clip view back into the studio' : 'Open the clip view in its own window',
+      keywords: 'clip view piano roll second window pop out detach separate screen monitor float', when: () => !isPodcast,
+      run: () => setDisplay({ popout: display.popout === 'clip' ? null : 'clip' }) },
     { id: 'audio.view.scaleUp', group: 'View', label: `Bigger interface (UI scale ${display.uiScale}% → ${stepUiScale(display.uiScale, 1)}%)`,
       keywords: 'ui scale zoom display bigger larger text interface size', shortcut: keysFor('view.scaleUp'), when: () => display.uiScale < 200,
       run: () => setDisplay({ uiScale: stepUiScale(display.uiScale, 1) }) },
@@ -3897,6 +3906,13 @@ export default function AudioEditor(props: AudioEditorProps) {
                   {v.charAt(0).toUpperCase() + v.slice(1)}
                 </button>
               ))}
+              <button
+                onClick={() => { if (display.popout === 'mixer') setDisplay({ popout: null }); else { setDisplay({ popout: 'mixer' }); if (view === 'mixer') setView('arrangement') } }}
+                data-help-id="mixer-window"
+                aria-pressed={display.popout === 'mixer'}
+                title={display.popout === 'mixer' ? 'Bring the mixer back into the studio' : 'Open the mixer in its own window'}
+                style={{ background: display.popout === 'mixer' ? 'rgb(var(--accent-rgb) / 0.18)' : 'transparent', border: display.popout === 'mixer' ? '1px solid var(--accent)' : '1px solid transparent', borderRadius: 4, color: display.popout === 'mixer' ? 'var(--accent)' : 'var(--text-muted)', cursor: 'pointer', padding: '3px 6px', display: 'inline-flex', alignItems: 'center' }}
+              ><ExternalLink size={12} /></button>
               <div style={{ flex: 1 }} />
               {isOffline && (
                 <span style={{
@@ -4009,8 +4025,26 @@ export default function AudioEditor(props: AudioEditorProps) {
       })()}
               {view === 'arrangement' && <ArrangementView />}
               {view === 'arrangement' && <ArrangementMixer />}
-              {view === 'mixer' && <Mixer />}
+              {view === 'mixer' && display.popout !== 'mixer' && <Mixer />}
+              {view === 'mixer' && display.popout === 'mixer' && (
+                <div data-help-id="mixer-away" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, fontSize: 12, color: 'var(--text-muted)' }}>
+                  The mixer is in its own window.
+                  <button onClick={() => setDisplay({ popout: null })} data-help-id="mixer-window-back"
+                    style={{ fontSize: 11, padding: '3px 10px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>Bring it back</button>
+                </div>
+              )}
             </div>
+            {/* A panel out in its own OS window — the same React tree, drawn elsewhere (components/PopOut.tsx). */}
+            {display.popout === 'mixer' && (
+              <PopOut title="Mixer" width={1100} height={560} onClose={() => setDisplay({ popout: null })}>
+                <div data-help-id="mixer-window-content" style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg-base)' }}><Mixer /></div>
+              </PopOut>
+            )}
+            {display.popout === 'clip' && (
+              <PopOut title="Clip view" width={1000} height={520} onClose={() => setDisplay({ popout: null })}>
+                <ClipViewWindow />
+              </PopOut>
+            )}
 
             {/* Piano roll is now rendered inline under each track in TrackRow */}
 

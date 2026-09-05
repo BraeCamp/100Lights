@@ -33,13 +33,15 @@ export type DisplaySettings = {
   waveformScale: 'linear' | 'db'
   /** The status bar along the bottom: Info View on the left, selection on the right. */
   infoView: boolean
+  /** A panel drawn in its own OS window (components/PopOut.tsx). Not persisted: a popup needs a gesture. */
+  popout: 'mixer' | 'clip' | null
 }
 
 export type FollowMode = 'off' | 'page' | 'scroll'
 
 export const DISPLAY_DEFAULT: DisplaySettings = {
   clipEditor: 'pane', uiScale: 100, arrangementMixer: { open: false, section: 'mixer' },
-  overview: true, follow: 'off', waveformScale: 'linear', infoView: true,
+  overview: true, follow: 'off', waveformScale: 'linear', infoView: true, popout: null,
 }
 
 export const UI_SCALE_MIN = 50
@@ -70,6 +72,7 @@ function load() {
     follow: saved.follow === 'page' || saved.follow === 'scroll' ? saved.follow : 'off',
     waveformScale: saved.waveformScale === 'db' ? 'db' : 'linear',
     infoView: saved.infoView !== false,
+    popout: null,
   }
 }
 
@@ -83,7 +86,9 @@ export function displaySettings(): DisplaySettings {
 export function setDisplay(patch: Partial<DisplaySettings>): DisplaySettings {
   load()
   state = { ...state, ...patch, ...(patch.uiScale != null ? { uiScale: clampUiScale(patch.uiScale) } : {}) }
-  writeWorkspace('display', state)
+  const { popout: _popout, ...persisted } = state
+  void _popout
+  writeWorkspace('display', persisted)
   emit()
   return state
 }

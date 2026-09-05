@@ -12,8 +12,8 @@ const check = (label, fn) => {
   catch (e) { failures++; console.log(`FAIL ${label}\n   ${e.message}`) }
 }
 
-check('defaults: clip editor in the pane, 100%, mixer row hidden, overview on, Follow off, linear waveforms, status bar on', () => {
-  assert.deepEqual(DISPLAY_DEFAULT, { clipEditor: 'pane', uiScale: 100, arrangementMixer: { open: false, section: 'mixer' }, overview: true, follow: 'off', waveformScale: 'linear', infoView: true })
+check('defaults: clip editor in the pane, 100%, mixer row hidden, overview on, Follow off, linear waveforms, status bar on, nothing popped out', () => {
+  assert.deepEqual(DISPLAY_DEFAULT, { clipEditor: 'pane', uiScale: 100, arrangementMixer: { open: false, section: 'mixer' }, overview: true, follow: 'off', waveformScale: 'linear', infoView: true, popout: null })
 })
 check('the UI scale clamps to its range and snaps to tens', () => {
   assert.equal(clampUiScale(100), 100)
