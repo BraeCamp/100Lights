@@ -21,6 +21,7 @@ import { legacyToBar } from './effect-bar'
 import { resolveOverlaps } from './note-ops'
 import { clipDefaultsFor, clipDefaultsKey } from './clip-defaults'
 import { followLeader, releaseLeader, setLeader, touchesLeader } from './tempo-leader'
+import { insertTime as insertArrangementTime, deleteTime as deleteArrangementTime, duplicateTime as duplicateArrangementTime } from './arrangement-time'
 import type { CrossfaderCurve } from './crossfader'
 
 // ── Action types ────────────────────────────────────────────────────────
@@ -51,6 +52,7 @@ export type DawAction =
   | { type: 'SET_LANE_OVERRIDDEN'; laneId: string; overridden: boolean }
   | { type: 'REENABLE_ALL_AUTOMATION' }
   | { type: 'ADD_SCENE'; id?: string }
+  | { type: 'ARRANGEMENT_TIME'; op: 'insert' | 'delete' | 'duplicate'; from: number; to?: number; amount?: number }
   | { type: 'INSERT_SCENE'; sceneIndex: number; id?: string; name?: string; clips?: Record<string, DawClip | null> }
   | { type: 'REMOVE_SCENE'; sceneIndex: number }
   | { type: 'UPDATE_SCENE'; sceneIndex: number; patch: Partial<Scene> }
@@ -475,6 +477,21 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
      * list would drift apart and every slot below would belong to the wrong
      * scene. `clips` is keyed by track and may name only some of them.
      */
+    /**
+     * Insert Silence, Delete Time, Duplicate Time — across every track at
+     * once (lib/arrangement-time.ts). Clips, automation, markers and the tempo
+     * map all move together; anything left behind would be quietly wrong for
+     * the rest of the song.
+     */
+    case 'ARRANGEMENT_TIME': {
+      const from = Math.max(0, action.from)
+      if (action.op === 'insert') return insertArrangementTime(project, from, action.amount ?? 0)
+      const to = Math.max(from, action.to ?? from)
+      return action.op === 'delete'
+        ? deleteArrangementTime(project, from, to)
+        : duplicateArrangementTime(project, from, to, () => crypto.randomUUID())
+    }
+
     case 'INSERT_SCENE': {
       const at = Math.max(0, Math.min(project.scenes.length, action.sceneIndex))
       const scene: Scene = { id: action.id ?? crypto.randomUUID(), name: action.name ?? `Scene ${project.scenes.length + 1}` }

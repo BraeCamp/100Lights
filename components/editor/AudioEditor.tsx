@@ -2822,6 +2822,19 @@ export default function AudioEditor(props: AudioEditorProps) {
   ])
 
   // ── Command palette (⌘K): existing audio actions only ────────
+  /**
+   * What span a time command works on: the song loop when one is set, else a
+   * bar at the playhead. Asking somebody to select a range before they can
+   * insert a bar would make the commonest case the slowest one.
+   */
+  const timeSpan = useCallback(() => {
+    const p = projectRef.current
+    if (p?.loopEnabled && (p.loopEnd ?? 0) > (p.loopStart ?? 0)) return { from: p.loopStart, to: p.loopEnd }
+    const bar = p?.timeSignatureNum || 4
+    const at = engineRef.current?.currentBeat ?? 0
+    return { from: at, to: at + bar }
+  }, [])
+
   useRegisterCommands([
     {
       id: 'audio.save', group: 'Audio', label: 'Save', keywords: 'cloud persist', shortcut: keysFor('file.save'),
@@ -2875,6 +2888,17 @@ export default function AudioEditor(props: AudioEditorProps) {
     { id: 'audio.import.autoWarpLong', group: 'Audio', label: importSettings.autoWarpLong ? 'Stop auto-warping long samples on import' : 'Auto-warp long samples on import',
       keywords: 'import long samples auto-warp auto warp song stem straight follow tempo land',
       run: () => setImportSettings({ autoWarpLong: !importSettings.autoWarpLong }) },
+    // Time commands across the whole song (lib/arrangement-time.ts). The span
+    // is the song loop when there is one, else a bar at the playhead.
+    { id: 'audio.time.insert', group: 'Arrangement', label: 'Insert silence — open a gap across every track',
+      keywords: 'insert silence time gap push everything later arrangement all tracks',
+      run: () => { const s = timeSpan(); dispatch({ type: 'ARRANGEMENT_TIME', op: 'insert', from: s.from, amount: s.to - s.from }) } },
+    { id: 'audio.time.delete', group: 'Arrangement', label: 'Delete time — take the span out and close the gap',
+      keywords: 'delete time remove span close gap cut arrangement all tracks',
+      run: () => { const s = timeSpan(); dispatch({ type: 'ARRANGEMENT_TIME', op: 'delete', from: s.from, to: s.to }) } },
+    { id: 'audio.time.duplicate', group: 'Arrangement', label: 'Duplicate time — the span happens twice',
+      keywords: 'duplicate time repeat span twice copy section arrangement all tracks',
+      run: () => { const s = timeSpan(); dispatch({ type: 'ARRANGEMENT_TIME', op: 'duplicate', from: s.from, to: s.to }) } },
     // The shape of the crossfade (lib/crossfader.ts). Spelled out rather than
     // mapped: the discoverability check reads these literally.
     { id: 'audio.xfade.equalPower', group: 'Mixer', label: 'Crossfader curve: Equal power — two sources at the centre are as loud as one at an end',
