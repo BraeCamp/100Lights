@@ -68,6 +68,15 @@ export const KEYMAP: KeyBinding[] = [
   { id: 'edit.redo', keys: '⇧⌘Z', scope: 'global', group: 'Transport & Global', action: 'Redo', command: 'audio.edit.redo' },
   { id: 'file.save', keys: '⌘S', scope: 'global', group: 'Transport & Global', action: 'Save project', command: 'audio.save' },
   { id: 'edit.deleteClip', keys: 'Delete', also: ['Backspace'], scope: 'global', group: 'Transport & Global', action: 'Delete selected clips', command: 'audio.edit.deleteClip' },
+  // The snap grid from ANYWHERE — Live's ⌘1…5. The bare 1–5 below are the
+  // arrangement's and only work when it has focus; these reach it from the
+  // piano roll, the mixer, wherever you are.
+  { id: 'grid.off', keys: '⌘1', scope: 'global', group: 'Transport & Global', action: 'Snap grid: off / 1/16 / 1/8 / beat / bar — from anywhere', display: '⌘1–⌘5', modes: ['music'] },
+  { id: 'grid.16th', keys: '⌘2', scope: 'global', group: 'Transport & Global', action: 'Snap to 1/16', modes: ['music'], hidden: true },
+  { id: 'grid.8th', keys: '⌘3', scope: 'global', group: 'Transport & Global', action: 'Snap to 1/8', modes: ['music'], hidden: true },
+  { id: 'grid.beat', keys: '⌘4', scope: 'global', group: 'Transport & Global', action: 'Snap to the beat', modes: ['music'], hidden: true },
+  { id: 'grid.bar', keys: '⌘5', scope: 'global', group: 'Transport & Global', action: 'Snap to the bar', modes: ['music'], hidden: true },
+
   // Global Quantization (lib/launch.ts) — the one setting you change WHILE
   // playing, so it gets keys rather than a menu.
   //

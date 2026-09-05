@@ -652,6 +652,12 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
     // Punch in / out (lib/punch.ts) — the recorder starting and stopping at the
     // loop brace by itself, so a fix in the middle of a take cannot eat what is
     // either side of it.
+    { id: 'transport.nudgeEarlier', group: 'Transport', label: 'Nudge the song 8 ms earlier (play along with something outside)',
+      keywords: 'nudge earlier phase align sync beatmatch external record ahead',
+      when: () => playing, run: () => engine.nudge(-8) },
+    { id: 'transport.nudgeLater', group: 'Transport', label: 'Nudge the song 8 ms later (play along with something outside)',
+      keywords: 'nudge later phase align sync beatmatch external record behind',
+      when: () => playing, run: () => engine.nudge(8) },
     { id: 'transport.punchIn', group: 'Transport', label: project.punchIn ? 'Punch in off — record as soon as you press record' : 'Punch in — start recording at the loop brace',
       keywords: 'punch in record start brace loop drop fix overdub replace',
       run: () => dispatch({ type: 'SET_PUNCH', punchIn: !project.punchIn }) },
@@ -1083,6 +1089,22 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
       >
         <Repeat size={13} />
       </button>
+
+      {/* Nudge — slide the whole song a few milliseconds against the wall
+          clock, for playing along with something the studio cannot hear. Not
+          an edit: nothing in the project changes. */}
+      <div style={{ display: 'flex', gap: 2 }}>
+        {([['◀', -8, 'earlier'], ['▶', 8, 'later']] as const).map(([glyph, ms, dir]) => (
+          <button key={dir}
+            data-help-id={`nudge-${dir}`}
+            aria-label={`Nudge the song ${dir}`}
+            title={`Nudge the song ${dir} by 8 ms against the wall clock — for playing along with something outside the studio. Hold to keep nudging. Nothing in the project changes.`}
+            disabled={!playing}
+            onClick={() => engine.nudge(ms)}
+            style={{ ...base, padding: '3px 5px', fontSize: 9, opacity: playing ? 1 : 0.35, cursor: playing ? 'pointer' : 'default' }}
+          >{glyph}</button>
+        ))}
+      </div>
 
       {/* Global Quantization (lib/launch.ts) — when a session launch lands, for
           every slot that names none of its own. On the bar because it is the

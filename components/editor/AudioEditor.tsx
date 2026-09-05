@@ -62,6 +62,7 @@ import { useRegisterCommands } from '@/lib/commands'
 import { resolveKey, releasedMomentary, MomentaryLatch, keysFor } from '@/lib/keymap'
 import { bounceSpan, clipsInSpan, bounceName, bouncedTrack, describeBounce, type BounceWhat } from '@/lib/bounce'
 import { historyRows, type HistoryRow } from '@/lib/undo-history'
+import { requestArrangement } from '@/lib/daw-view'
 import { LAUNCH_QUANTIZATIONS, launchQuantShort, DEFAULT_LAUNCH_QUANTIZATION } from '@/lib/launch'
 import { describeAction } from '@/lib/voice/transcript'
 import { useDetail, toggleDetail, detailLabel } from '@/lib/detail-area'
@@ -2753,6 +2754,14 @@ export default function AudioEditor(props: AudioEditorProps) {
         const id = selectedTrackIdRef.current
         if (!id) return false
         void runBounceRef.current(id, 'newTrack')
+        return true
+      }
+      // The snap grid, from anywhere (Live's ⌘1…5). The arrangement owns the
+      // value; this asks it through the channel voice already uses, rather than
+      // lifting the state up for five keys.
+      case 'grid.off': case 'grid.16th': case 'grid.8th': case 'grid.beat': case 'grid.bar': {
+        const snap = ({ 'grid.off': 'off', 'grid.16th': '1/16', 'grid.8th': '1/8', 'grid.beat': 'beat', 'grid.bar': 'bar' } as const)[id as 'grid.off']
+        requestArrangement({ snap })
         return true
       }
       // Global Quantization (lib/launch.ts) — when a session launch lands, for

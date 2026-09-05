@@ -1411,6 +1411,31 @@ export class DawEngine extends EventTarget {
     this.dispatchEvent(new CustomEvent('transport', { detail: { playing: false, beat: this._startBeat } }))
   }
 
+  /**
+   * Nudge: slide the whole transport a few milliseconds earlier or later
+   * against the wall clock, without changing the tempo or the playhead's
+   * position in the song.
+   *
+   * This is for playing along with something the studio cannot hear — a record,
+   * another machine, somebody in the room. You are on the right tempo and the
+   * wrong phase, and no amount of tempo correction fixes phase; you have to
+   * push the whole thing sideways. Live does it by momentarily speeding the
+   * transport up or down, which is the same thing said in the time domain.
+   *
+   * Nothing in the project changes. It is a performance gesture, not an edit,
+   * so there is nothing to undo and nothing to save.
+   */
+  nudge(milliseconds: number): void {
+    if (!this.isPlaying || !Number.isFinite(milliseconds)) return
+    // LATER means the song should happen later, so its start moves forward.
+    this._startCtxTime += milliseconds / 1000
+    this._killAllSources()
+    this._noteKeyVersion++
+    this._scheduledNoteKeys.clear()
+    this._liveScheduledClips.clear()
+    this._nextMetronomeBeat = Math.ceil(this.currentBeat)
+  }
+
   seek(beat: number) {
     const wasPlaying = this.isPlaying
     if (wasPlaying) { this._killAllSources(); this._stopScheduler() }
