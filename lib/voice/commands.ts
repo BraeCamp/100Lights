@@ -2384,6 +2384,45 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
   {
+    id: 'audio_to_midi',
+    tool: 'audio_to_midi',
+    group: 'Arrangement',
+    what: 'Slice an audio clip to a new MIDI track, or convert it to MIDI notes',
+    say: ['slice the vox take clip to a new midi track', 'convert the vox take clip to midi', 'convert the vox take clip harmony to midi', 'convert the vox take clip to midi drums'],
+    match(w, ctx) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      if (!/\bmidi\b/.test(raw)) return null
+      const slice = /\bslice\b/.test(raw)
+      const convert = /\bconvert\b|\bturn\b|\bto midi\b|\binto midi\b|\bas midi\b/.test(raw)
+      if (!slice && !convert) return null
+      // The clip's own name first, as set_clip_audio does — a clip called
+      // "Drums" must not make this a drum conversion of something else.
+      const spoken = (ctx.clips ?? [])
+        .filter(c => c.name && raw.includes(c.name.toLowerCase()))
+        .sort((a, b) => (b.name?.length ?? 0) - (a.name?.length ?? 0))[0] ?? null
+      const rest = spoken?.name ? raw.replace(spoken.name.toLowerCase(), ' ') : raw
+      let target = spoken?.name ?? null
+      let score = 1
+      if (!target) {
+        const hit = clipOrSelected(w, ctx, ['slice', 'slices', 'convert', 'turn', 'clip', 'clips', 'to', 'a', 'an', 'new', 'midi', 'track', 'into', 'as', 'the', 'its',
+          'harmony', 'melody', 'drums', 'drum', 'notes', 'pads', 'transients', 'transient', 'markers', 'marker', 'bar', 'bars', 'grid', 'per', 'every', 'each', 'audio', 'sample'], { dropNums: true })
+        if (!hit) return null
+        target = hit.name
+        score = hit.score
+      }
+      const op = slice ? 'slice' : /\bharmony\b|\bchords?\b/.test(rest) ? 'harmony' : /\bdrums?\b|\bbeat\b|\bkick\b/.test(rest) ? 'drums' : 'melody'
+      const input: Record<string, unknown> = { target, op }
+      if (slice) {
+        const per = /\bmarkers?\b/.test(rest) ? 'markers' : /\b(?:per|every|each|on the|at the)\s+(bar|beat|quarter|eighth|sixteenth|1\/\d+)/.exec(rest)?.[1]
+        if (per) input.per = per
+        const maxM = /\b(?:at most|max(?:imum)?(?: of)?|up to)\s+(\d+)/.exec(rest)
+        if (maxM) input.max = Number(maxM[1])
+      }
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'audio_to_midi', input }], confidence: 0.94, needsName: true }
+    },
+  },
+  {
     id: 'import_settings',
     tool: 'import_settings',
     group: 'View',

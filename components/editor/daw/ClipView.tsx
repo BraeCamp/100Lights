@@ -26,6 +26,8 @@ import { encodeWav } from '@/lib/wav-codec'
 import { RollSoundPanel } from './RollSettings'
 import { clampToViewport } from './menu-clamp'
 import { canConsolidate, consolidateMidiClip } from '@/lib/daw-consolidate'
+import { sliceToNewTrack, convertToNewTrack } from '@/lib/audio-to-track'
+import type { ConvertKind } from '@/lib/slice-to-midi'
 import Waveform from './Waveform'
 import { tempoSegments, tempoAt } from '@/lib/tempo-map'
 import { SCALE_INTERVALS, type ScaleType } from '@/lib/scale-constants'
@@ -267,6 +269,20 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     const transients = detectTransients(buf, ac.startBeat, project.tempo, sensitivity, ac.trimStart ?? 0)
       .filter(b => b > ac.startBeat + 0.01 && b < ac.startBeat + ac.durationBeats - 0.01)
     setTransientDialog({ sensitivity, transients, buf })
+  }
+
+  // Audio → MIDI on a new track (lib/audio-to-track.ts): slice at the
+  // transients, or hear the notes. The clip panel has the dialog with the
+  // slicing choices; the menu does the common case at once.
+  async function toMidi(kind: 'slice' | ConvertKind) {
+    if (!isAudioClip(clip)) return
+    const a = clip as AudioClip
+    const buf = engine.bufferCache.get(a.id) ?? (await engine.loadClipBuffer(a)) ?? null
+    if (!buf) return
+    const r = kind === 'slice'
+      ? await sliceToNewTrack(a, buf, { tempo: project.tempo, barBeats: project.timeSignatureNum || 4, by: 'transients' }, dispatch)
+      : await convertToNewTrack(a, buf, { tempo: project.tempo, kind }, dispatch)
+    console.log(`[to-midi] ${a.name}: ${r.said}`)
   }
 
   function applyTransientSplit() {
@@ -568,6 +584,10 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     { label: 'Spectral Editor', fn: () => onSpectral?.() },
     { label: 'Split at Transients', fn: () => { setCtxPos(null); void handleSplitAtTransients() } },
     { label: 'Slice to Library', fn: () => { setCtxPos(null); void handleSliceToLibrary() } },
+    { label: 'Slice to New MIDI Track', fn: () => { setCtxPos(null); void toMidi('slice') } },
+    { label: 'Convert Harmony to MIDI', fn: () => { setCtxPos(null); void toMidi('harmony') } },
+    { label: 'Convert Melody to MIDI', fn: () => { setCtxPos(null); void toMidi('melody') } },
+    { label: 'Convert Drums to MIDI', fn: () => { setCtxPos(null); void toMidi('drums') } },
     { separator: true },
     saveLibraryItem,
     shareItem,

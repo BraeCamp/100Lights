@@ -26,6 +26,9 @@ import { detectOnsets, monoOf } from '@/lib/onsets'
 import { validMarkers, sortMarkers, beatToSec, secToBeat, insertMarker, moveMarker, removeMarker, set111Here, warpStraight, warpAsLoop, warpAtBpm, quantizeTransients, type WarpMarker } from '@/lib/warp'
 import { useQuantizeSettings, gridLabel } from '@/lib/quantize'
 import { WARP_MODE_LABEL, DEFAULT_BEATS, DEFAULT_TONES, DEFAULT_TEXTURE, type WarpModeName } from '@/lib/warp-modes'
+import { sliceToNewTrack, convertToNewTrack } from '@/lib/audio-to-track'
+import { CONVERT_LABEL, type SliceBy, type ConvertKind } from '@/lib/slice-to-midi'
+import SliceDialog from './SliceDialog'
 
 export default function SampleEditor({ clipId }: { clipId: string }) {
   const { project, dispatch, engine } = useDaw()
@@ -100,6 +103,10 @@ function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
   const [cursorSec, setCursorSec] = useState<number | null>(null)
   const [selMarker, setSelMarker] = useState<number | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; sec: number } | null>(null)
+  // Audio → MIDI (lib/audio-to-track.ts): the slice dialog, what is running, what it said.
+  const [slicing, setSlicing] = useState(false)
+  const [toMidiBusy, setToMidiBusy] = useState<string | null>(null)
+  const [toMidiSaid, setToMidiSaid] = useState('')
   useEffect(() => { setSelMarker(null); setCursorSec(null); setMenu(null) }, [clip.id])
   // The grid the transients quantize to: the Quantize Settings' (lib/quantize.ts),
   // a beat when those follow the editor, or the chooser beside the button.
@@ -191,6 +198,26 @@ function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
   const leader = clip.tempoLeader === true
   const canLead = markers.length >= 2 || segBpm != null
   function toggleLeader() { dispatch({ type: 'SET_TEMPO_LEADER', clipId: leader ? null : clip.id }) }
+  // Slice to New MIDI Track / Convert to MIDI (lib/audio-to-track.ts): a new track beside this clip; the audio stays.
+  async function bufferFor() { return engine.bufferCache.get(clip.id) ?? (await engine.loadClipBuffer(clip)) ?? null }
+  async function slice(by: SliceBy, max: number) {
+    setToMidiBusy('slice')
+    try {
+      const buf = await bufferFor()
+      if (!buf) { setToMidiSaid('The sample has not loaded yet.'); return }
+      const r = await sliceToNewTrack(clip, buf, { tempo, barBeats, by, max }, dispatch)
+      setToMidiSaid(r.said); setSlicing(false)
+    } finally { setToMidiBusy(null) }
+  }
+  async function toMidi(kind: ConvertKind) {
+    setToMidiBusy(kind)
+    try {
+      const buf = await bufferFor()
+      if (!buf) { setToMidiSaid('The sample has not loaded yet.'); return }
+      const r = await convertToNewTrack(clip, buf, { tempo, kind }, dispatch)
+      setToMidiSaid(r.said)
+    } finally { setToMidiBusy(null) }
+  }
   function setModeParams(p: Partial<AudioClip>) { engine.clearStretchedCache(clip.id); patch(p) }
   function saveDefault() {
     if (saveClipDefaults(clip)) { setSavedFlash(true); window.setTimeout(() => setSavedFlash(false), 1500) }
@@ -212,6 +239,16 @@ function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
       keywords: 'warp mode texture granular pads noise grain flux', run: () => setMode('texture') },
     { id: 'clip.tempoLeader', group: 'Clip', label: leader ? 'Release the tempo leader — the song keeps the tempo it has' : 'Make this clip the tempo leader — the song follows its tempo',
       keywords: 'tempo leader master clip follow song tempo drives warp markers seg bpm', when: () => leader || canLead, run: toggleLeader },
+    // Audio → MIDI (lib/audio-to-track.ts).
+    { id: 'clip.slice', group: 'Clip', label: 'Slice to New MIDI Track… — every transient a pad, a MIDI clip playing them',
+      keywords: 'slice slicing new midi track drum rack pads transients chop sample audio to midi', run: () => setSlicing(true) },
+    // Spelled out, not mapped: the discoverability check reads these literally.
+    { id: 'clip.toMidi.harmony', group: 'Clip', label: 'Convert Harmony to MIDI — every voice heard, on a new track',
+      keywords: 'convert harmony to midi audio to midi transcribe chords notes pitch new track', run: () => void toMidi('harmony') },
+    { id: 'clip.toMidi.melody', group: 'Clip', label: 'Convert Melody to MIDI — one line, on a new track',
+      keywords: 'convert melody to midi audio to midi transcribe line tune notes pitch new track', run: () => void toMidi('melody') },
+    { id: 'clip.toMidi.drums', group: 'Clip', label: 'Convert Drums to MIDI — kick, snare and hat from the attacks, on a new drum track',
+      keywords: 'convert drums to midi audio to midi transcribe beat kick snare hat attacks new drum track', run: () => void toMidi('drums') },
     { id: 'clip.segDouble', group: 'Clip', label: `Seg BPM ×2 — the sample tempo doubles${segBpm ? ` (${Math.round(segBpm * 2)})` : ''}`,
       keywords: 'seg bpm sample tempo double octave off original tempo', when: () => segBpm != null, run: () => segBpm && applySegBpm(segBpm * 2) },
     { id: 'clip.segHalve', group: 'Clip', label: `Seg BPM ÷2 — the sample tempo halves${segBpm ? ` (${Math.round(segBpm / 2)})` : ''}`,
@@ -241,7 +278,7 @@ function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
       keywords: 'insert warp marker insert point cursor', shortcut: '⌘I', when: () => cursorSec != null, run: () => cursorSec != null && insertAt(cursorSec) },
     { id: 'clip.clearWarp', group: 'Clip', label: `Clear the warp markers (${markers.length})`,
       keywords: 'clear warp markers remove all reset', when: () => markers.length > 0, run: clearWarp },
-  ], [clip.id, warp, mode, segBpm, clip.pitchSemitones, clip.clipFade, key, details?.sampleRate, details?.channels, details?.seconds, end, cursorSec, transients.length, markers, tempo, barBeats, qGrid, clip.warpBeats, clip.warpTones, clip.warpTexture, leader, canLead])
+  ], [clip.id, warp, mode, segBpm, clip.pitchSemitones, clip.clipFade, key, details?.sampleRate, details?.channels, details?.seconds, end, cursorSec, transients.length, markers, tempo, barBeats, qGrid, clip.warpBeats, clip.warpTones, clip.warpTexture, leader, canLead, toMidiBusy])
 
   const chip = (on: boolean, disabled = false): React.CSSProperties => ({
     fontSize: 9, fontWeight: 600, padding: '2px 7px', borderRadius: 4, cursor: disabled ? 'default' : 'pointer', whiteSpace: 'nowrap', opacity: disabled ? 0.45 : 1,
@@ -314,6 +351,7 @@ function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
           {liveMap ? ` · ${liveMap.length} warp markers` : ''}
           {cursorSec != null ? ` · insert at ${cursorSec.toFixed(3)} s (beat ${+secToClipBeat(cursorSec).toFixed(2)})` : ''}
         </div>
+        {slicing && <SliceDialog barBeats={barBeats} hasMarkers={markers.length >= 2} busy={toMidiBusy === 'slice'} onSlice={(by, max) => void slice(by, max)} onClose={() => setSlicing(false)} />}
         {menu && createPortal(
           <div role="menu" data-help-id="warp-menu" style={{ position: 'fixed', left: Math.min(menu.x, window.innerWidth - 240), top: Math.min(menu.y, window.innerHeight - 330), zIndex: 9999, minWidth: 220, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 0', boxShadow: '0 10px 28px rgba(0,0,0,0.6)' }}
             onMouseLeave={() => setMenu(null)}>
@@ -381,6 +419,19 @@ function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
             <span data-help-id="texture-flux" style={{ fontSize: 9, color: 'var(--text-muted)' }}>flux {Math.round(textureP.flux * 100)}</span>
           </div>
         )}
+        {/* Audio → MIDI (lib/audio-to-track.ts): a new track beside this clip */}
+        <div style={row} data-help-id="clip-to-midi">
+          <span style={lab}>To MIDI</span>
+          <button data-help-id="clip-slice" onClick={() => setSlicing(true)} disabled={!!toMidiBusy} style={chip(false, !!toMidiBusy)}
+            title="Slice to New MIDI Track — every transient (or warp marker, or grid step) becomes a pad of a new drum track, and a MIDI clip plays the pads where the slices sit">{toMidiBusy === 'slice' ? '…' : 'Slice…'}</button>
+          {(['harmony', 'melody', 'drums'] as ConvertKind[]).map(k => (
+            <button key={k} data-help-id={`clip-to-midi-${k}`} onClick={() => void toMidi(k)} disabled={!!toMidiBusy} style={chip(false, !!toMidiBusy)}
+              title={k === 'harmony' ? 'Convert Harmony to MIDI — every voice heard, as notes on a new track' : k === 'melody' ? 'Convert Melody to MIDI — one line, as notes on a new track' : 'Convert Drums to MIDI — the attacks as kick, snare and hat on a new drum track'}>
+              {toMidiBusy === k ? '…' : CONVERT_LABEL[k]}
+            </button>
+          ))}
+        </div>
+        {toMidiSaid && <div data-help-id="to-midi-result" style={{ fontSize: 9, color: 'var(--text-muted)' }}>{toMidiSaid}</div>}
         <div style={row}>
           <span style={lab}>Seg. BPM</span>
           <input data-help-id="clip-seg-bpm" type="number" min={20} max={999} step={0.01} value={segBpm ?? ''} placeholder="—"

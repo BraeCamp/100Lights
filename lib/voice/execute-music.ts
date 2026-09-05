@@ -4573,6 +4573,28 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       }
     }
 
+    // ── AUDIO → MIDI on a new track (lib/audio-to-track.ts) ─────────────
+    // The decoded audio is the studio's: the planner names the clip and the
+    // way, VoiceControl slices or hears it (AUDIO_TO_MIDI).
+    case 'audio_to_midi': {
+      const op = str(i.op).toLowerCase()
+      const found = resolveClip(target, project)
+      if (!found || found.clip.kind !== 'audio') return fail(`I couldn't find an audio clip called "${target || 'that'}" — only audio converts to MIDI.`)
+      const how = clipLabel(project, found.clip)
+      const bar = project.timeSignatureNum || 4
+      if (op === 'slice') {
+        const per = str(i.per).toLowerCase()
+        const by = /marker/.test(per) ? 'markers' : /bar/.test(per) ? bar : /32/.test(per) ? 0.125 : /16|sixteen/.test(per) ? 0.25 : /8|eigh/.test(per) ? 0.5
+          : /quarter|beat|1\/4/.test(per) ? 1 : /half|1\/2/.test(per) ? 2 : 'transients'
+        const max = i.max != null ? spokenNumber(i.max as string) : null
+        const perSaid = by === 'transients' ? 'transient' : by === 'markers' ? 'warp marker' : by === bar ? 'bar' : `${by} beats`
+        return { actions: [{ type: 'AUDIO_TO_MIDI', clipId: found.clip.id, op: 'slice', per: by, ...(max ? { max: clamp(Math.round(max), 1, 64) } : {}) }], say: `Slicing ${how} to a new MIDI track, one slice per ${perSaid}.` }
+      }
+      const kind = /harm|chord/.test(op) ? 'harmony' : /drum|beat/.test(op) ? 'drums' : /mel|line|tune|note/.test(op) ? 'melody' : null
+      if (!kind) return fail('Say what to convert — the harmony, the melody, or the drums.')
+      return { actions: [{ type: 'AUDIO_TO_MIDI', clipId: found.clip.id, op: kind }], say: `Converting ${how}'s ${kind} to MIDI on a new track.` }
+    }
+
     // ── HOW SAMPLES LAND when dropped (lib/import-settings.ts) — a studio setting ──
     case 'import_settings': {
       const out: Record<string, unknown> = { type: 'IMPORT_SETTINGS' }

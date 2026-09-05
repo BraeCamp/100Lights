@@ -817,6 +817,21 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'audio_to_midi',
+    description:
+      'AN AUDIO CLIP TO MIDI, on a NEW track beside it — the audio stays. "Slice the drum loop clip to a new midi track" (op slice: every transient — or warp marker, or grid step, `per` — becomes a pad of a new drum track, and a MIDI clip plays the pads where the slices sit). "Convert the piano clip to midi" / "…the piano clip\'s harmony to midi" (harmony: every voice heard), "convert the vocal clip\'s melody to midi" (melody: one line), "convert the drums clip to midi drums" (drums: the attacks as kick, snare and hat). Local and instant.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: { ...TARGET, description: 'The audio clip.' },
+        op: { type: 'string', enum: ['slice', 'harmony', 'melody', 'drums'] },
+        per: { type: 'string', description: 'Slicing only: "transients" (default), "markers", or a grid — "bar", "1/8", "1/16".' },
+        max: { type: 'number', description: 'Slicing only: at most this many slices (up to 64).' },
+      },
+      required: ['target', 'op'],
+    },
+  },
+  {
     name: 'import_settings',
     description:
       'HOW SAMPLES LAND when dropped or imported (Live\'s Loop/Warp Short Samples and Auto-Warp Long Samples) — a studio setting, not the song. "Import short samples as one-shots" (shortSamples oneshot: play once at their own speed, warp and loop off), "loop short samples when they land" (loop: warped to whole bars and looping), "let Beacon decide" (auto: a length near whole bars at a plausible tempo is a loop, else a one-shot). "Stop auto-warping long samples" / "auto-warp long samples" (autoWarpLong: 30 s and longer warped straight at the song tempo). Changes what future drops become; clips already in the song are untouched.',

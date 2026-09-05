@@ -156,6 +156,8 @@ import { LUMENS_NAME } from '@/lib/credit-tiers'
 import { requestNoteSelection } from '@/lib/note-selection'
 import { validMarkers, warpStraight, quantizeTransients } from '@/lib/warp'
 import { landClip, setImportSettings, describeImportSettings, type ImportSettings } from '@/lib/import-settings'
+import { sliceToNewTrack, convertToNewTrack } from '@/lib/audio-to-track'
+import type { AudioClip as VoiceAudioClip } from '@/lib/daw-types'
 import {
   speak, stopSpeaking, speechEnabled, setSpeechEnabled, speechAvailable,
   studioVoice, setStudioVoice,
@@ -1495,6 +1497,27 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       const ms = quantizeTransients(base, onsets, a.grid > 0 ? a.grid : 0.25)
       dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { warpMarkers: ms, warpEnabled: true } })
       engine?.clearStretchedCache(clip.id)
+      return
+    }
+
+    // Audio → MIDI on a new track (lib/audio-to-track.ts). The decoded buffer
+    // is the studio's; the planner named the clip and the way.
+    if (act.type === 'AUDIO_TO_MIDI') {
+      const a = act as unknown as { clipId: string; op: 'slice' | 'harmony' | 'melody' | 'drums'; per?: 'transients' | 'markers' | number; max?: number }
+      const p = projectRef.current
+      const clip = p?.arrangementClips.find(c => c.id === a.clipId)
+      const buf = engine?.bufferCache.get(a.clipId)
+      if (!p || !clip || clip.kind !== 'audio' || !buf) { setProblem('That clip is still loading — try again in a moment.'); return }
+      void (async () => {
+        try {
+          const r = a.op === 'slice'
+            ? await sliceToNewTrack(clip as VoiceAudioClip, buf, { tempo: p.tempo, barBeats: p.timeSignatureNum || 4, by: a.per ?? 'transients', max: a.max }, dispatch)
+            : await convertToNewTrack(clip as VoiceAudioClip, buf, { tempo: p.tempo, kind: a.op }, dispatch)
+          respond(`${clip.name}: ${r.said}.`)
+        } catch {
+          setProblem(`I could not read ${clip.name}'s audio.`)
+        }
+      })()
       return
     }
 
