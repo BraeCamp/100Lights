@@ -59,6 +59,7 @@ import { DevicePopoutHost } from './daw/DeviceChain'
 import SoundLibraryPanel from './SoundLibrary'
 import { useRegisterCommands } from '@/lib/commands'
 import { resolveKey, releasedMomentary, MomentaryLatch, keysFor } from '@/lib/keymap'
+import { useDetail, toggleDetail, detailLabel } from '@/lib/detail-area'
 import SendToProjectButton from './SendToProjectButton'
 import PolyCodePanel from './daw/PolyCodePanel'
 import GuestPanel from './daw/GuestPanel'
@@ -118,6 +119,7 @@ const PianoRoll = dynamic(() => import('./daw/PianoRoll'), { ssr: false })
 const DeviceChain = dynamic(() => import('./daw/DeviceChain'), { ssr: false })
 const ReturnDeviceChain = dynamic(() => import('./daw/DeviceChain').then(m => ({ default: m.ReturnDeviceChain })), { ssr: false })
 const InstrumentPicker = dynamic(() => import('./daw/InstrumentPicker'), { ssr: false })
+const DetailArea = dynamic(() => import('./daw/DetailArea'), { ssr: false })
 const PadInput = dynamic(() => import('./daw/PadInput'), { ssr: false })
 // Liveblocks only loads for saved projects — keeps collab out of the main editor chunk
 const CollabLayer = dynamic(() => import('./daw/CollabLayer'), { ssr: false })
@@ -2183,6 +2185,7 @@ export default function AudioEditor(props: AudioEditorProps) {
     }
   }, [isPodcast])
   const [view, setView] = useState<DawView>(wsInit.view)
+  const detail = useDetail()
   const [editTarget, setEditTarget] = useState<EditTarget>(null)
   const [selectedTrackId_,  setSelectedTrackId_]  = useState<string | null>(null)
   const [selectedReturnId_, setSelectedReturnId_] = useState<string | null>(null)
@@ -2212,7 +2215,6 @@ export default function AudioEditor(props: AudioEditorProps) {
     }
   })
   const [selectedEffectIds, setSelectedEffectIds] = useState<Set<string>>(new Set())
-  const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
   const [leftTab,     setLeftTab]     = useState<'library' | 'code' | 'episode' | 'setup' | 'guests'>(wsInit.leftTab)
   // Start closed so the rail (logo + toggle) is all that shows on load; the
   // open/hide button reveals the panel on demand rather than it always being there.
@@ -2224,7 +2226,6 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [showAppearance, setShowAppearance] = useState(false)
   const [overlay, setOverlay] = useState<OverlayKind>('none')
   const leftResize = useResizable({ key: 'left-panel', initial: 240, min: 180, max: 520, axis: 'x' })
-  const bottomResize = useResizable({ key: 'bottom-panel', initial: 220, min: 120, max: 560, axis: 'y', invert: true })
 
   // ── Apollo check-in ────────────────────────────────────────────────────────
   // An item developed in standalone Apollo comes home here: its notes and its
@@ -2320,7 +2321,6 @@ export default function AudioEditor(props: AudioEditorProps) {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
 
-  useEffect(() => { setBottomTab('devices') }, [selectedTrackId])
   useEffect(() => { if (!selectedTrackId) setShowPads(false) }, [selectedTrackId])
 
   // ── Save ─────────────────────────────────────────────────────────────────────
@@ -2659,6 +2659,11 @@ export default function AudioEditor(props: AudioEditorProps) {
         // InspectMode owns the mode; the key is the studio's.
         window.dispatchEvent(new CustomEvent('100lights:inspect-toggle'))
         return true
+      // The detail area (lib/detail-area.ts): panes on and off, focus flip, full size.
+      case 'detail.clip': toggleDetail('clip'); return true
+      case 'detail.device': toggleDetail('device'); return true
+      case 'detail.full': toggleDetail('full'); return true
+      case 'detail.flip': window.dispatchEvent(new CustomEvent('100lights:detail-flip')); return true
       default:
         return false
     }
@@ -2675,9 +2680,11 @@ export default function AudioEditor(props: AudioEditorProps) {
         || !!target.closest?.('[role="slider"], [role="combobox"], [role="textbox"], [role="listbox"]')
     }
     function onKeyDown(e: KeyboardEvent) {
-      if (typing(e.target as HTMLElement)) return
       const b = resolveKey(e, ['global'], mode)
       if (!b) return
+      // A focused input or knob owns its keys — except the detail area's
+      // chords (⇧Tab, ⌘⌥3/4/E), which are about the panes, not the field.
+      if (typing(e.target as HTMLElement) && !b.id.startsWith('detail.')) return
       if (b.momentary) {
         e.preventDefault()
         // Auto-repeat while held must not flip it back and forth.
@@ -2792,6 +2799,14 @@ export default function AudioEditor(props: AudioEditorProps) {
     { id: 'audio.view.session',     group: 'Audio', label: 'Switch to Session view',     keywords: 'clips scenes', when: () => !isPodcast && view !== 'session',     run: () => setView('session') },
     { id: 'audio.view.arrangement', group: 'Audio', label: 'Switch to Arrangement view', keywords: 'timeline',      when: () => view !== 'arrangement', run: () => setView('arrangement') },
     { id: 'audio.view.mixer',       group: 'Audio', label: 'Switch to Mixer view',       keywords: 'channels faders', when: () => view !== 'mixer',       run: () => setView('mixer') },
+    // The detail area's panes (lib/detail-area.ts) — the same store the keys
+    // and the toggles at the bottom right use, so the label is always right.
+    { id: 'audio.detail.clip', group: 'Audio', label: detailLabel(detail, 'clip'), keywords: 'clip pane detail area show hide bottom',
+      shortcut: keysFor('detail.clip'), run: () => toggleDetail('clip') },
+    { id: 'audio.detail.device', group: 'Audio', label: detailLabel(detail, 'device'), keywords: 'device pane detail area effects rack show hide bottom',
+      shortcut: keysFor('detail.device'), run: () => toggleDetail('device') },
+    { id: 'audio.detail.full', group: 'Audio', label: detailLabel(detail, 'full'), keywords: 'detail area full size bigger maximize normal',
+      shortcut: keysFor('detail.full'), run: () => toggleDetail('full') },
     {
       id: 'audio.library', group: 'Audio', label: 'Open Sound Library', keywords: 'instruments sounds browser', shortcut: keysFor('view.library'),
       when: () => !isPodcast,
@@ -2853,7 +2868,7 @@ export default function AudioEditor(props: AudioEditorProps) {
       keywords: `density spacing compact smaller bigger room ${DENSITY_INFO[d].blurb}`,
       run: () => setDensity(d),
     })),
-  ], [view, isPodcast, props.onSave, props.readOnly, dispatch, density, setDensity])
+  ], [view, isPodcast, props.onSave, props.readOnly, dispatch, density, setDensity, detail])
 
   // ── Sounds and tracks, by name ───────────────────────────────────────────────
   //
@@ -3951,62 +3966,8 @@ export default function AudioEditor(props: AudioEditorProps) {
 
             {/* Piano roll is now rendered inline under each track in TrackRow */}
 
-            {/* Device chain / instrument panel — shown when a track or return is selected */}
-            {(selectedTrackId !== null || selectedReturnId !== null) && (
-              <div style={{ flexShrink: 0, borderTop: '1px solid var(--border)', background: 'var(--bg-base)', position: 'relative' }}>
-                <ResizeHandle axis="y" edge="top" onPointerDown={bottomResize.handleProps.onPointerDown} />
-                {/* Tab bar */}
-                <div style={{ height: 28, display: 'flex', alignItems: 'center', gap: 1, padding: '0 8px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
-                  {selectedTrackId && (['devices', 'instrument'] as const).map(tab => (
-                    <button
-                      key={tab}
-                      onClick={() => setBottomTab(tab)}
-                      data-help-id={`bottom-${tab}`}
-                      style={{ background: bottomTab === tab ? 'var(--bg-card)' : 'transparent', border: bottomTab === tab ? '1px solid var(--border)' : '1px solid transparent', borderRadius: 4, color: bottomTab === tab ? 'var(--text-primary)' : 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '2px 10px', textTransform: 'capitalize' }}
-                    >
-                      {tab === 'devices' ? 'Devices' : 'Instrument'}
-                    </button>
-                  ))}
-                  {/* Name label */}
-                  {(() => {
-                    if (selectedTrackId) {
-                      const t = project.tracks.find(tr => tr.id === selectedTrackId)
-                      return t ? <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 8, borderLeft: `2px solid ${t.color}`, paddingLeft: 6 }}>{t.name}</span> : null
-                    }
-                    if (selectedReturnId) {
-                      const rt = project.returnTracks.find(r => r.id === selectedReturnId)
-                      return rt ? <span style={{ fontSize: 10, color: 'var(--accent-light)', marginLeft: 8, borderLeft: `2px solid ${rt.color}`, paddingLeft: 6 }}>{rt.name} — FX</span> : null
-                    }
-                    return null
-                  })()}
-                  {/* Pad Input toggle — only for MIDI / drum tracks */}
-                  {selectedTrackId && (() => {
-                    const t = project.tracks.find(tr => tr.id === selectedTrackId)
-                    // Show whenever the track has an instrument — track.type stays
-                    // 'audio' even after picking one, so gate on the instrument
-                    return t && (t.type !== 'audio' || t.instrument.type !== 'none') ? (
-                      <button
-                        onClick={() => setShowPads(v => !v)}
-                        title="Open pad / keyboard input"
-                        data-help-id="pads"
-                        style={{ marginLeft: 8, background: showPads ? 'var(--accent)' : 'transparent', border: showPads ? '1px solid var(--accent)' : '1px solid var(--border)', borderRadius: 4, color: showPads ? 'var(--accent-contrast)' : 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '2px 8px' }}
-                      ><span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Keyboard size={12} /> Pads</span></button>
-                    ) : null
-                  })()}
-                  <button
-                    onClick={() => { setSelectedTrackId(null); setSelectedReturnId(null) }}
-                    style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: '0 4px' }}
-                    title="Close panel"
-                  ><X size={16} /></button>
-                </div>
-                {/* Panel content */}
-                <div style={{ height: bottomResize.size, overflowY: 'auto', overflowX: 'auto' }}>
-                  {selectedTrackId && bottomTab === 'devices'    && <DeviceChain trackId={selectedTrackId} />}
-                  {selectedTrackId && bottomTab === 'instrument' && <InstrumentPicker trackId={selectedTrackId} />}
-                  {selectedReturnId && <ReturnDeviceChain returnId={selectedReturnId} />}
-                </div>
-              </div>
-            )}
+            {/* The detail area: the clip pane above the device pane (components/editor/daw/DetailArea.tsx). */}
+            <DetailArea />
           </div>
         </div>
       </div>

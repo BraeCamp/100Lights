@@ -43,7 +43,7 @@ check('the studio keys resolve', () => {
 check('a modifier that is not in the chord is a different key', () => {
   assert.equal(resolveKey(key(' ', { code: 'Space', metaKey: true }), ['global']), null)
   assert.equal(resolveKey(letter('m', { altKey: true }), ['global']), null)
-  assert.equal(resolveKey(key('Tab', { shiftKey: true }), ['global']), null)
+  assert.equal(resolveKey(letter('m', { shiftKey: true }), ['global']), null)
 })
 
 check('the library moved off B — B alone does nothing; ⌘⌥B opens it, even when ⌥ turns the letter into ∫', () => {

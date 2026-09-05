@@ -54,6 +54,9 @@ const EXPECTED = [
   ['duplicate clip',       ['duplicate clip', 'duplicate ']],
   ['deactivate clip',      ['deactivate', 'activate']],
   ['lfo modulation',       ['lfo', 'wobble']],
+  ['clip pane',            ['clip pane']],
+  ['device pane',          ['device pane']],
+  ['detail area full size', ['full size']],
   ['split / splice clip',  ['splice', 'split']],
   ['rename clip',          ['rename clip', 'rename ']],
 

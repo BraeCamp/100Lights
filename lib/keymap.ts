@@ -77,6 +77,12 @@ export const KEYMAP: KeyBinding[] = [
   // here so the help panel knows, and so nothing else can take ⌘K.
   { id: 'palette.open', keys: '⌘K', also: ['⇧⌘P'], scope: 'global', group: 'Transport & Global', action: 'Command palette — every action, by name' },
 
+  // ── Detail area (the clip pane above the device pane) ───────────────────
+  { id: 'detail.flip', keys: '⇧Tab', scope: 'global', group: 'Detail Area', action: 'Flip keyboard focus between the clip pane and the device pane' },
+  { id: 'detail.clip', keys: '⌘⌥3', scope: 'global', group: 'Detail Area', action: 'Show / hide the clip pane' },
+  { id: 'detail.device', keys: '⌘⌥4', scope: 'global', group: 'Detail Area', action: 'Show / hide the device pane' },
+  { id: 'detail.full', keys: '⌘⌥E', scope: 'global', group: 'Detail Area', action: 'Detail area full size / back to normal' },
+
   // ── Arrangement — selection & editing ──────────────────────────────────
   { id: 'clip.nudgeLeft', keys: '←', scope: 'arrangement', group: 'Arrangement — selection & editing', action: 'Nudge selected clips by snap (⇧ = 1 beat)', display: '← / →' },
   { id: 'clip.nudgeRight', keys: '→', scope: 'arrangement', group: 'Arrangement — selection & editing', action: 'Nudge selected clips by snap (⇧ = 1 beat)', hidden: true },
