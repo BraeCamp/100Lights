@@ -1226,6 +1226,8 @@ const COMMANDS: VoiceCommand[] = [
       // against every candidate by edit distance; on a long sentence, three
       // rules doing that pushed the whole read past its 25 ms budget.
       if (!/activat|disabl|enabl|park|\b(?:turn|switch|bring)\b/.test(raw)) return null
+      // "deactivate the pad notes" is the NOTES (edit_notes); a clip is never called notes or chords.
+      if (/\bnotes?\b|\bchords?\b/.test(w.raw.toLowerCase())) return null
       const off = w.has('deactivate', 'disable') || w.exact('park')
         || /\b(?:turn|switch)\b[^.]*\bclip\b[^.]*\boff\b/.test(raw)
       const on = w.has('activate', 'reactivate', 'enable') || w.exact('unpark')
