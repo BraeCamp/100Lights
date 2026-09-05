@@ -470,6 +470,19 @@ corrected three of the rows above:
 - Whether Beacon's comping supports the draw-to-comp gesture and whether
   its note preview does step entry when armed were not confirmed.
 
+## 5b. The plan
+
+`INTEGRATION-PLAN.md` turns every gap above and in the second pass into
+twelve batches: a foundations batch (clip/track active flag, knob param
+spec, one key map with momentary latching, a PCM take recorder, an
+engine modulation bus, the detail-area container, per-device latency),
+then the screen, Draw Mode and the note editor, the audio clip editor
+and warping, session completion, arrangement/automation/bounce, mixer
+and routing, devices/racks/modulation/OTT, browser/grooves/files, export
+and quality, learn/settings/accessibility, and video/MIDI-out/control
+surfaces as the stretch. Each batch names its files, its QA and its
+first visible win; §13 there is the definition of done.
+
 ## 6. Where this fits
 
 `research/REBUILD-PLAN.md` set the direction (Session/Arrangement as two
