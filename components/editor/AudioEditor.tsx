@@ -61,6 +61,7 @@ import { useRegisterCommands } from '@/lib/commands'
 import { resolveKey, releasedMomentary, MomentaryLatch, keysFor } from '@/lib/keymap'
 import { useDetail, toggleDetail, detailLabel } from '@/lib/detail-area'
 import { useDisplaySettings, setDisplay } from '@/lib/display-settings'
+import { applyUiScale, stepUiScale } from '@/lib/ui-scale'
 import SendToProjectButton from './SendToProjectButton'
 import PolyCodePanel from './daw/PolyCodePanel'
 import GuestPanel from './daw/GuestPanel'
@@ -2190,6 +2191,8 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [view, setView] = useState<DawView>(wsInit.view)
   const detail = useDetail()
   const display = useDisplaySettings()
+  // The UI scale is a stylesheet on the document (lib/ui-scale.ts); it follows the setting.
+  useEffect(() => { applyUiScale(display.uiScale) }, [display.uiScale])
   const [editTarget, setEditTarget] = useState<EditTarget>(null)
   const [selectedTrackId_,  setSelectedTrackId_]  = useState<string | null>(null)
   const [selectedReturnId_, setSelectedReturnId_] = useState<string | null>(null)
@@ -2669,6 +2672,9 @@ export default function AudioEditor(props: AudioEditorProps) {
       case 'detail.full': toggleDetail('full'); return true
       case 'detail.flip': window.dispatchEvent(new CustomEvent('100lights:detail-flip')); return true
       case 'view.info': setDisplay({ infoView: !display.infoView }); return true
+      case 'view.scaleUp': setDisplay({ uiScale: stepUiScale(display.uiScale, 1) }); return true
+      case 'view.scaleDown': setDisplay({ uiScale: stepUiScale(display.uiScale, -1) }); return true
+      case 'view.scaleReset': setDisplay({ uiScale: 100 }); return true
       case 'view.arrangementMixer': {
         if (view !== 'arrangement') setView('arrangement')
         const am = display.arrangementMixer
@@ -2821,6 +2827,15 @@ export default function AudioEditor(props: AudioEditorProps) {
     { id: 'audio.view.arrMixer', group: 'Audio', label: `${display.arrangementMixer.open ? 'Hide' : 'Show'} the mixer under the arrangement`,
       keywords: 'mixer strip arrangement faders sends returns crossfader in out section', shortcut: keysFor('view.arrangementMixer'), when: () => !isPodcast,
       run: () => { if (view !== 'arrangement') setView('arrangement'); setDisplay({ arrangementMixer: { ...display.arrangementMixer, open: !display.arrangementMixer.open } }) } },
+    { id: 'audio.view.scaleUp', group: 'View', label: `Bigger interface (UI scale ${display.uiScale}% → ${stepUiScale(display.uiScale, 1)}%)`,
+      keywords: 'ui scale zoom display bigger larger text interface size', shortcut: keysFor('view.scaleUp'), when: () => display.uiScale < 200,
+      run: () => setDisplay({ uiScale: stepUiScale(display.uiScale, 1) }) },
+    { id: 'audio.view.scaleDown', group: 'View', label: `Smaller interface (UI scale ${display.uiScale}% → ${stepUiScale(display.uiScale, -1)}%)`,
+      keywords: 'ui scale zoom display smaller text interface size', shortcut: keysFor('view.scaleDown'), when: () => display.uiScale > 50,
+      run: () => setDisplay({ uiScale: stepUiScale(display.uiScale, -1) }) },
+    { id: 'audio.view.scaleReset', group: 'View', label: 'Interface at 100% (reset UI scale)',
+      keywords: 'ui scale zoom display reset normal size', shortcut: keysFor('view.scaleReset'), when: () => display.uiScale !== 100,
+      run: () => setDisplay({ uiScale: 100 }) },
     { id: 'audio.view.info', group: 'Audio', label: `${display.infoView ? 'Hide' : 'Show'} the status bar (Info View)`,
       keywords: 'info view status bar help text hover selection readout', shortcut: keysFor('view.info'),
       run: () => setDisplay({ infoView: !display.infoView }) },

@@ -1,6 +1,6 @@
 'use client'
 
-import { useDisplaySettings, setDisplay } from '@/lib/display-settings'
+import { useDisplaySettings, setDisplay, UI_SCALE_MIN, UI_SCALE_MAX, UI_SCALE_STEP } from '@/lib/display-settings'
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X, RotateCcw, Save, Upload, Trash2, Check, ExternalLink } from 'lucide-react'
@@ -140,6 +140,17 @@ export default function AppearancePanel({ onClose, editorKind }: { onClose: () =
         {/* Display & Input — layout and size, not colour (lib/display-settings.ts) */}
         <div style={section} data-help-id="display-settings">
           <p style={label}>Display &amp; Input</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)', flex: 1 }}>UI scale</span>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums', minWidth: 36, textAlign: 'right' }}>{display.uiScale}%</span>
+            </label>
+            <input type="range" min={UI_SCALE_MIN} max={UI_SCALE_MAX} step={UI_SCALE_STEP} value={display.uiScale} aria-label="UI scale" data-help-id="ui-scale"
+              onChange={e => setDisplay({ uiScale: Number(e.target.value) })} style={{ width: '100%', accentColor: 'var(--accent)' }} />
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.45 }}>
+              Bigger or smaller chrome — bars, buttons, labels — from 50% to 200% (⌘+ / ⌘−, ⌘0 resets). The timeline, the note grid and the knobs keep their size so nothing you click moves under the pointer.
+            </span>
+          </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)' }}>Clip editor</span>
             {([['pane', 'Bottom pane', 'The notes of the selected clip open in the clip pane at the bottom of the studio, above the devices — the selection leads.'],

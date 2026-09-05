@@ -75,6 +75,10 @@ export const KEYMAP: KeyBinding[] = [
   { id: 'help.open', keys: 'H', also: ['?'], scope: 'global', group: 'Transport & Global', action: 'Open this help menu', display: 'H or ?' },
   { id: 'view.arrangementMixer', keys: '⌘⌥M', scope: 'global', group: 'Transport & Global', action: 'Show / hide the mixer under the arrangement', modes: ['music'] },
   { id: 'view.info', keys: '⌘⌥I', scope: 'global', group: 'Transport & Global', action: 'Show / hide the status bar — Info View and the selection readout' },
+  // Live's Zoom Display. `=` is the unshifted key under `+` on every layout.
+  { id: 'view.scaleUp', keys: '⌘=', also: ['⌘+'], scope: 'global', group: 'Transport & Global', action: 'Bigger interface — UI scale up 10 %', display: '⌘+' },
+  { id: 'view.scaleDown', keys: '⌘-', scope: 'global', group: 'Transport & Global', action: 'Smaller interface — UI scale down 10 %', display: '⌘−' },
+  { id: 'view.scaleReset', keys: '⌘0', scope: 'global', group: 'Transport & Global', action: 'Interface back to 100 %' },
   // The palette listens for its own chord (CommandPalette.tsx); it is listed
   // here so the help panel knows, and so nothing else can take ⌘K.
   { id: 'palette.open', keys: '⌘K', also: ['⇧⌘P'], scope: 'global', group: 'Transport & Global', action: 'Command palette — every action, by name' },

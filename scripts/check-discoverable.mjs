@@ -62,6 +62,7 @@ const EXPECTED = [
   ['mixer in arrangement', ['mixer under']],
   ['follow playhead',      ['follow']],
   ['info view',            ['info view']],
+  ['ui scale',             ['ui scale', 'bigger interface']],
   ['overview strip',       ['overview']],
   ['waveform db scale',    ['waveforms']],
   ['split / splice clip',  ['splice', 'split']],
