@@ -186,7 +186,14 @@ const PROJECT = {
       })),
     },
   ],
-  scenes: [], sessionGrid: {}, loopStart: 0, loopEnd: 16, loopEnabled: false,
+  // One scene with one slot in it, so the session's own commands (the launch
+  // settings) have something to address — session slots live here, not in
+  // arrangementClips, and nothing else in the fixture can stand in for them.
+  scenes: [{ id: 'sc1', name: 'Scene 1' }],
+  sessionGrid: {
+    t9: [{ kind: 'audio', id: 'sl1', trackId: 't9', name: 'Session take', startBeat: 0, durationBeats: 8, gain: 1, loopEnabled: true, reverse: false, fadeIn: 0, fadeOut: 0, trimStart: 0, trimEnd: 0, bufferDuration: 4 }],
+  },
+  loopStart: 0, loopEnd: 16, loopEnabled: false,
   masterVolume: 1, automationLanes: [], clipEffects: [], returnTracks: [],
   takeLanes: [], crossfaderValue: 0.5, waveformZoom: 1, swing: 0,
   // Markers, so removing one is testable.

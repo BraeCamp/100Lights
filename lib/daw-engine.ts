@@ -32,6 +32,7 @@ import { wsola, extractTrimmed, pitchShiftBuffer } from './wsola'
 import { validMarkers, markersKey, warpStraight, beatToSec } from './warp'
 import { renderWarped } from './warp-render'
 import { DEFAULT_BEATS, DEFAULT_TONES, DEFAULT_TEXTURE, type WarpModeName } from './warp-modes'
+import { onPress, onRelease, repeats, repeatBeats, velocityGain, legatoOffset } from './launch'
 import { detectOnsets, monoOf } from './onsets'
 import { libraryGetByFolder, libraryGetById } from './sound-library'
 import { libraryFulfill, renderPresetAtPitch } from './default-samples'
@@ -93,6 +94,9 @@ interface SessionSlot {
   source: AudioBufferSourceNode | null
   gainNode: GainNode | null
   startContextTime: number
+  /** Seconds into the trimmed sample where this launch began reading. Zero
+   *  normally; on a legato launch, wherever the outgoing clip had got to. */
+  startOffset: number
   launchBeat: number
   loopCount: number
 }
@@ -276,7 +280,13 @@ export class DawEngine extends EventTarget {
   // quantized against transport beats through the tempo map. A track with an
   // active session slot is "taken over": its arrangement content is suppressed
   // until backToArrangement() (or transport stop) releases it.
-  private _sessionQueue      = new Map<string, { clip: AudioClip; launchBeat: number; launchCtxTime: number }>()
+  private _sessionQueue      = new Map<string, { clip: AudioClip; launchBeat: number; launchCtxTime: number; velocity?: number }>()
+  /**
+   * Slots being HELD (lib/launch.ts): Gate stops when the hand lets go, and
+   * Repeat starts the clip again every launch-quantization step until it does.
+   * Keyed by track, since a track plays one slot at a time.
+   */
+  private _sessionHeld = new Map<string, { clipId: string; kind: 'audio' | 'midi' }>()
   private _sessionMidiQueue  = new Map<string, { clip: MidiClip; launchBeat: number; launchCtxTime: number }>()
   private _sessionStopQueue  = new Map<string, { stopBeat: number; stopCtxTime: number }>()
   private _sessionSlots      = new Map<string, SessionSlot>()
@@ -1724,14 +1734,16 @@ export class DawEngine extends EventTarget {
     const now = this.ctx.currentTime
     for (const [trackId, queued] of this._sessionQueue.entries()) {
       if (now + SCHEDULE_LOOKAHEAD >= queued.launchCtxTime) {
-        this._launchSessionSlot(trackId, queued.clip, queued.launchCtxTime, queued.launchBeat)
+        this._launchSessionSlot(trackId, queued.clip, queued.launchCtxTime, queued.launchBeat, queued.velocity)
         this._sessionQueue.delete(trackId)
+        this._queueRepeat(trackId, queued.clip, queued.launchCtxTime, queued.launchBeat, queued.velocity)
       }
     }
     for (const [trackId, queued] of this._sessionMidiQueue.entries()) {
       if (now + SCHEDULE_LOOKAHEAD >= queued.launchCtxTime) {
         this._launchSessionMidiSlot(trackId, queued.clip, queued.launchCtxTime, queued.launchBeat)
         this._sessionMidiQueue.delete(trackId)
+        this._queueRepeatMidi(trackId, queued.clip, queued.launchCtxTime, queued.launchBeat)
       }
     }
     for (const [trackId, s] of this._sessionStopQueue.entries()) {
@@ -1742,10 +1754,37 @@ export class DawEngine extends EventTarget {
         this._sessionStopQueue.delete(trackId)
       }
     }
-    const hasActive = this._sessionQueue.size > 0 || this._sessionSlots.size > 0
+    // Held Repeat slots keep the ticker alive even between retriggers.
+    const hasActive = this._sessionHeld.size > 0 || this._sessionQueue.size > 0 || this._sessionSlots.size > 0
                    || this._sessionMidiQueue.size > 0 || this._sessionMidiSlots.size > 0
                    || this._sessionStopQueue.size > 0
     if (!hasActive) this._stopSessionTicker()
+  }
+
+  /**
+   * Repeat: a held slot starts again every launch-quantization step (a beat
+   * when it has none). Queueing the NEXT launch as this one fires keeps it on
+   * the same clock the first launch resolved to, so the stutter stays in time
+   * however long the finger stays down.
+   */
+  private _queueRepeat(trackId: string, clip: AudioClip, launchCtxTime: number, launchBeat: number, velocity?: number) {
+    if (!repeats(clip.launchMode) || !this.isSessionHeld(trackId, clip.id)) return
+    const beats = repeatBeats(clip.launchQuantization ?? this.launchQuantization, this._beatsPerBar)
+    this._sessionQueue.set(trackId, {
+      clip, velocity,
+      launchBeat: launchBeat + beats,
+      launchCtxTime: launchCtxTime + beats * (60 / (tempoAt(launchBeat, this._tempoSegs) || 120)),
+    })
+  }
+
+  private _queueRepeatMidi(trackId: string, clip: MidiClip, launchCtxTime: number, launchBeat: number) {
+    if (!repeats(clip.launchMode) || !this.isSessionHeld(trackId, clip.id)) return
+    const beats = repeatBeats(clip.launchQuantization ?? this.launchQuantization, this._beatsPerBar)
+    this._sessionMidiQueue.set(trackId, {
+      clip,
+      launchBeat: launchBeat + beats,
+      launchCtxTime: launchCtxTime + beats * (60 / (tempoAt(launchBeat, this._tempoSegs) || 120)),
+    })
   }
 
   // ── Session takeover (a playing slot suppresses the track's arrangement) ──
@@ -1836,16 +1875,21 @@ export class DawEngine extends EventTarget {
     return { queued, nextBeat, beatsRemaining: Math.max(0, nextBeat - this.currentBeat) }
   }
 
-  async queueSession(trackId: string, clip: AudioClip, quantOverride?: LaunchQuantization) {
+  async queueSession(trackId: string, clip: AudioClip, quantOverride?: LaunchQuantization, opts?: { velocity?: number }) {
     if (clip.active === false) return   // a parked clip does not launch
     if (this.ctx.state === 'suspended') await this.ctx.resume()
 
-    // Toggle off if this clip is already playing
+    // What a press means depends on the clip's launch mode (lib/launch.ts).
+    // Toggle — the default, and what Beacon's slots have always done — stops a
+    // clip that is already playing; Trigger, Gate and Repeat start it again.
     const playing = this._sessionSlots.get(trackId)
-    if (playing && playing.clip.id === clip.id) {
+    if (onPress(clip.launchMode, !!playing && playing.clip.id === clip.id) === 'stop') {
       this._stopSessionTrack(trackId)
       return
     }
+    // Gate and Repeat answer the release too, so the hold is remembered.
+    if (onRelease(clip.launchMode) === 'stop') this._sessionHeld.set(trackId, { clipId: clip.id, kind: 'audio' })
+    else this._sessionHeld.delete(trackId)
 
     // Preload buffer BEFORE resolving the boundary — a slow decode must not
     // push the launch past its quantize point.
@@ -1855,12 +1899,35 @@ export class DawEngine extends EventTarget {
     this._announcePlayback()
 
     this._sessionStopQueue.delete(trackId)
-    this._sessionQueue.set(trackId, { clip, launchBeat, launchCtxTime })
+    this._sessionQueue.set(trackId, { clip, launchBeat, launchCtxTime, velocity: opts?.velocity })
     this._ensureSessionTicker()
 
     this.dispatchEvent(new CustomEvent('session-state', {
       detail: { trackId, clipId: clip.id, state: 'queued', launchBeat },
     }))
+  }
+
+  /**
+   * The hand let go of a slot. Gate stops there and then; Repeat stops after
+   * the retrigger it is inside. Every other mode ignores it, so a surface can
+   * call this on every pointer-up without knowing the mode.
+   */
+  releaseSession(trackId: string, clipId?: string) {
+    const held = this._sessionHeld.get(trackId)
+    if (!held || (clipId && held.clipId !== clipId)) return
+    this._sessionHeld.delete(trackId)
+    if (held.kind === 'midi') this._stopSessionMidiTrack(trackId)
+    else this._stopSessionTrack(trackId)
+  }
+
+  /** Seconds into the sample where the playing slot began reading — 0 unless it was launched legato. */
+  getSessionStartOffset(trackId: string): number {
+    return this._sessionSlots.get(trackId)?.startOffset ?? 0
+  }
+
+  /** Is this slot being held down? (Repeat keeps firing while it is.) */
+  isSessionHeld(trackId: string, clipId: string): boolean {
+    return this._sessionHeld.get(trackId)?.clipId === clipId
   }
 
   stopSessionTrack(trackId: string, opts?: { quantized?: boolean }) {
@@ -1900,7 +1967,7 @@ export class DawEngine extends EventTarget {
     // semantics) until backToArrangement() or transport stop.
   }
 
-  private _launchSessionSlot(trackId: string, clip: AudioClip, launchCtxTime: number, launchBeat: number) {
+  private _launchSessionSlot(trackId: string, clip: AudioClip, launchCtxTime: number, launchBeat: number, velocity?: number) {
     const buf = this.bufferCache.get(clip.id)
     if (!buf) return
 
@@ -1909,8 +1976,11 @@ export class DawEngine extends EventTarget {
     this._takeOverTrack(trackId, launchCtxTime)
     this._captureLaunch(trackId, clip, launchBeat)
 
-    // Stop any currently playing slot
+    // Stop any currently playing slot — but read how far it had got first: a
+    // legato launch starts the new clip THERE instead of at its own beginning
+    // (lib/launch.ts), and in a moment there will be nothing left to ask.
     const existing = this._sessionSlots.get(trackId)
+    const outgoingPlayed = existing ? Math.max(0, this.ctx.currentTime - existing.startContextTime) : 0
     if (existing) {
       try { existing.source?.stop() } catch { /* ok */ }
       existing.source?.disconnect()
@@ -1925,23 +1995,27 @@ export class DawEngine extends EventTarget {
       source.loopStart = clip.trimStart
       source.loopEnd   = buf.duration - clip.trimEnd
     }
-    gainNode.gain.value = clip.gain
+    // Velocity Amount: how much the press's velocity reaches the level (lib/launch.ts).
+    gainNode.gain.value = clip.gain * velocityGain(clip.velocityAmount, velocity)
     source.connect(gainNode)
     gainNode.connect(nodes.effectsInput)
 
     const contextNow = this.ctx.currentTime
     const duration   = buf.duration - clip.trimStart - clip.trimEnd
     // If we're past the launch time (scheduled ahead), offset into the clip so the
-    // first loop boundary stays aligned with the session clock
+    // first loop boundary stays aligned with the session clock — plus, on a
+    // legato launch, wherever the outgoing clip had reached.
     const elapsed = Math.max(0, contextNow - launchCtxTime)
-    const offset  = clip.trimStart + (elapsed % duration)
+    const into    = ((clip.legatoLaunch ? legatoOffset(outgoingPlayed, duration) : 0) + (elapsed % duration)) % duration
+    const offset  = clip.trimStart + into
     const startAt = Math.max(contextNow, launchCtxTime)
 
-    source.start(startAt, offset, clip.loopEnabled ? undefined : duration - (elapsed % duration))
+    source.start(startAt, offset, clip.loopEnabled ? undefined : duration - into)
 
     const slot: SessionSlot = {
       clip, source, gainNode,
       startContextTime: startAt,
+      startOffset: into,
       launchBeat,
       loopCount: 0,
     }
@@ -2030,11 +2104,15 @@ export class DawEngine extends EventTarget {
     if (clip.active === false) return   // a parked clip does not launch
     if (this.ctx.state === 'suspended') await this.ctx.resume()
 
+    // The launch mode decides what a press means (lib/launch.ts), the same way
+    // it does for audio slots.
     const playing = this._sessionMidiSlots.get(trackId)
-    if (playing && playing.clip.id === clip.id) {
+    if (onPress(clip.launchMode, !!playing && playing.clip.id === clip.id) === 'stop') {
       this._stopSessionMidiTrack(trackId)
       return
     }
+    if (onRelease(clip.launchMode) === 'stop') this._sessionHeld.set(trackId, { clipId: clip.id, kind: 'midi' })
+    else this._sessionHeld.delete(trackId)
 
     const { launchBeat, launchCtxTime } = await this._resolveLaunch(quantOverride)
     this._announcePlayback()
@@ -2227,10 +2305,13 @@ export class DawEngine extends EventTarget {
     const playing     = this._sessionSlots.get(trackId)
     const midiQueued  = this._sessionMidiQueue.get(trackId)
     const midiPlaying = this._sessionMidiSlots.get(trackId)
-    if (queued?.clip.id      === clipId) return 'queued'
+    // ⚠️ Playing beats queued for the SAME clip. A Repeat slot queues its next
+    // retrigger the instant the current one fires (lib/launch.ts), so a held
+    // pad was permanently "queued" — blinking, never lit — while it sounded.
     if (playing?.clip.id     === clipId) return 'playing'
-    if (midiQueued?.clip.id  === clipId) return 'queued'
     if (midiPlaying?.clip.id === clipId) return 'playing'
+    if (queued?.clip.id      === clipId) return 'queued'
+    if (midiQueued?.clip.id  === clipId) return 'queued'
     return 'idle'
   }
 
@@ -2251,8 +2332,14 @@ export class DawEngine extends EventTarget {
     if (slot) {
       const buf = this.bufferCache.get(slot.clip.id)
       if (!buf) return 0
-      const elapsed  = this.ctx.currentTime - slot.startContextTime
+      // ⚠️ Where the AUDIO is, not how long the slot has been running: a
+      // legato launch starts partway into the sample, and a bar that ignored
+      // that would say "just started" while the middle of the clip played.
+      const elapsed  = this.ctx.currentTime - slot.startContextTime + slot.startOffset
       const duration = buf.duration - slot.clip.trimStart - slot.clip.trimEnd
+      // A slot scheduled a moment ahead has not started yet: that is the top of
+      // the clip, never a negative bar.
+      if (elapsed <= 0) return 0
       if (slot.clip.loopEnabled) return (elapsed % duration) / duration
       return Math.min(1, elapsed / duration)
     }

@@ -819,6 +819,22 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'set_launch',
+    description:
+      'HOW A SESSION SLOT ANSWERS A PRESS (Live\'s Launch box) — "put the drum loop slot in gate mode" (mode gate: it plays while held), "trigger" (press starts it from the top), "toggle" (press again to stop — the default), "repeat" (it starts again every step while held). Also "make the pad slot legato" (legato: a clip launched over a playing one picks up where that one had got to), "set the bass slot\'s velocity amount to 50%" (velocity), and "launch the drums slot on the bar" (quantize). These are the SESSION grid\'s clips, not the arrangement\'s.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: { ...TARGET, description: 'The session slot, by its clip\'s name.' },
+        mode: { type: 'string', enum: ['trigger', 'gate', 'toggle', 'repeat'] },
+        legato: { type: 'boolean', description: 'Launch legato — inherit the playing clip\'s position instead of starting over.' },
+        velocity: { type: 'string', description: 'Velocity Amount as a percentage, "50%" — how much the press\'s velocity reaches the level. 0% ignores it.' },
+        quantize: { type: 'string', enum: ['none', 'beat', 'bar', '2bar', '4bar'], description: 'When the launch lands.' },
+      },
+      required: ['target'],
+    },
+  },
+  {
     name: 'audio_to_midi',
     description:
       'AN AUDIO CLIP TO MIDI, on a NEW track beside it — the audio stays. "Slice the drum loop clip to a new midi track" (op slice: every transient — or warp marker, or grid step, `per` — becomes a pad of a new drum track, and a MIDI clip plays the pads where the slices sit). "Convert the piano clip to midi" / "…the piano clip\'s harmony to midi" (harmony: every voice heard), "convert the vocal clip\'s melody to midi" (melody: one line), "convert the drums clip to midi drums" (drums: the attacks as kick, snare and hat). Local and instant.',

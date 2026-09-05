@@ -871,7 +871,16 @@ export interface AudioClip {
   /** Drawn volume automation across the clip (v 0..1). */
   volGraph?: AutoPoint[]
   color?: string
+  /**
+   * How this slot answers a press in the session (lib/launch.ts). Both clip
+   * shapes carry the same four: when to launch, what a press and a release
+   * mean, whether the launch is legato, and how much the press's velocity
+   * reaches the level.
+   */
   launchQuantization?: LaunchQuantization
+  launchMode?: LaunchMode
+  legatoLaunch?: boolean
+  velocityAmount?: number
   followAction?: FollowAction
   followActionTime?: number  // beats after which follow action fires
 }
@@ -1043,7 +1052,11 @@ export interface MidiClip {
    *  itself is session-only; the trace persists. */
   voiceMap?: { offsetMs: number; points: [number, number][] }
   color?: string
+  /** How this slot answers a press (lib/launch.ts). */
   launchQuantization?: LaunchQuantization
+  launchMode?: LaunchMode
+  legatoLaunch?: boolean
+  velocityAmount?: number
   followAction?: FollowAction
   followActionTime?: number
 }
@@ -1176,6 +1189,8 @@ export type EditTarget =
   | null
 
 export type LaunchQuantization = 'none' | 'beat' | 'bar' | '2bar' | '4bar'
+/** How a session slot answers a press. The behaviour lives in lib/launch.ts. */
+export type LaunchMode = 'trigger' | 'gate' | 'toggle' | 'repeat'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 

@@ -2384,6 +2384,42 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
   {
+    id: 'set_launch',
+    tool: 'set_launch',
+    group: 'Arrangement',
+    what: 'How a session slot answers a press: trigger, gate, toggle, repeat, legato',
+    say: ['put the session take slot in gate mode', 'make the session take slot legato', 'launch the session take slot on the bar'],
+    match(w, ctx) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      // The word "slot" or "launch" is what makes this the session's; a clip in
+      // the arrangement has no launch settings at all.
+      if (!/\bslots?\b|\blaunch/.test(raw)) return null
+      const modeM = /\b(trigger|gate|toggle|repeat)\b/.exec(raw)
+      const legato = /\blegato\b/.test(raw)
+      const velM = /\bvelocity\b[^%\d]*(\d{1,3})\s*(?:%|percent)/.exec(raw)
+      const quantM = /\bon (?:the )?(beat|bar)\b|\bevery (\d) bars?\b|\bno quantiz|\binstant/.exec(raw)
+      if (!modeM && !legato && !velM && !quantM) return null
+      // ⚠️ A session slot is NOT in ctx.clips — that list is the arrangement's,
+      // and the grid is a different place entirely. So the name is not resolved
+      // here at all: whatever is left once the command's own words are taken
+      // out is handed to the planner, which owns the grid and looks it up there.
+      const target = raw
+        .replace(/\b(?:put|set|sets|make|makes|launch|launches|launching|the|a|an|its|it|this|that|slots?|clips?|in|into|on|off|to|at|mode|amount|percent|quantize|quantization|every|no|instant|trigger|gate|toggle|repeat|legato|velocity|beats?|bars?)\b/g, ' ')
+        .replace(/\d+\s*%?/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+      if (!target) return null
+      void ctx
+      const input: Record<string, unknown> = { target }
+      if (modeM) input.mode = modeM[1]
+      if (legato) input.legato = !/\b(?:no|not|stop|off|un-?set)\s+legato\b|\blegato\s+off\b/.test(raw)
+      if (velM) input.velocity = `${velM[1]}%`
+      if (quantM) input.quantize = quantM[2] ? `${quantM[2]}bar` : quantM[1] ? quantM[1] : 'none'
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'set_launch', input }], confidence: 0.94, needsName: true }
+    },
+  },
+  {
     id: 'audio_to_midi',
     tool: 'audio_to_midi',
     group: 'Arrangement',
@@ -2613,6 +2649,10 @@ const COMMANDS: VoiceCommand[] = [
       // A view word beside a thing to do to a track is not a view change:
       // "the mixer channel for the pad", "mixer volume".
       if (/\b(?:volume|level|fader|channel|pan|mute|solo|track|effects?|devices?|clip)\b/.test(raw)) return null
+      // ⚠️ "Session" is also the name of the grid a slot lives in: "put the
+      // session take slot in gate mode" is a launch setting, not a request to
+      // look at the session. A sentence about a slot is never a view change.
+      if (/\bslots?\b|\blaunch/.test(raw)) return null
       if (!/\b(?:show|switch|go|open|back|view|take me|bring up|see|let'?s|to the|the)\b/.test(raw)) return null
       for (const word of w.all) w.markWord(word, 0)
       return { calls: [{ name: 'workspace', input: { view } }], confidence: 0.9 }

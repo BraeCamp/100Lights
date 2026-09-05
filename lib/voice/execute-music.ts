@@ -59,6 +59,7 @@ import { loopRange, workingRange, notesInRange, duplicateLoop, cropToRange, inse
 import { setSegBpm, slipByDrag, cropSample } from '../sample-editor'
 import { warpAsLoop, warpAtBpm, warpStraight } from '../warp'
 import { SHORT_SAMPLE_LABEL, type ShortSampleMode } from '../import-settings'
+import { LAUNCH_MODE_LABEL, LAUNCH_MODE_HELP } from '../launch'
 import { addressTracks, parseTrackAddress, describeTracks, TRACK_WORDS, type TrackAddress } from '../track-address'
 import { viewOf, snapOf, snapLabel, overlayOf, OVERLAY_LABEL } from './workspace'
 import { isSampleRef, sampleRefId } from '../sample-preset'
@@ -4593,6 +4594,52 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       return {
         actions: [...updates, ...lead],
         say: `${targets.length === 1 ? clipLabel(project, targets[0]) : `${targets.length} clips`}: ${said.join(', ')}.`,
+      }
+    }
+
+    // ── A SESSION SLOT'S LAUNCH SETTINGS (lib/launch.ts) ────────────────
+    // ⚠️ Session slots live in project.sessionGrid, not arrangementClips, so
+    // the ordinary clip lookup cannot see them and UPDATE_CLIP cannot change
+    // them. This resolves against the grid and writes with SET_SESSION_SLOT.
+    case 'set_launch': {
+      const want = foldName(target)
+      let found: { trackId: string; sceneIndex: number; clip: DawClip } | null = null
+      for (const [trackId, row] of Object.entries(project.sessionGrid ?? {})) {
+        ;(row ?? []).forEach((c, sceneIndex) => {
+          if (!c || found) return
+          const name = foldName(c.name ?? '')
+          if (want && (name === want || name.includes(want))) found = { trackId, sceneIndex, clip: c }
+        })
+      }
+      if (!found) return fail(`I couldn't find a session slot called "${target || 'that'}".`)
+      const slot = found as { trackId: string; sceneIndex: number; clip: DawClip }
+      const patch: Record<string, unknown> = {}
+      const said: string[] = []
+      const mode = str(i.mode).toLowerCase()
+      if (mode) {
+        const m = /gate|hold/.test(mode) ? 'gate' : /repeat|stutter/.test(mode) ? 'repeat' : /trigger|fire/.test(mode) ? 'trigger' : /toggle/.test(mode) ? 'toggle' : null
+        if (!m) return fail('Say trigger, gate, toggle or repeat.')
+        patch.launchMode = m
+        said.push(`${LAUNCH_MODE_LABEL[m]} — ${LAUNCH_MODE_HELP[m].replace(/\.$/, '').toLowerCase()}`)
+      }
+      if (typeof i.legato === 'boolean') { patch.legatoLaunch = i.legato; said.push(i.legato ? 'launching legato' : 'starting from the top') }
+      if (i.velocity != null) {
+        const v = spokenFraction(str(i.velocity))
+        if (v == null) return fail('Say the velocity amount as a percentage.')
+        patch.velocityAmount = clamp(v, 0, 1)
+        said.push(`velocity amount ${Math.round(clamp(v, 0, 1) * 100)}%`)
+      }
+      const q = str(i.quantize).toLowerCase()
+      if (q) {
+        const lq = /none|off|instant/.test(q) ? 'none' : /4/.test(q) ? '4bar' : /2/.test(q) ? '2bar' : /bar/.test(q) ? 'bar' : /beat/.test(q) ? 'beat' : null
+        if (!lq) return fail('Say none, a beat, a bar, two bars or four bars.')
+        patch.launchQuantization = lq
+        said.push(`launching on ${lq === 'none' ? 'the press' : lq === 'beat' ? 'the beat' : lq === 'bar' ? 'the bar' : `${lq[0]} bars`}`)
+      }
+      if (!said.length) return fail('Say what to change — the launch mode, legato, the velocity amount, or when it launches.')
+      return {
+        actions: [{ type: 'SET_SESSION_SLOT', trackId: slot.trackId, sceneIndex: slot.sceneIndex, clip: { ...slot.clip, ...patch } }],
+        say: `${slot.clip.name ?? 'That slot'}: ${said.join(', ')}.`,
       }
     }
 
