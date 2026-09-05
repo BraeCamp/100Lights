@@ -55,6 +55,7 @@ import { parseNoteAddress, addressNotes, chordsOf, pitchOf, type NoteAddress, ty
 import { splitAt, chopNotes, joinNotes, fitToRange, setActive } from '../note-ops'
 import { parseFilter, findNotes, describeFilter } from '../find-notes'
 import { quantizeNotes as quantizeWithSettings, parseGridSaid } from '../quantize'
+import { loopRange, workingRange, notesInRange, duplicateLoop, cropToRange, insertTime, deleteTime, duplicateTime } from '../clip-time'
 import { addressTracks, parseTrackAddress, describeTracks, TRACK_WORDS, type TrackAddress } from '../track-address'
 import { viewOf, snapOf, snapLabel, overlayOf, OVERLAY_LABEL } from './workspace'
 import { isSampleRef, sampleRefId } from '../sample-preset'
@@ -4515,9 +4516,89 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       const audioOnly = 'fadeIn' in patch || 'fadeOut' in patch || 'gain' in patch || 'reverse' in patch
       const targets = audioOnly ? set.filter(c => c.kind === 'audio') : set
       if (!targets.length) return fail(`${clipLabel(project, set[0])} is a MIDI clip — fades, level and reverse are for audio clips. Its notes have a Sound panel instead.`)
+      // A MIDI clip loops every loopLengthBeats; switching the loop on without
+      // one did nothing audible. A bar, or the clip if shorter (lib/clip-time.ts).
+      const bar = project.timeSignatureNum || 4
+      const patchFor = (c: DawClip) => (c.kind === 'midi' && patch.loopEnabled === true && !(c as MidiClip).loopLengthBeats
+        ? { ...patch, loopLengthBeats: Math.max(1, Math.min(c.durationBeats, bar)) }
+        : c.kind === 'midi' && patch.loopEnabled === false ? { ...patch, loopLengthBeats: undefined } : patch)
       return {
-        actions: targets.map(c => ({ type: 'UPDATE_CLIP', clipId: c.id, patch })),
+        actions: targets.map(c => ({ type: 'UPDATE_CLIP', clipId: c.id, patch: patchFor(c) })),
         say: `${targets.length === 1 ? clipLabel(project, targets[0]) : `${targets.length} clips`}: ${said.join(', ')}.`,
+      }
+    }
+
+    // ── A MIDI CLIP'S LOOP AND TIME (lib/clip-time.ts) ───────────────────
+    case 'clip_time': {
+      const op = str(i.op).toLowerCase()
+      const found = resolveClip(target, project)
+      if (!found || !('notes' in found.clip)) return fail(`I couldn't find a MIDI clip called "${target || 'that'}".`)
+      const clip = found.clip as MidiClip
+      const bar = project.timeSignatureNum || 4
+      const range = workingRange(clip)
+      const how = clipLabel(project, clip)
+      const span = range.end - range.start
+      const lengthBeats = (): { beats: number; said: string } | { problem: string } => {
+        if (i.length == null) return { problem: 'Say how long — "two bars", "eight beats".' }
+        const s = spanOf(i.length, clip.startBeat, maps)
+        if (s.problem || s.beats == null || !(s.beats > 0)) return { problem: s.problem ?? 'Say how long — "two bars".' }
+        return { beats: s.beats, said: s.said ? describeDuration(s.said, s.beats) : `${s.beats} beats` }
+      }
+      switch (op) {
+        case 'set_loop_length': {
+          const l = lengthBeats()
+          if ('problem' in l) return fail(l.problem)
+          return { actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: { loopEnabled: true, loopLengthBeats: l.beats } }], say: `${how} loops every ${l.said}.` }
+        }
+        case 'duplicate_loop': {
+          // A clip that is not looping yet: the whole clip is its loop, so the
+          // request still means something — the clip doubles.
+          const looping = !!loopRange(clip)
+          const src = looping ? clip : { ...clip, loopEnabled: true, loopLengthBeats: clip.durationBeats }
+          const r = duplicateLoop(src, newId, bar)
+          if (!r) return fail(`${how} has nothing to duplicate.`)
+          return {
+            actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: looping ? r : { ...r, loopEnabled: true } }],
+            say: looping ? `Doubled ${how}'s loop to ${+(r.loopLengthBeats / bar).toFixed(2)} bars and copied its notes.` : `${how} was not looping, so the whole clip is the loop now — doubled to ${+(r.loopLengthBeats / bar).toFixed(2)} bars with its notes copied.`,
+          }
+        }
+        case 'crop': {
+          if (!loopRange(clip)) return fail(`${how} has no loop to crop to.`)
+          if (range.end >= clip.durationBeats - 1e-6) return fail(`${how} is already exactly its loop.`)
+          const r = cropToRange(clip, range.start, range.end)
+          if (!r) return fail('Nothing to crop.')
+          return { actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: r }], say: `Cropped ${how} to its loop — ${+(r.durationBeats / bar).toFixed(2)} bars.` }
+        }
+        case 'select_in_loop': {
+          const ns = notesInRange(clip.notes, range.start, range.end)
+          if (!ns.length) return fail(`No notes inside ${how}'s loop.`)
+          return {
+            actions: [{ type: 'SELECT', clipIds: [clip.id], trackId: clip.trackId }, { type: 'SELECT_NOTES', clipId: clip.id, noteIds: ns.map(n => n.id) }],
+            say: `Selected the ${ns.length} note${ns.length === 1 ? '' : 's'} inside ${how}'s loop.`,
+          }
+        }
+        case 'insert_time': {
+          const l = i.length != null ? lengthBeats() : { beats: span, said: `${+(span / bar).toFixed(2)} bars` }
+          if ('problem' in l) return fail(l.problem)
+          return {
+            actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes: insertTime(clip.notes, range.end, l.beats), durationBeats: clip.durationBeats + l.beats } }],
+            say: `Inserted ${l.said} of silence after ${loopRange(clip) ? `${how}'s loop` : how}.`,
+          }
+        }
+        case 'delete_time': {
+          const newDur = Math.max(bar, clip.durationBeats - span)
+          return {
+            actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes: deleteTime(clip.notes, range.start, range.end), durationBeats: newDur, ...(clip.loopLengthBeats ? { loopLengthBeats: Math.min(clip.loopLengthBeats, newDur) } : {}) } }],
+            say: `Deleted ${+(span / bar).toFixed(2)} bars from ${how}${loopRange(clip) ? ' — its loop\'s span' : ''}.`,
+          }
+        }
+        case 'duplicate_time': {
+          return {
+            actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes: duplicateTime(clip.notes, range.start, range.end, newId), durationBeats: clip.durationBeats + span } }],
+            say: `Duplicated ${+(span / bar).toFixed(2)} bars of ${how}.`,
+          }
+        }
+        default: return fail('Say what to do with the loop — set its length, duplicate it, crop to it, or select the notes in it.')
       }
     }
 

@@ -35,6 +35,7 @@ import { StretchMarkers } from './StretchMarkers'
 import { useNoteSelectionRequest, consumeNoteSelection } from '@/lib/note-selection'
 import { quantizeNotes as quantizePatches, useQuantizeSettings, setQuantizeSettings, describeQuantize } from '@/lib/quantize'
 import { QuantizeDialog } from './QuantizeDialog'
+import { loopRange, workingRange, notesInRange, duplicateLoop, cropToRange, insertTime, deleteTime, duplicateTime } from '@/lib/clip-time'
 
 /** Roots a sample can be declared at: C1 to C7, every semitone. */
 const ROOT_CHOICES = Array.from({ length: 73 }, (_, i) => 24 + i)
@@ -565,6 +566,8 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const qSettings = useQuantizeSettings()
   const [qAnchor, setQAnchor] = useState<{ x: number; y: number } | null>(null)
   const qBtnRef = useRef<HTMLButtonElement>(null)
+  // The loop brace (lib/clip-time.ts): selected, it takes the arrow chords.
+  const [braceSelected, setBraceSelected] = useState(false)
   const [findOpen, setFindOpen] = useState(false)
   const [filter, setFilter] = useState<NoteFilter>({})
   // A selection asked for from outside — the voice, the palette — parked
@@ -1002,6 +1005,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
 
     const beat  = snapUnless(e.altKey, rawBeat)
     const pitch = rawPitch
+    if (braceSelected) setBraceSelected(false)
 
     // E held: the split tool (lib/note-ops.ts). A click splits the note under
     // the pointer where it was clicked; a drag splits every note the pointer
@@ -1353,6 +1357,53 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     setQAnchor(r ? { x: r.left, y: r.bottom + 6 } : { x: 240, y: 240 })
   }
 
+  // The loop brace and the time commands (lib/clip-time.ts). The clip's own
+  // time signature draws the bar lines; the song's stands in without one.
+  const barBeats = project.timeSignatureNum || 4
+  const clipBarBeats = clip.timeSignatureNum ? (clip.timeSignatureNum * 4) / (clip.timeSignatureDen || 4) : barBeats
+  const brace = loopRange(clip)
+  function setLoopLength(beats: number) {
+    const L = Math.max(quant, Math.round(beats / quant) * quant)
+    dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { loopEnabled: true, loopLengthBeats: L } })
+  }
+  function toggleLoop() {
+    const on = !clip.loopEnabled
+    dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: on
+      ? { loopEnabled: true, loopLengthBeats: Math.max(quant, clip.loopLengthBeats ?? Math.min(clip.durationBeats, barBeats)) }
+      : { loopEnabled: false, loopLengthBeats: undefined } })
+    if (!on) setBraceSelected(false)
+  }
+  /** Set Loop End: the brace ends where the playhead is, snapped to the grid — a loop captured on the fly. */
+  function setLoopEndHere() {
+    const rel = engine.currentBeat - clip.startBeat
+    if (rel > quant / 2) setLoopLength(rel)
+  }
+  function dupLoop() {
+    const r = duplicateLoop(clip, newNoteId, barBeats)
+    if (r) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: r })
+  }
+  function cropClip() {
+    const { start, end } = workingRange(clip)
+    if (start === 0 && end >= clip.durationBeats - 1e-6) return
+    const r = cropToRange(clip, start, end)
+    if (r) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: r })
+  }
+  function selectInLoop() {
+    const { start, end } = workingRange(clip)
+    setSelectedNotes(new Set(notesInRange(clip.notes, start, end).map(n => n.id)))
+    setBraceSelected(false)
+  }
+  function timeCommand(op: 'insert' | 'delete' | 'duplicate') {
+    const { start, end } = workingRange(clip)
+    const span = end - start
+    if (op === 'insert') dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes: insertTime(clip.notes, end, span), durationBeats: clip.durationBeats + span } })
+    else if (op === 'delete') {
+      const newDur = Math.max(barBeats, clip.durationBeats - span)
+      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes: deleteTime(clip.notes, start, end), durationBeats: newDur, ...(clip.loopLengthBeats ? { loopLengthBeats: Math.min(clip.loopLengthBeats, newDur) } : {}) } })
+    } else dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes: duplicateTime(clip.notes, start, end, newNoteId), durationBeats: clip.durationBeats + span } })
+  }
+  const rangeWord = brace ? 'the loop' : 'the clip'
+
   // The Pitch & Time utilities (lib/pitch-time.ts), on the selection or the
   // whole clip. Each is ONE UPDATE_MIDI_NOTES — one undo step — and the same
   // arithmetic the voice path runs, so "invert the lead" and the Invert button
@@ -1557,6 +1608,25 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       keywords: 'find select notes filter search magnifier every nth quiet loud short long', run: () => setFindOpen(v => !v) },
     { id: 'roll.findSelect', group: 'Notes', label: `Select the ${found.length} notes the Find filter matches`,
       keywords: 'find select apply filter matches', when: () => !filterIsEmpty(filter), run: selectFound },
+    // The loop brace and time commands (lib/clip-time.ts).
+    { id: 'roll.loop', group: 'Notes', label: brace ? `Stop looping the clip (loops every ${+(brace.end / barBeats).toFixed(2)} bars)` : 'Loop the clip — repeat its pattern',
+      keywords: 'loop the clip clip loop repeat pattern brace on off', run: toggleLoop },
+    { id: 'roll.loopSetEnd', group: 'Notes', label: 'Set loop end at the playhead',
+      keywords: 'set loop end length playhead capture on the fly brace', when: () => !!brace, run: setLoopEndHere },
+    { id: 'roll.dupLoop', group: 'Notes', label: 'Duplicate loop — double it and copy its notes',
+      keywords: 'duplicate loop duplicate the loop double loop brace copy repeat', shortcut: '⌘D', when: () => !!brace, run: dupLoop },
+    { id: 'roll.crop', group: 'Notes', label: 'Crop the clip to its loop',
+      keywords: 'crop clip loop trim cut outside remove', shortcut: '⇧⌘J', when: () => !!brace && brace.end < clip.durationBeats - 1e-6, run: cropClip },
+    { id: 'roll.selectInLoop', group: 'Notes', label: 'Select the notes in the loop',
+      keywords: 'select notes in the loop inside the loop material brace', shortcut: '⇧⌘L', when: () => !!brace, run: selectInLoop },
+    { id: 'roll.insertTime', group: 'Notes', label: `Insert time — ${rangeWord}'s length of silence after it`,
+      keywords: 'insert time silence gap push later clip loop', run: () => timeCommand('insert') },
+    { id: 'roll.deleteTime', group: 'Notes', label: `Delete time — remove ${rangeWord}'s span and close the gap`,
+      keywords: 'delete time remove span close gap cut clip loop', run: () => timeCommand('delete') },
+    { id: 'roll.duplicateTime', group: 'Notes', label: `Duplicate time — copy ${rangeWord}'s span after itself`,
+      keywords: 'duplicate time copy span repeat clip loop', run: () => timeCommand('duplicate') },
+    { id: 'roll.clipSig', group: 'Notes', label: clip.timeSignatureNum ? `Clip time signature ${clip.timeSignatureNum}/${clip.timeSignatureDen || 4} — back to the song's` : 'Clip time signature — its own bar lines (choose in the Musical bar)',
+      keywords: 'clip time signature clip signature meter bar lines', when: () => !!clip.timeSignatureNum, run: () => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { timeSignatureNum: undefined, timeSignatureDen: undefined } }) },
     { id: 'roll.selectAll', group: 'Notes', label: 'Select every note in this clip',
       keywords: 'all everything notes select', shortcut: '⌘A',
       run: () => setSelectedNotes(new Set(clip.notes.map(n => n.id))) },
@@ -1594,13 +1664,23 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     { id: 'roll.close', group: 'Notes', label: 'Close the piano roll',
       keywords: 'hide dismiss done back arrangement',
       run: () => { setExpandedPianoRollClipId?.(null); setEditTarget?.(null) } },
-  ], [clip.id, clip.notes, selectedNotes, rollScope, isDrum, quant, project.tempo, project.key, project.scale, groupLabel, fold, foldScale, highlightScale, stepEntry, scaleOn, intervalSize, lengthBeats, humanizeAmount, ptAnchor, chopParts, findOpen, filter, found, clip.loopEnabled, clip.loopLengthBeats, qSettings, qAnchor])
+  ], [clip.id, clip.notes, selectedNotes, rollScope, isDrum, quant, project.tempo, project.key, project.scale, groupLabel, fold, foldScale, highlightScale, stepEntry, scaleOn, intervalSize, lengthBeats, humanizeAmount, ptAnchor, chopParts, findOpen, filter, found, clip.loopEnabled, clip.loopLengthBeats, qSettings, qAnchor, braceSelected, clip.durationBeats, clip.timeSignatureNum, clip.timeSignatureDen, barBeats])
 
   function handleKeyDown(e: React.KeyboardEvent) {
     const selected = clip.notes.filter(n => selectedNotes.has(n.id))
     // What this key means in the roll, from the one table (lib/keymap.ts).
     const kb = resolveKey(e, ['roll'])?.id
 
+    // The loop brace, selected (lib/clip-time.ts): ⌘← / ⌘→ shorten / lengthen
+    // by the grid, ⌘↑ / ⌘↓ double / halve, ⌘D duplicates the loop, Esc lets go.
+    if (braceSelected && brace) {
+      if (kb === 'loop.shorter' || kb === 'loop.longer') { e.preventDefault(); e.stopPropagation(); setLoopLength(brace.end + (kb === 'loop.longer' ? quant : -quant)); return }
+      if (kb === 'notes.velUp' || kb === 'notes.velDown') { e.preventDefault(); e.stopPropagation(); setLoopLength(kb === 'notes.velUp' ? brace.end * 2 : brace.end / 2); return }
+      if (kb === 'notes.duplicate') { e.preventDefault(); e.stopPropagation(); dupLoop(); return }
+      if (kb === 'notes.deselect') { e.preventDefault(); e.stopPropagation(); setBraceSelected(false); return }
+    }
+    if (kb === 'notes.crop') { e.preventDefault(); e.stopPropagation(); cropClip(); return }
+    if (kb === 'notes.selectInLoop') { e.preventDefault(); e.stopPropagation(); selectInLoop(); return }
     if (kb === 'notes.deselect') {
       setSelectedNotes(new Set())
       setChordType(null)
@@ -2253,6 +2333,29 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                   style={{ ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0, background: stepEntry ? 'rgba(245,158,11,0.18)' : 'transparent', color: stepEntry ? '#f59e0b' : 'var(--text-muted)', border: stepEntry ? '1px solid rgba(245,158,11,0.5)' : '1px solid transparent' }}>Step</button>
                 <button ref={ptBtnRef} onClick={openPitchTime} aria-pressed={!!ptAnchor} data-help-id="pitch-time" title="Pitch & Time — transpose, invert, add interval, stretch, set length, humanise, reverse, legato"
                   style={{ ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0, background: ptAnchor ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent', color: ptAnchor ? 'var(--accent-light)' : 'var(--text-muted)', border: ptAnchor ? '1px solid rgb(var(--accent-rgb) / 0.4)' : '1px solid transparent' }}>Pitch &amp; Time</button>
+                {/* The loop brace and time commands (lib/clip-time.ts) */}
+                <div style={{ width: 1, height: 12, background: 'var(--border)', flexShrink: 0, margin: '0 2px' }} />
+                <button onClick={toggleLoop} aria-pressed={!!brace} data-help-id="roll-loop" title={brace ? `Looping every ${+(brace.end / barBeats).toFixed(2)} bars — click to stop` : 'Loop the clip — repeat its pattern every loop length'}
+                  style={{ ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0, background: brace ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent', color: brace ? 'var(--accent-light)' : 'var(--text-muted)', border: brace ? '1px solid rgb(var(--accent-rgb) / 0.4)' : '1px solid transparent' }}>
+                  Loop{brace ? ` ${+(brace.end / barBeats).toFixed(2)}` : ''}
+                </button>
+                {brace && (
+                  <>
+                    <button onClick={setLoopEndHere} data-help-id="roll-loop-set-end" title="Set Loop End — the loop ends where the playhead is (snapped to the grid)"
+                      style={{ ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0 }}>Set End</button>
+                    <button onClick={dupLoop} data-help-id="roll-dup-loop" title="Duplicate Loop (⌘D with the brace selected) — the loop doubles and its notes are copied"
+                      style={{ ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0 }}>Dup Loop</button>
+                    <button onClick={cropClip} data-help-id="roll-crop" title="Crop (⇧⌘J) — notes outside the loop go, the loop becomes the clip"
+                      style={{ ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0 }}>Crop</button>
+                  </>
+                )}
+                <select data-help-id="roll-clip-sig" aria-label="Clip time signature" title="The clip's own time signature — draws its bar lines (the song's without one)"
+                  value={clip.timeSignatureNum ? `${clip.timeSignatureNum}/${clip.timeSignatureDen || 4}` : ''}
+                  onChange={e => { const [n, d] = e.target.value.split('/').map(Number); dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: e.target.value ? { timeSignatureNum: n, timeSignatureDen: d } : { timeSignatureNum: undefined, timeSignatureDen: undefined } }) }}
+                  style={{ fontSize: 9, padding: '0 2px', background: 'transparent', color: clip.timeSignatureNum ? 'var(--text-secondary)' : 'var(--text-muted)', border: '1px solid transparent', borderRadius: 3, flexShrink: 0 }}>
+                  <option value="">{project.timeSignatureNum || 4}/{project.timeSignatureDen || 4} (song)</option>
+                  {['2/4', '3/4', '4/4', '5/4', '6/8', '7/8', '9/8', '12/8'].map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
                 {ptAnchor && (
                   <PitchTimePanel
                     anchor={ptAnchor} onClose={() => setPtAnchor(null)} ignoreOutside={ptBtnRef}
@@ -2373,7 +2476,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
               {Array.from({ length: Math.ceil(totalW / beatW) + 1 }, (_, i) => (
                 <div key={i} style={{
                   position: 'absolute', left: i * beatW, top: 0, bottom: 0, width: 1,
-                  background: i % 4 === 0 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.04)',
+                  background: i % clipBarBeats === 0 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.04)',
                 }} />
               ))}
             </div>
@@ -2428,11 +2531,30 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
               <div data-help-id="step-marker" data-step-beat={stepBeat} style={{ position: 'absolute', top: 0, bottom: 0, left: stepBeat * beatW - scrollLeft, width: 2, background: '#f59e0b', boxShadow: '0 0 4px rgba(245,158,11,0.7)', pointerEvents: 'none', zIndex: 6 }} />
             )}
 
+            {/* The loop brace (lib/clip-time.ts): click to select, drag the end to resize */}
+            {brace && (
+              <div data-help-id="loop-brace" data-loop-end={brace.end} aria-pressed={braceSelected}
+                onMouseDown={e => { e.stopPropagation(); setBraceSelected(true); setSelectedNotes(new Set()) }}
+                title="Loop brace — click to select it; ⌘← / ⌘→ shorten / lengthen by the grid, ⌘↑ / ⌘↓ double / halve, ⌘D duplicates the loop; drag the end to resize"
+                style={{ position: 'absolute', top: 0, left: -scrollLeft, width: Math.max(4, brace.end * beatW), height: 6, zIndex: 9, cursor: 'pointer',
+                  background: braceSelected ? 'var(--accent-light)' : 'rgb(var(--accent-rgb) / 0.55)', borderRadius: '0 0 3px 0' }}>
+                <div data-help-id="loop-brace-end"
+                  onMouseDown={e => {
+                    e.stopPropagation(); e.preventDefault()
+                    const startX = e.clientX, L0 = brace.end
+                    const onMove = (ev: MouseEvent) => setLoopLength(L0 + (ev.clientX - startX) / beatW)
+                    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp) }
+                    document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp)
+                  }}
+                  style={{ position: 'absolute', right: -4, top: -1, width: 8, height: 8, background: 'var(--accent-light)', cursor: 'ew-resize', borderRadius: 2 }} />
+              </div>
+            )}
+
             {/* Stretch markers over a selection of two or more notes (lib/pitch-time.ts) */}
             {selectedNotes.size >= 2 && tool === 'edit' && (
               <StretchMarkers
                 notes={clip.notes.filter(n => selectedNotes.has(n.id))}
-                beatW={beatW} scrollLeft={scrollLeft}
+                beatW={beatW} scrollLeft={scrollLeft} top={brace ? 7 : 0}
                 snap={(b, free) => snapUnless(free, b)}
                 apply={patchMany}
                 onDone={() => settleOverlaps([...selectedNotes])}

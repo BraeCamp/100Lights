@@ -395,6 +395,21 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'clip_time',
+    description:
+      'A MIDI CLIP\'S LOOP AND TIME — "set the pad clip\'s loop to two bars" (set_loop_length), "duplicate the pad\'s loop" (duplicate_loop: the loop doubles and its notes are copied, what came after moves along), "crop the pad clip to its loop" (crop), "select the notes in the pad\'s loop" (select_in_loop), and the time commands on the loop\'s span — or the whole clip when it does not loop: "insert a bar of silence after the pad\'s loop" (insert_time, with `length`), "delete the pad\'s loop time" (delete_time), "duplicate the time of the pad" (duplicate_time). Looping on or off is set_clip_audio\'s `loop`; the SONG loop is set_loop_region.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        op: { type: 'string', enum: ['set_loop_length', 'duplicate_loop', 'crop', 'select_in_loop', 'insert_time', 'delete_time', 'duplicate_time'] },
+        length: { ...LENGTH, description: 'For set_loop_length: the loop\'s length. For insert_time: how much silence (the loop\'s length when omitted).' },
+        ...ADDRESS,
+      },
+      required: ['target', 'op'],
+    },
+  },
+  {
     name: 'transport',
     description:
       'TRANSPORT — play, stop, or return to the start. ALWAYS call this when the sentence ends with "then restart", "then play it", "and play it back", or similar: "restart" means go back to the beginning and play, and it is a real request like any other, not a closing remark. "go to bar 9" moves the playhead — but ONLY when going there is the request itself. A bar mentioned inside a larger sentence is describing WHERE something should happen, not asking to move: "until the 6th bar", "add a crash at bar 5", "make it louder from bar 3" are not transport calls, and moving the playhead during one of them is an edit nobody asked for.',

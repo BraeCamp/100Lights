@@ -47,6 +47,7 @@ import { characterWordsIn } from './preset-character'
 import { parseClipAddress, colourOf } from '../clip-address'
 import { parseNoteAddress, pitchOf } from '../note-address'
 import { parseFilter } from '../find-notes'
+import { parseLoopLength } from '../clip-time'
 import { parseTrackAddress } from '../track-address'
 import { viewOf, snapOf, overlayOf, matchCommand } from './workspace'
 
@@ -1262,6 +1263,9 @@ const COMMANDS: VoiceCommand[] = [
         || (w.has('loop') && w.has('times', 'more'))
         || w.has('double')
       if (!asked) return null
+      // "duplicate the pad loop" is the clip's loop BRACE doubling (clip_time);
+      // a loop word here only means a repeat when it carries a count.
+      if (w.has('loop') && !w.has('times', 'more')) return null
       const hit = clipOrSelected(w, ctx, ['repeat', 'duplicate', 'again', 'copy', 'loop', 'times', 'more',
           'double', 'twice', 'track', 'clip'], { dropNums: true })
       if (!hit) return null
@@ -2276,7 +2280,9 @@ const COMMANDS: VoiceCommand[] = [
       if (w.has('nothing', 'none', 'deselect')) {
         return { calls: [{ name: 'select', input: { what: 'none' } }], confidence: 0.93 }
       }
-      if (w.has('loop')) return { calls: [{ name: 'select', input: { what: 'loop' } }], confidence: 0.93 }
+      // "select the loop" is the song's loop; "select the notes in the loop of
+      // the pad" is a clip's brace — clip_time's.
+      if (w.has('loop')) return /\bnotes?\b/.test(w.raw.toLowerCase()) ? null : { calls: [{ name: 'select', input: { what: 'loop' } }], confidence: 0.93 }
       // Notes inside a clip — Find & Select by voice (lib/find-notes.ts):
       // "select every C in the pad", "select the quiet notes in the lead",
       // "select the notes off the scale in the bass". The clip is what follows
@@ -2397,6 +2403,9 @@ const COMMANDS: VoiceCommand[] = [
       const fadeIn = /\bfade[\s-]*in\b|\bfades?\s+(?:the\s+)?[\w\s]+?\s+in\b/.test(rest)
       const fadeOut = /\bfade[\s-]*out\b|\bfades?\s+(?:the\s+)?[\w\s]+?\s+out\b/.test(rest)
       const reverseSaid = /\b(?:reverse|reversed|backwards?)\b/.test(rest)
+      // Shaping a clip's loop — cropping to it, doubling it, its length, the
+      // notes in it — is clip_time's; this only switches looping on and off.
+      if (/\bcrop\b|\bduplicate\b|\bdouble\b|\bselect\b|\bloop\b.*\bto\b.*\b(?:bars?|beats?)\b|\bloop (?:length|end)\b/.test(rest)) return null
       const loopSaid = /\bloop(?:ed|ing)?\b/.test(rest) && clipWord
       const gainM = clipWord ? /\b(?:to|at)\s+(\d{1,3})\s*(?:%|percent)/.exec(rest) : null
       if (!fadeIn && !fadeOut && !reverseSaid && !loopSaid && !gainM) return null
@@ -3107,6 +3116,38 @@ const COMMANDS: VoiceCommand[] = [
       if (!named) return null
       for (const word of w.all) w.markWord(word, 0)
       return { calls: [{ name: 'stretch_notes', input: { target: named.name, factor } }], confidence: 0.9 }
+    },
+  },
+  {
+    id: 'clip_time',
+    tool: 'clip_time',
+    group: 'Notes',
+    what: 'A clip\'s loop: its length, doubling it, cropping to it, selecting inside it',
+    say: ['set the pad loop to two bars', 'duplicate the pad loop', 'select the notes in the loop of the pad'],
+    match(w, ctx) {
+      const raw = w.raw.toLowerCase()
+      if (!/\bloop/.test(raw)) return null
+      // The SONG loop ("loop the chorus", "loop bars 1 to 5", "select the loop")
+      // and looping a clip on or off belong to other rules; this is a clip's
+      // loop being SHAPED — its length, doubled, cropped to, its notes picked.
+      const op = /\bduplicate\b|\bdouble\b/.test(raw) ? 'duplicate_loop'
+        : /\bcrop\b/.test(raw) ? 'crop'
+          : /\bselect\b/.test(raw) && /\bnotes?\b/.test(raw) ? 'select_in_loop'
+            : /\bloop\b.*\bto\b.*\b(?:bars?|beats?)\b|\bloop (?:length|of)\b.*\b(?:bars?|beats?)\b/.test(raw) && /\b(?:set|make|change)\b/.test(raw) ? 'set_loop_length'
+              : null
+      if (!op) return null
+      const named = nameOrSelected(w, ctx, ['set', 'make', 'change', 'the', 'loop', 'loops', "loop's", 'to', 'of', 'its', 'duplicate', 'double', 'crop', 'clip',
+        'select', 'notes', 'note', 'in', 'inside', 'bar', 'bars', 'beat', 'beats', 'long', 'length', 'one', 'two', 'three', 'four', 'six', 'eight', 'a', 'an'], { dropNums: true })
+      if (!named) return null
+      const input: Record<string, unknown> = { target: named.name, op }
+      if (op === 'set_loop_length') {
+        const beats = parseLoopLength(raw, 4)
+        if (beats == null) return null
+        input.length = { beats }
+      }
+      for (const word of w.all) w.markWord(word, 0)
+      // Above the song-loop and duplicate-clip rules, which share its words.
+      return { calls: [{ name: 'clip_time', input }], confidence: 0.93 }
     },
   },
   {

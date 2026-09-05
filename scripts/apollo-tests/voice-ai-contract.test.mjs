@@ -58,6 +58,7 @@ const CALLS = {
   invert_notes: { target: 'pad clip' },
   stretch_notes: { target: 'pad clip', factor: 2 },
   edit_notes: { target: 'pad clip', op: 'chop', parts: 2 },
+  clip_time: { target: 'pad clip', op: 'set_loop_length', length: { bars: 2 } },
   move_clips: { by: { bars: 1 } },
   insert_clip: { sound: 'crash', at: { bar: 2 } },
   set_tempo: { bpm: 128 },

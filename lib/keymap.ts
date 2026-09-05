@@ -158,7 +158,12 @@ export const KEYMAP: KeyBinding[] = [
   { id: 'notes.split', keys: '⌘E', scope: 'roll', group: 'Piano Roll', action: 'Chop the selected notes on the grid — or, with nothing selected, split at the playhead', modes: ['music'] },
   { id: 'notes.join', keys: '⌘J', scope: 'roll', group: 'Piano Roll', action: 'Join the selected notes on each key into one', modes: ['music'] },
   { id: 'notes.fitRange', keys: '⌘⌥J', scope: 'roll', group: 'Piano Roll', action: 'Fit the selected notes to the loop (or the whole clip)', modes: ['music'] },
-  { id: 'notes.deactivate', keys: '0', scope: 'roll', group: 'Piano Roll', action: 'Deactivate / activate the selected notes — kept in place, dimmed, silent', modes: ['music'] },
+  { id: 'notes.deactivate', keys: '0', scope: 'roll', group: 'Piano Roll', action: 'Deactivate / activate the selected notes — kept in place, dimmed, silent (with none selected, the clip)', modes: ['music'] },
+  // The loop brace (lib/clip-time.ts): click it to select it, then these.
+  { id: 'loop.shorter', keys: '⌘←', scope: 'roll', group: 'Piano Roll', action: 'Loop brace selected: shorten / lengthen the loop by the grid (⌘↑ / ⌘↓ double / halve it, ⌘D duplicates the loop)', modes: ['music'], display: '⌘← / ⌘→' },
+  { id: 'loop.longer', keys: '⌘→', scope: 'roll', group: 'Piano Roll', action: 'Lengthen the loop by the grid', modes: ['music'], hidden: true },
+  { id: 'notes.selectInLoop', keys: '⇧⌘L', scope: 'roll', group: 'Piano Roll', action: 'Select the notes inside the loop brace', modes: ['music'] },
+  { id: 'notes.crop', keys: '⇧⌘J', scope: 'roll', group: 'Piano Roll', action: 'Crop the clip to its loop — notes outside it go, the loop becomes the clip', modes: ['music'] },
 
   // ── Knobs (handled by the focused knob itself; listed so the help panel knows) ──
   { id: 'knob.next', keys: 'Tab', scope: 'knob', group: 'Knobs', action: 'Move between knobs — every knob takes keyboard focus' },

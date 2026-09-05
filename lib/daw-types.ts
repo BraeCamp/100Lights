@@ -984,6 +984,9 @@ export interface MidiClip {
   loopLengthBeats?: number
   /** Recipe clips: edge-resize scales the note pattern to the new length instead of looping. */
   stretchNotes?: boolean
+  /** The clip's own time signature (Live's, display only): it draws the roll's bar lines. Absent = the song's. */
+  timeSignatureNum?: number
+  timeSignatureDen?: number
   /** Pitch class (0=C … 11=B) the pattern is rooted on — the piano roll's Root selector transposes relative to this. */
   rootNote?: number
   presetId?: string   // MIDI preset for note playback (overrides track instrument)

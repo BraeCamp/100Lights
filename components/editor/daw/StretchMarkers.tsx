@@ -16,11 +16,13 @@ import { useRef } from 'react'
 import type { MidiNote } from '@/lib/daw-types'
 import { stretchNotes, warpNotes, type NotePatch } from '@/lib/pitch-time'
 
-export function StretchMarkers({ notes, beatW, scrollLeft, snap, apply, onDone }: {
+export function StretchMarkers({ notes, beatW, scrollLeft, snap, apply, onDone, top = 0 }: {
   /** The selected notes — two or more. */
   notes: MidiNote[]
   beatW: number
   scrollLeft: number
+  /** Pixels down from the grid's top — below the loop brace when there is one. */
+  top?: number
   /** Snap a beat to the grid, unless the drag is free (⌥). */
   snap: (beat: number, free: boolean) => number
   apply: (patches: NotePatch[]) => void
@@ -78,7 +80,7 @@ export function StretchMarkers({ notes, beatW, scrollLeft, snap, apply, onDone }
   )
 
   return (
-    <div data-help-id="stretch-markers" style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 10, pointerEvents: 'none', zIndex: 8 }}>
+    <div data-help-id="stretch-markers" style={{ position: 'absolute', top, left: 0, right: 0, height: 10, pointerEvents: 'none', zIndex: 8 }}>
       <div style={{ position: 'absolute', top: 3, left: x(lo), width: x(hi) - x(lo), height: 2, background: 'rgb(var(--accent-rgb) / 0.35)' }} />
       <div style={{ position: 'absolute', inset: 0, pointerEvents: 'auto' }}>
         {handle('start', lo, 'Stretch marker — drag to stretch the selection from its end; past the other marker mirrors it')}
