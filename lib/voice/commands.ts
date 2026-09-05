@@ -2521,6 +2521,51 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
   {
+    id: 'envelope_shape',
+    tool: 'envelope_shape',
+    group: 'Arrangement',
+    what: 'A known shape into an automation lane, or the points back out of one',
+    say: ['put a sine into the pad automation', 'insert a square shape on the bass 2 automation', 'simplify the pad automation'],
+    match(w, ctx) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      // ⚠️ The sentence has to be about the LANE. "Make the pad wobble" is an
+      // LFO and "open the filter over 8 bars" is a sweep — both far commoner,
+      // and both would be wrong here.
+      if (!/\bautomation\b|\benvelope\b|\blane\b/.test(raw)) return null
+      const simplifying = /\bsimplif|\btidy\b|\bfewer points\b|\bclean up\b/.test(raw)
+      const shapeWord = /\b(sine|triangle|saw|square|ramp|adsr|shape)\b/.exec(raw)
+      if (!simplifying && !shapeWord) return null
+      const cyclesM = /(\d+)\s*(?:cycles?|times|repeats?)/.exec(raw)
+      const target = nameOrSelected(w, ctx,
+        ['put', 'puts', 'insert', 'inserts', 'add', 'adds', 'simplify', 'simplifies', 'tidy', 'clean', 'up',
+         'automation', 'envelope', 'lane', 'shape', 'into', 'onto', 'on', 'of', 'points', 'fewer',
+         'sine', 'triangle', 'saw', 'square', 'ramp', 'adsr', 'inverse', 'cycles', 'times', 'repeats'])
+      if (!target) return null
+      const input: Record<string, unknown> = { target: target.name, op: simplifying ? 'simplify' : 'insert' }
+      // ⚠️ The shape is named HERE, not by handing the planner a window of the
+      // sentence around the shape word. That window cut "ramp up" down to
+      // "ramp", which the planner reads as a saw — so asking for a ramp up got
+      // a seventeen-point sawtooth. The whole sentence is what says which shape
+      // it is, and the order below is most-specific first.
+      if (!simplifying) {
+        input.shape =
+          /\binverse\s+saw|\bsaw\s+(?:inverted|inverse|backwards)|\breverse\s+saw/.test(raw) ? 'inverse saw'
+          : /\badsr\b|\battack.*decay|\benvelope shape\b/.test(raw) ? 'adsr'
+          : /\bramp\s*(?:it\s*)?up\b|\brise\b|\bfade\s*in\b/.test(raw) ? 'ramp up'
+          : /\bramp\s*(?:it\s*)?down\b|\bfall\b|\bfade\s*out\b/.test(raw) ? 'ramp down'
+          : /\bsquare\b|\bgate\b/.test(raw) ? 'square'
+          : /\btriangle\b/.test(raw) ? 'triangle'
+          : /\bsaw\b/.test(raw) ? 'saw'
+          : /\bsine\b|\bsin\b|\bwave\b/.test(raw) ? 'sine'
+          : ''
+        if (!input.shape) return null
+      }
+      if (cyclesM) input.cycles = Number(cyclesM[1])
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'envelope_shape', input }], confidence: 0.94, needsName: true }
+    },
+  },
+  {
     id: 'set_automation_arm',
     tool: 'set_automation_arm',
     group: 'Arrangement',

@@ -64,6 +64,7 @@ import { describePunch, punchArmed } from '../punch'
 import { recordGridLabel, type RecordGrid } from '../record-quantize'
 import { CLICK_SOUNDS } from '../metronome'
 import { bounceSpan, clipsInSpan } from '../bounce'
+import { insertShape, simplify, describeSimplify, shapeLabel, type ShapeId } from '../envelope-shapes'
 import { describeFollow, type FollowAction } from '../follow-actions'
 import { plainWordIn, needsAsking, senseFromAnswer, defaultSense, describeSense, askText } from './plain-words'
 import {
@@ -4869,6 +4870,46 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (typeof i.autoWarpLong === 'boolean') { out.autoWarpLong = i.autoWarpLong; said.push(i.autoWarpLong ? 'long samples are auto-warped to the song tempo' : 'long samples are left as they are') }
       if (!said.length) return fail('Say what to change — how short samples land (one-shot, loop, auto), or whether long samples are auto-warped.')
       return { actions: [out], say: `From now on, ${said.join('; ')}. Clips already in the song are unchanged.` }
+    }
+
+    // ── INSERT SHAPE / SIMPLIFY (lib/envelope-shapes.ts) ─────────────────────
+    case 'envelope_shape': {
+      const track = resolveTrack(target, project)
+      if (!track) return fail(`I couldn't find a track called "${target || 'that'}".`)
+      const lanes = (project.automationLanes ?? []).filter(l => l.trackId === track.id)
+      if (!lanes.length) return fail(`"${track.name}" has no automation lanes yet — open one first and I can put a shape in it.`)
+      const lane = lanes[0]
+      const op = /simplif|tidy|clean|fewer/.test(str(i.op).toLowerCase() + ' ' + str(i.shape).toLowerCase()) ? 'simplify' : str(i.op).toLowerCase() === 'simplify' ? 'simplify' : 'insert'
+      if (op === 'simplify') {
+        const next = simplify(lane.points)
+        if (next.length >= lane.points.length) return { actions: [], say: `"${lane.label}" is already as simple as it can be — every point is carrying the shape.` }
+        return {
+          actions: [{ type: 'UPDATE_AUTOMATION_LANE', laneId: lane.id, patch: { points: next } }],
+          say: `${lane.label}: ${describeSimplify(lane.points.length, next.length)}`,
+        }
+      }
+      const said = str(i.shape).toLowerCase()
+      const shape: ShapeId | null =
+        /inverse|reverse|backwards/.test(said) && /saw/.test(said) ? 'sawInverse'
+        : /adsr|attack/.test(said) ? 'adsr'
+        : /ramp\s*up|rise|fade in|up\b/.test(said) ? 'rampUp'
+        : /ramp\s*down|fall|fade out|down\b/.test(said) ? 'rampDown'
+        : /square|gate|on and off/.test(said) ? 'square'
+        : /triangle/.test(said) ? 'triangle'
+        : /saw|ramp/.test(said) ? 'saw'
+        : /sine|sin\b|smooth|wave/.test(said) ? 'sine'
+        : null
+      if (!shape) return fail('Say which shape — a sine, a triangle, a saw, a square, a ramp up or down, or an ADSR.')
+      const bar = project.timeSignatureNum || 4
+      const from = project.loopEnabled && project.loopEnd > project.loopStart ? project.loopStart : 0
+      const to = project.loopEnabled && project.loopEnd > project.loopStart ? project.loopEnd : Math.max(16, ...lane.points.map(p => p.beat))
+      const cycles = Math.max(1, Math.round(Number(i.cycles) || 1))
+      return {
+        actions: [{ type: 'UPDATE_AUTOMATION_LANE', laneId: lane.id, patch: {
+          points: insertShape(lane.points, from, to, shape, () => crypto.randomUUID(), { cycles }),
+        } }],
+        say: `${shapeLabel(shape)}${cycles > 1 ? ` × ${cycles}` : ''} into "${lane.label}" on "${track.name}", bars ${Math.floor(from / bar) + 1} to ${Math.ceil(to / bar)}. What is outside that is untouched.`,
+      }
     }
 
     // ── AUTOMATION ARM (lib/automation-record.ts) ─────────────────────────────

@@ -2,6 +2,7 @@
 
 import { useDisplaySettings } from '@/lib/display-settings'
 import { autoNumber, isNumbered, nextToRename } from '@/lib/rename'
+import { insertShape, simplify, describeSimplify, ENVELOPE_SHAPES, type ShapeId } from '@/lib/envelope-shapes'
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import { useAppear } from '@/components/ui/Appear'
 import { nearestBarBeat, meterSegments } from '@/lib/tempo-map'
@@ -594,7 +595,7 @@ function AutoLaneHeader({ lane, track, choices, onPick }: {
   choices?: AutomationLane[]
   onPick?: (laneId: string) => void
 }) {
-  const { dispatch } = useDaw()
+  const { dispatch, project } = useDaw()
 
   /**
    * Brae: "Have a button on device chain item tracks that opens the effect
@@ -641,6 +642,42 @@ function AutoLaneHeader({ lane, track, choices, onPick }: {
           onMouseLeave={ev => { (ev.currentTarget as HTMLElement).style.color = 'var(--text-muted)' }}
         ><SlidersHorizontal size={10} /></button>
       )}
+      {/* Insert Shape (lib/envelope-shapes.ts): a known shape into the span you
+          are looping over, or the whole lane when nothing is looped. Drawing a
+          clean four-bar sine by hand is impossible and a rough one is
+          pointless, so a shape you can ask for is worth having. */}
+      <select
+        data-help-id="insert-shape"
+        aria-label="Insert shape"
+        value=""
+        title="Insert a shape across the song loop — or the whole lane when nothing is looped. What is outside the span is left alone."
+        onChange={e => {
+          const shape = e.target.value as ShapeId
+          if (!shape) return
+          e.target.value = ''
+          const from = project.loopEnabled ? project.loopStart : 0
+          const to = project.loopEnabled ? project.loopEnd : Math.max(16, ...lane.points.map(p => p.beat))
+          dispatch({ type: 'UPDATE_AUTOMATION_LANE', laneId: lane.id, patch: {
+            points: insertShape(lane.points, from, to, shape, () => crypto.randomUUID()),
+          } })
+        }}
+        style={{ width: 18, fontSize: 9, background: 'transparent', border: '1px solid var(--border)', borderRadius: 2, color: 'var(--text-muted)', cursor: 'pointer', padding: 0, flexShrink: 0 }}
+      >
+        <option value="">∿</option>
+        {ENVELOPE_SHAPES.map(sh => <option key={sh.id} value={sh.id} title={sh.hint}>{sh.label}</option>)}
+      </select>
+      {/* Simplify: a recorded gesture arrives as sixty points that read as a
+          line — worth having in the take, unbearable to edit. */}
+      <button
+        data-help-id="simplify-envelope"
+        onClick={() => {
+          const next = simplify(lane.points)
+          if (next.length < lane.points.length) dispatch({ type: 'UPDATE_AUTOMATION_LANE', laneId: lane.id, patch: { points: next } })
+        }}
+        disabled={simplify(lane.points).length >= lane.points.length}
+        title={describeSimplify(lane.points.length, simplify(lane.points).length)}
+        style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: '1px solid var(--border)', borderRadius: 2, color: 'var(--text-muted)', cursor: 'pointer', fontSize: 9, padding: 0, flexShrink: 0 }}
+      >⌁</button>
       <button onClick={() => dispatch({ type: 'CLEAR_AUTOMATION_LANE', laneId: lane.id })} title="Clear" style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: '1px solid var(--border)', borderRadius: 2, color: 'var(--text-muted)', cursor: 'pointer', fontSize: 9, padding: 0, flexShrink: 0 }}><Eraser size={10} /></button>
       <button onClick={() => dispatch({ type: 'REMOVE_AUTOMATION_LANE', laneId: lane.id })} title="Remove lane" style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: '1px solid var(--border)', borderRadius: 2, color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: 0, flexShrink: 0 }}><X size={11} /></button>
     </div>

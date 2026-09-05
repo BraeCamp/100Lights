@@ -69,6 +69,7 @@ const CALLS = {
   bounce_track: { target: 'pad', where: 'new track' },
   set_global_quantization: { quantization: 'bar' },
   set_automation_arm: { mode: 'touch' },
+  envelope_shape: { target: 'pad', op: 'insert', shape: 'sine' },
   sound_like: { target: 'pad', like: 'fuzzier', sense: 'muffled' },
   adjust_it: { how: 'less', size: 'little' },
   move_clips: { by: { bars: 1 } },

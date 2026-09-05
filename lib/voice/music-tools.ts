@@ -867,6 +867,21 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'envelope_shape',
+    description:
+      'A KNOWN SHAPE INTO AN AUTOMATION LANE, OR THE POINTS BACK OUT (Live\'s Insert Shape / Simplify Envelope) — "put a sine into the pad\'s automation" (shape sine; also triangle, saw, inverse saw, square, ramp up, ramp down, adsr), "insert four cycles of a square on the bass" (cycles 4), "simplify the pad\'s envelope" (op simplify). It lands on the song loop when there is one, else the whole lane, and leaves everything outside that span alone. NOT `automate_parameter`, which is a sweep you describe in words.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: { ...TARGET, description: 'The track whose lane to shape.' },
+        op: { type: 'string', enum: ['insert', 'simplify'] },
+        shape: { type: 'string', description: 'sine, triangle, saw, inverse saw, square, ramp up, ramp down, adsr.' },
+        cycles: { type: 'number', description: 'How many times it repeats across the span. Default 1.' },
+      },
+      required: ['target'],
+    },
+  },
+  {
     name: 'set_automation_arm',
     description:
       'WHETHER MOVING A CONTROL WHILE RECORDING WRITES ITS MOVE INTO A LANE (Live\'s Automation Arm) — "record my knob moves" / "arm automation" (mode touch: written while you hold the control, then the lane goes back to what it said), "latch automation" (mode latch: written while you hold and HELD to the end, replacing what was there), "stop recording automation" (mode off). Latch is destructive; touch is not.',

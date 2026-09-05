@@ -64,6 +64,7 @@ import { bounceSpan, clipsInSpan, bounceName, bouncedTrack, describeBounce, type
 import { historyRows, type HistoryRow } from '@/lib/undo-history'
 import { requestArrangement } from '@/lib/daw-view'
 import { laneSpecFor } from '@/lib/daw-effect-params'
+import { insertShape, simplify, describeSimplify, shapeLabel, type ShapeId } from '@/lib/envelope-shapes'
 import {
   recordTargetOf, writeMove, latchTail, latchWouldClear, normalizeForLane,
   describeRecorded, useArmMode, setArmMode, ARM_MODES, armLabel, type ArmMode,
@@ -2668,6 +2669,40 @@ export default function AudioEditor(props: AudioEditorProps) {
     if (cleared > 0) setNotice(describeRecorded(mode, lane.label, beat, project.timeSignatureNum, cleared))
   }
 
+  // ── Insert Shape / Simplify across a track's lanes (lib/envelope-shapes.ts) ─
+  //
+  // The span is the song loop when there is one, else the whole lane — the same
+  // answer to "which part of the song" that every other time command gives.
+  const envSpan = useCallback((points: { beat: number }[]) => {
+    const p = projectRef.current
+    if (p.loopEnabled && p.loopEnd > p.loopStart) return { from: p.loopStart, to: p.loopEnd }
+    return { from: 0, to: Math.max(16, ...points.map(x => x.beat)) }
+  }, [])
+  const insertShapeInto = useCallback((trackId: string, shape: ShapeId) => {
+    const lanes = projectRef.current.automationLanes.filter(l => l.trackId === trackId)
+    // ⚠️ One lane, not all of them. Putting a sine into a track's volume AND
+    // its filter AND its pan because they were all open is not what anybody
+    // means by "insert a shape" — the first lane is the one on screen.
+    const lane = lanes[0]
+    if (!lane) return
+    const { from, to } = envSpan(lane.points)
+    dispatch({ type: 'UPDATE_AUTOMATION_LANE', laneId: lane.id, patch: {
+      points: insertShape(lane.points, from, to, shape, () => crypto.randomUUID()),
+    } })
+    setNotice(`${shapeLabel(shape)} into ${lane.label}, bars ${Math.floor(from / (projectRef.current.timeSignatureNum || 4)) + 1} to ${Math.ceil(to / (projectRef.current.timeSignatureNum || 4))}.`)
+  }, [dispatch, envSpan])
+  const simplifyLanes = useCallback((trackId: string) => {
+    const lanes = projectRef.current.automationLanes.filter(l => l.trackId === trackId)
+    let before = 0, after = 0
+    for (const lane of lanes) {
+      const next = simplify(lane.points)
+      before += lane.points.length
+      after += next.length
+      if (next.length < lane.points.length) dispatch({ type: 'UPDATE_AUTOMATION_LANE', laneId: lane.id, patch: { points: next } })
+    }
+    setNotice(describeSimplify(before, after))
+  }, [dispatch])
+
   // ── Undo History (lib/undo-history.ts) ─────────────────────────────────────
   //
   // The rows say what a REQUEST was, not what its last action did — the group
@@ -3630,6 +3665,39 @@ export default function AudioEditor(props: AudioEditorProps) {
         },
       }),
     }] : []),
+
+    // ── Insert Shape and Simplify (lib/envelope-shapes.ts) ───────────────────
+    //
+    // These act on the lanes of the selected track over the song loop (or the
+    // whole lane when nothing is looped) — the same span every other time
+    // command uses, so there is one answer to "which part of the song".
+    // Spelled out per shape: the discoverability check reads the labels.
+    ...(paletteTrack && project.automationLanes?.some(l => l.trackId === paletteTrack.id) ? [
+      { id: 'audio.env.sine', group: 'Track', label: `Insert shape: Sine into ${paletteTrack.name}'s automation`,
+        keywords: 'insert shape automation envelope lane sine wave lfo curve smooth', when: () => editable,
+        run: () => insertShapeInto(paletteTrack.id, 'sine') },
+      { id: 'audio.env.triangle', group: 'Track', label: `Insert shape: Triangle into ${paletteTrack.name}'s automation`,
+        keywords: 'insert shape automation envelope lane triangle curve even', when: () => editable,
+        run: () => insertShapeInto(paletteTrack.id, 'triangle') },
+      { id: 'audio.env.saw', group: 'Track', label: `Insert shape: Saw into ${paletteTrack.name}'s automation`,
+        keywords: 'insert shape automation envelope lane saw ramp build reset', when: () => editable,
+        run: () => insertShapeInto(paletteTrack.id, 'saw') },
+      { id: 'audio.env.square', group: 'Track', label: `Insert shape: Square into ${paletteTrack.name}'s automation`,
+        keywords: 'insert shape automation envelope lane square gate on off step', when: () => editable,
+        run: () => insertShapeInto(paletteTrack.id, 'square') },
+      { id: 'audio.env.rampUp', group: 'Track', label: `Insert shape: Ramp up into ${paletteTrack.name}'s automation`,
+        keywords: 'insert shape automation envelope lane ramp up rise line', when: () => editable,
+        run: () => insertShapeInto(paletteTrack.id, 'rampUp') },
+      { id: 'audio.env.rampDown', group: 'Track', label: `Insert shape: Ramp down into ${paletteTrack.name}'s automation`,
+        keywords: 'insert shape automation envelope lane ramp down fall line', when: () => editable,
+        run: () => insertShapeInto(paletteTrack.id, 'rampDown') },
+      { id: 'audio.env.adsr', group: 'Track', label: `Insert shape: ADSR into ${paletteTrack.name}'s automation`,
+        keywords: 'insert shape automation envelope lane adsr attack decay sustain release', when: () => editable,
+        run: () => insertShapeInto(paletteTrack.id, 'adsr') },
+      { id: 'audio.env.simplify', group: 'Track', label: `Simplify envelope — fewest points that draw ${paletteTrack.name}'s same shape`,
+        keywords: 'simplify envelope automation points reduce tidy clean recorded gesture', when: () => editable,
+        run: () => simplifyLanes(paletteTrack.id) },
+    ] : []),
 
     // Importing audio was drag-and-drop ONLY — there was no button, no menu item
     // and no file picker anywhere in the studio. If you didn't happen to try

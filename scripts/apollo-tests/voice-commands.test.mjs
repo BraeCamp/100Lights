@@ -196,7 +196,28 @@ const PROJECT = {
     t9: [{ kind: 'audio', id: 'sl1', trackId: 't9', name: 'Session take', startBeat: 0, durationBeats: 8, gain: 1, loopEnabled: true, reverse: false, fadeIn: 0, fadeOut: 0, trimStart: 0, trimEnd: 0, bufferDuration: 4 }],
   },
   loopStart: 0, loopEnd: 16, loopEnabled: false,
-  masterVolume: 1, automationLanes: [], clipEffects: [], returnTracks: [],
+  masterVolume: 1,
+  // ⚠️ A real project has automation in it. This was empty, which meant every
+  // lane command in the suite passed by being correctly refused — the shape and
+  // simplify commands are the first to notice.
+  // Two tracks, because a fixture with one automated track cannot tell a
+  // command that finds the right lane from one that always takes the first.
+  automationLanes: [
+    {
+      id: 'lane1', trackId: 't2', parameter: 'volume', label: 'Volume',
+      min: 0, max: 1, defaultValue: 0.8, expanded: true,
+      points: [
+        { id: 'ap1', beat: 0, value: 0.2 }, { id: 'ap2', beat: 2, value: 0.5 },
+        { id: 'ap3', beat: 4, value: 0.8 }, { id: 'ap4', beat: 6, value: 0.5 },
+      ],
+    },
+    {
+      id: 'lane2', trackId: 't1', parameter: 'pan', label: 'Pan',
+      min: -1, max: 1, defaultValue: 0, expanded: false,
+      points: [{ id: 'bp1', beat: 0, value: 0.5 }, { id: 'bp2', beat: 8, value: 0.9 }],
+    },
+  ],
+  clipEffects: [], returnTracks: [],
   takeLanes: [], crossfaderValue: 0.5, waveformZoom: 1, swing: 0,
   // Markers, so removing one is testable.
   // Added for the commands that need them, and ADDED rather than changed: a
