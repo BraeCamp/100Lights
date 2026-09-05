@@ -28,6 +28,7 @@ import { usePlan } from '@/hooks/usePlan'
 import { useDaw, formatBeat, makeAudioClip, migrateProject, type DawAction } from '@/lib/daw-state'
 import { tempoSegments, tempoAt, clampBpm } from '@/lib/tempo-map'
 import { planPunch, describePunch, punchArmed } from '@/lib/punch'
+import { useArmMode, setArmMode, ARM_MODES, armLabel, armHint, type ArmMode } from '@/lib/automation-record'
 import { LAUNCH_QUANTIZATIONS, DEFAULT_LAUNCH_QUANTIZATION, launchQuantLabel, launchQuantShort } from '@/lib/launch'
 import { useMetronomeSettings, setMetronomeSettings, countInPosition, describeMetronome, CLICK_SOUNDS, CLICK_RHYTHMS, type ClickSound, type ClickRhythm } from '@/lib/metronome'
 import { RECORD_GRIDS, DEFAULT_RECORD_GRID, recordGridLabel, type RecordGrid } from '@/lib/record-quantize'
@@ -254,6 +255,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
   // the workspace (lib/metronome.ts) — preferences about how you work, not part
   // of the song, since the click is never in the render.
   const metro = useMetronomeSettings()
+  const arm = useArmMode()
 
   // RAF loop — music mode: render beats; podcast mode: render wall-clock time
   useEffect(() => {
@@ -296,7 +298,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
   // (lib/metronome.ts); the engine is told, it never reads them itself.
   useEffect(() => {
     engine.setMetronomeSettings({ sound: metro.sound, rhythm: metro.rhythm, onlyWhileRecording: metro.onlyWhileRecording })
-  }, [engine, metro.sound, metro.rhythm, metro.onlyWhileRecording])
+  }, [engine, metro.sound, metro.rhythm, metro.onlyWhileRecording, arm, playing])
 
   // ── Common handlers ─────────────────────────────────────────────────────────
 
@@ -652,6 +654,17 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
     // Punch in / out (lib/punch.ts) — the recorder starting and stopping at the
     // loop brace by itself, so a fix in the middle of a take cannot eat what is
     // either side of it.
+    // Automation Arm (lib/automation-record.ts). Spelled out per mode: latch
+    // is destructive and must never be one keystroke away from touch by accident.
+    { id: 'transport.armOff', group: 'Transport', label: 'Automation arm off — moving a control overrides its lane, nothing is recorded',
+      keywords: 'automation arm record write off override manual', when: () => arm !== 'off',
+      run: () => setArmMode('off') },
+    { id: 'transport.armTouch', group: 'Transport', label: 'Automation arm: Touch — record a move while you hold the control',
+      keywords: 'automation arm record write touch gesture perform ride fader', when: () => arm !== 'touch',
+      run: () => setArmMode('touch') },
+    { id: 'transport.armLatch', group: 'Transport', label: 'Automation arm: Latch — record a move and hold it to the end (replaces what was there)',
+      keywords: 'automation arm record write latch hold replace overwrite', when: () => arm !== 'latch',
+      run: () => setArmMode('latch') },
     { id: 'transport.nudgeEarlier', group: 'Transport', label: 'Nudge the song 8 ms earlier (play along with something outside)',
       keywords: 'nudge earlier phase align sync beatmatch external record ahead',
       when: () => playing, run: () => engine.nudge(-8) },
@@ -759,7 +772,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
     { id: 'transport.historyrec', group: 'Share', label: 'Record how this project gets built',
       keywords: 'history timelapse replay capture session process',
       run: () => { setRecorderMode('history'); setShowRecorder(true) } },
-  ], [recording, project.loopEnabled, project.arrangementClips.length, project.tempo, project.swing, metro.countInBars, loopToolArmed, project.punchIn, project.punchOut, project.recordQuantize, metro.rhythm, metro.onlyWhileRecording])
+  ], [recording, project.loopEnabled, project.arrangementClips.length, project.tempo, project.swing, metro.countInBars, loopToolArmed, project.punchIn, project.punchOut, project.recordQuantize, metro.rhythm, metro.onlyWhileRecording, arm, playing])
 
   // ── Music-only handlers ─────────────────────────────────────────────────────
 
@@ -1089,6 +1102,24 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
       >
         <Repeat size={13} />
       </button>
+
+      {/* Automation Arm (lib/automation-record.ts) — whether moving a control
+          while recording WRITES its move into a lane, and how. */}
+      <select
+        data-help-id="automation-arm"
+        aria-label="Automation arm"
+        value={arm}
+        title={`${armLabel(arm)} — ${armHint(arm)}`}
+        onChange={e => setArmMode(e.target.value as ArmMode)}
+        style={{
+          fontSize: 10, padding: '3px 5px', borderRadius: 5, cursor: 'pointer',
+          background: arm === 'off' ? '#1e1e1e' : 'rgba(220,38,38,0.14)',
+          color: arm === 'off' ? 'var(--text-secondary)' : '#f87171',
+          border: `1px solid ${arm === 'off' ? '#2e2e2e' : 'rgba(220,38,38,0.6)'}`,
+        }}
+      >
+        {ARM_MODES.map(m => <option key={m.id} value={m.id}>{m.id === 'off' ? 'Auto off' : `Auto ${m.label.toLowerCase()}`}</option>)}
+      </select>
 
       {/* Nudge — slide the whole song a few milliseconds against the wall
           clock, for playing along with something the studio cannot hear. Not

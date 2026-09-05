@@ -14,7 +14,7 @@ import { CHECKOUT_LS_KEY } from '@/lib/apollo/checkout'
 import { installDawDiagnose, type DiagnoseEngine } from '@/lib/daw-diagnose'
 import { sessionCaptureToClips } from '@/lib/daw-session'
 import dynamic from 'next/dynamic'
-import type { DawView, EditTarget, DawProject, DawTrack, DawClip, AudioClip, ApolloInstrumentParams, LaunchQuantization } from '@/lib/daw-types'
+import type { DawView, EditTarget, DawProject, DawTrack, DawClip, AudioClip, ApolloInstrumentParams, LaunchQuantization, AutomationLane } from '@/lib/daw-types'
 import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects, clipLockedBy, isAudioClip, isMidiClip } from '@/lib/daw-types'
 import { legacyToBar } from '@/lib/effect-bar'
 import type { DawAction } from '@/lib/daw-state'
@@ -63,6 +63,11 @@ import { resolveKey, releasedMomentary, MomentaryLatch, keysFor } from '@/lib/ke
 import { bounceSpan, clipsInSpan, bounceName, bouncedTrack, describeBounce, type BounceWhat } from '@/lib/bounce'
 import { historyRows, type HistoryRow } from '@/lib/undo-history'
 import { requestArrangement } from '@/lib/daw-view'
+import { laneSpecFor } from '@/lib/daw-effect-params'
+import {
+  recordTargetOf, writeMove, latchTail, latchWouldClear, normalizeForLane,
+  describeRecorded, useArmMode, setArmMode, ARM_MODES, armLabel, type ArmMode,
+} from '@/lib/automation-record'
 import { LAUNCH_QUANTIZATIONS, launchQuantShort, DEFAULT_LAUNCH_QUANTIZATION } from '@/lib/launch'
 import { describeAction } from '@/lib/voice/transcript'
 import { useDetail, toggleDetail, detailLabel } from '@/lib/detail-area'
@@ -1397,6 +1402,13 @@ export default function AudioEditor(props: AudioEditorProps) {
     return eng && eng.isPlaying ? eng.currentBeat : null
   })
 
+  // Automation recording (lib/automation-record.ts). The mode lives in the
+  // workspace; refs so the dispatch wrapper reads it without re-creating.
+  const armMode = useArmMode()
+  const armRef = useRef<ArmMode>(armMode)
+  armRef.current = armMode
+  const recordAutomationRef = useRef<(t: { trackId: string; parameter: string; value: number }) => void>(() => {})
+
   const dispatch = useCallback((action: DawAction) => {
     // View-only collaborators: their room access is read-only server-side, so
     // local edits would silently diverge from the real project. Drop them here
@@ -1443,6 +1455,21 @@ export default function AudioEditor(props: AudioEditorProps) {
       }
     }
     rawDispatch(action)
+    // ── Automation recording (lib/automation-record.ts) ──────────────────────
+    //
+    // ⚠️ HERE, not at the controls. There are several ways to move a track's
+    // volume — the fader, the mixer strip, voice, a learned command — and
+    // several to change an effect parameter; a recorder wired to the fader
+    // would look like it worked until somebody used the mixer. This is the one
+    // place all of them pass through.
+    //
+    // Only while the transport is actually recording: an armed studio that
+    // wrote points every time you touched a knob with the transport stopped
+    // would fill lanes with things nobody performed.
+    if (armRef.current !== 'off' && engineRef.current?.isRecording && engineRef.current.isPlaying) {
+      const target = recordTargetOf(action as unknown as { type: string } & Record<string, unknown>)
+      if (target) recordAutomationRef.current(target)
+    }
     // The project's real content has arrived — cross-project links can resolve.
     if (action.type === 'LOAD_PROJECT') setProjectLoaded(true)
     // Suggestions stay local — never broadcast a proposal into the shared room.
@@ -2594,6 +2621,52 @@ export default function AudioEditor(props: AudioEditorProps) {
     return id
   }, [])
   const endUndoGroup = useCallback(() => { undoGroupRef.current = null }, [])
+
+  // ── Automation recording (lib/automation-record.ts) ───────────────────────
+  //
+  // Called from the dispatch wrapper for every parameter move while the arm is
+  // on and the transport is recording. It finds the lane, or makes one — a
+  // control you have never automated should still record, and demanding that
+  // you create the lane first would make the feature useless exactly when you
+  // reach for it, which is mid-performance.
+  recordAutomationRef.current = (target) => {
+    const mode = armRef.current
+    const engine = engineRef.current
+    if (mode === 'off' || !engine) return
+    const project = projectRef.current
+    const beat = engine.currentBeat
+    const lane = project.automationLanes.find(l => l.trackId === target.trackId && l.parameter === target.parameter)
+    // No lane yet: make one whose units match the parameter, taking them from
+    // the same table the lane menu uses, so a recorded filter lane is 200–18000
+    // Hz and not 0–1 (which would set the cutoff to a fraction of a Hertz).
+    if (!lane) {
+      const track = project.tracks.find(t => t.id === target.trackId)
+      const opt = track ? laneSpecFor(track, target.parameter) : null
+      if (!opt) return
+      const fresh: AutomationLane = {
+        id: crypto.randomUUID(), trackId: target.trackId, parameter: target.parameter,
+        label: opt.label, min: opt.min, max: opt.max, defaultValue: opt.def,
+        points: writeMove([], beat, normalizeForLane(opt, target.value), () => crypto.randomUUID()),
+        expanded: true, ...(opt.curve ? { curve: opt.curve } : {}),
+      }
+      dispatch({ type: 'ADD_AUTOMATION_LANE', lane: fresh })
+      setNotice(describeRecorded(mode, opt.label, beat, project.timeSignatureNum, 0))
+      return
+    }
+    const v = normalizeForLane(lane, target.value)
+    const cleared = mode === 'latch' ? latchWouldClear(lane.points, beat) : 0
+    const points = mode === 'latch'
+      ? latchTail(lane.points, beat, v, () => crypto.randomUUID())
+      : writeMove(lane.points, beat, v, () => crypto.randomUUID())
+    // ⚠️ Recording puts the lane back IN CHARGE. Moving a control normally
+    // overrides its lane (you are taking manual control); recording is the
+    // opposite gesture — you are telling the lane what to say — so an
+    // overridden lane that gets recorded into has to come back on, or the
+    // points you just performed would be there and silent.
+    dispatch({ type: 'UPDATE_AUTOMATION_LANE', laneId: lane.id, patch: { points, overridden: false } })
+    // Latch destroys; touch does not. Only the destructive one speaks up.
+    if (cleared > 0) setNotice(describeRecorded(mode, lane.label, beat, project.timeSignatureNum, cleared))
+  }
 
   // ── Undo History (lib/undo-history.ts) ─────────────────────────────────────
   //

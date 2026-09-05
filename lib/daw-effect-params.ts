@@ -179,6 +179,35 @@ export function automatableParams(effect: TrackEffect): AutomatableParam[] {
   return list.map(p => (p.key === 'frequency' ? { ...p, ...hz, curve: 'log' as const } : p))
 }
 
+/**
+ * The lane spec for one parameter of one track: its label, its UNITS and where
+ * it sits right now.
+ *
+ * ⚠️ Shared on purpose. The lane menu built this inline, and automation
+ * recording needs exactly the same answer — two copies would drift, and the way
+ * they drift is a lane declared 0–1 for a parameter measured in Hertz, which
+ * sets a filter to a fraction of a Hertz and silences the track.
+ */
+export function laneSpecFor(
+  track: { volume: number; pan: number; effects: TrackEffect[] },
+  parameter: string,
+): { label: string; min: number; max: number; def: number; curve?: 'log' } | null {
+  if (parameter === 'volume') return { label: 'Volume', min: 0, max: 1, def: track.volume }
+  if (parameter === 'pan') return { label: 'Pan', min: -1, max: 1, def: track.pan }
+  const m = /^fx:([^:]+):(.+)$/.exec(parameter)
+  if (!m) return null
+  const effect = track.effects.find(e => e.id === m[1])
+  if (!effect) return null
+  const prm = automatableParams(effect).find(p => p.key === m[2])
+  if (!prm) return null
+  return {
+    label: `${shortNameOf(effect)} ${prm.label}`,
+    min: prm.min, max: prm.max,
+    def: currentValue(effect, prm.key) ?? prm.min,
+    ...(prm.curve ? { curve: prm.curve } : {}),
+  }
+}
+
 /** The one people reach for first — used for the click-to-automate chip. */
 export function primaryParam(effect: TrackEffect): AutomatableParam | null {
   return automatableParams(effect)[0] ?? null

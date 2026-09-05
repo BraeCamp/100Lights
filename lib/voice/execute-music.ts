@@ -4871,6 +4871,24 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       return { actions: [out], say: `From now on, ${said.join('; ')}. Clips already in the song are unchanged.` }
     }
 
+    // ── AUTOMATION ARM (lib/automation-record.ts) ─────────────────────────────
+    case 'set_automation_arm': {
+      const said = str(i.mode).toLowerCase()
+      const mode = /latch|hold|replace/.test(said) ? 'latch'
+        : /touch|on|arm|record|write/.test(said) ? 'touch'
+        : /off|stop|no/.test(said) ? 'off'
+        : null
+      if (!mode) return fail('Say touch, latch, or off.')
+      return {
+        actions: [{ type: 'AUTOMATION_ARM', mode }],
+        say: mode === 'off'
+          ? 'Automation recording off — moving a control overrides its lane instead.'
+          : mode === 'touch'
+            ? 'Automation armed on touch. Record, move a control, and the move goes into its lane while you hold it.'
+            : 'Automation armed on latch. Record, move a control, and it holds that value to the end of the song — replacing whatever was there.',
+      }
+    }
+
     // ── GLOBAL QUANTIZATION — when a launch lands, for every slot ─────────────
     case 'set_global_quantization': {
       const said = str(i.quantization).toLowerCase()

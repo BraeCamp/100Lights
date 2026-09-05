@@ -158,6 +158,7 @@ import { requestNoteSelection } from '@/lib/note-selection'
 import { validMarkers, warpStraight, quantizeTransients } from '@/lib/warp'
 import { landClip, setImportSettings, describeImportSettings, type ImportSettings } from '@/lib/import-settings'
 import { setMetronomeSettings, type MetronomeSettings } from '@/lib/metronome'
+import { setArmMode } from '@/lib/automation-record'
 import { sliceToNewTrack, convertToNewTrack } from '@/lib/audio-to-track'
 import type { AudioClip as VoiceAudioClip } from '@/lib/daw-types'
 import {
@@ -1554,6 +1555,13 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       void _t
       setImportSettings(patch)
       void describeImportSettings
+      return
+    }
+
+    // Automation Arm (lib/automation-record.ts) — a workspace mode, like the
+    // click: it is about how you are working, not about the song.
+    if (act.type === 'AUTOMATION_ARM') {
+      setArmMode((act as unknown as { mode: 'off' | 'touch' | 'latch' }).mode)
       return
     }
 

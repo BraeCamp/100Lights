@@ -2521,6 +2521,27 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
   {
+    id: 'set_automation_arm',
+    tool: 'set_automation_arm',
+    group: 'Arrangement',
+    what: 'Whether moving a control while recording writes the move into its lane',
+    say: ['record my knob moves', 'latch automation', 'stop recording automation'],
+    match(w) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      // ⚠️ NOT "automate the pad's filter over 8 bars" — that is a shape you
+      // ASK for (automate_parameter), and it is the far commoner sentence. This
+      // one is about the recorder: knob moves, arming, latching.
+      const aboutRecording = /\b(?:record|recording|arm|armed|latch)\b/.test(raw)
+      const aboutAutomation = /\bautomation\b|\bknob moves?\b|\bmy moves?\b|\bfader moves?\b/.test(raw)
+      if (!aboutRecording || !aboutAutomation) return null
+      const mode = /\blatch\b/.test(raw) ? 'latch'
+        : /\b(?:stop|off|no longer|don'?t)\b/.test(raw) ? 'off'
+        : 'touch'
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'set_automation_arm', input: { mode } }], confidence: 0.95 }
+    },
+  },
+  {
     id: 'set_global_quantization',
     tool: 'set_global_quantization',
     group: 'Arrangement',

@@ -176,6 +176,7 @@ export function describeAction(a: unknown, names: { track?: (id: string) => stri
     case 'WARP_QUANTIZE': return `Quantized ${c(act.clipId)}'s transients to the grid`
     case 'SET_TEMPO_LEADER': return act.clipId ? `Made ${c(act.clipId)} the tempo leader — the song follows its tempo` : 'Released the tempo leader'
     case 'IMPORT_SETTINGS': return 'Changed how dropped samples land (Loop/Warp Short Samples)'
+    case 'AUTOMATION_ARM': return `Automation recording: ${String((a as { mode?: string }).mode ?? 'off')}`
     case 'BOUNCE': return 'Printed a track\u2019s devices as audio (Bounce)'
     case 'METRONOME': return 'Changed the click — its sound, how often it clicks, or the count-in'
     case 'PLAY_SPAN': return 'Played it back so you could hear it'

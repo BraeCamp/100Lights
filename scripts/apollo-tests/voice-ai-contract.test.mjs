@@ -68,6 +68,7 @@ const CALLS = {
   set_metronome: { sound: 'cowbell', rhythm: '1/8' },
   bounce_track: { target: 'pad', where: 'new track' },
   set_global_quantization: { quantization: 'bar' },
+  set_automation_arm: { mode: 'touch' },
   sound_like: { target: 'pad', like: 'fuzzier', sense: 'muffled' },
   adjust_it: { how: 'less', size: 'little' },
   move_clips: { by: { bars: 1 } },

@@ -114,6 +114,8 @@ const EXPECTED = [
   ['insert silence across the song', ['insert silence']],
   ['delete time across the song', ['delete time']],
   ['duplicate time across the song', ['duplicate time']],
+  ['automation arm',       ['automation arm']],
+  ['automation latch',     ['automation arm: latch']],
   ['nudge the song',       ['nudge the song']],
   ['global launch quantization', ['global launch quantization']],
   ['undo history',         ['undo history']],

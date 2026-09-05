@@ -867,6 +867,16 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'set_automation_arm',
+    description:
+      'WHETHER MOVING A CONTROL WHILE RECORDING WRITES ITS MOVE INTO A LANE (Live\'s Automation Arm) — "record my knob moves" / "arm automation" (mode touch: written while you hold the control, then the lane goes back to what it said), "latch automation" (mode latch: written while you hold and HELD to the end, replacing what was there), "stop recording automation" (mode off). Latch is destructive; touch is not.',
+    input_schema: {
+      type: 'object',
+      properties: { mode: { type: 'string', enum: ['off', 'touch', 'latch'] } },
+      required: ['mode'],
+    },
+  },
+  {
     name: 'set_global_quantization',
     description:
       'WHEN A SESSION LAUNCH LANDS, FOR EVERY SLOT (Live\'s Global Quantization) — "launch everything on the bar" (quantization "bar"), "quantize launches to a beat" ("beat"), "launch clips instantly" ("none"), "wait four bars before clips come in" ("4bar"). This is the DEFAULT for slots that name none of their own; `set_launch` sets one slot\'s.',
