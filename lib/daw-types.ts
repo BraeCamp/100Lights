@@ -946,6 +946,12 @@ export interface MidiNote {
   startBeat: number    // relative to clip startBeat
   durationBeats: number
   velocity: number     // 0–127
+  /** Chance of playing on any pass, 0..1. Absent = always (lib/note-chance.ts). */
+  chance?: number
+  /** Velocity deviation: ± up to this many steps, picked afresh each pass. */
+  deviation?: number
+  /** Probability group id; the clip's chanceGroups says whether the group plays all or one. */
+  chanceGroup?: string
   presetId?: string    // MIDI preset active when this note was recorded
   /** Per-note sound override — wins over clip rollFx and preset sound. */
   fx?: RollFx
@@ -955,6 +961,8 @@ export interface MidiClip {
   kind: 'midi'
   id: string
   trackId: string
+  /** Probability groups: Play All (each member rolls) or Play One (exactly one member plays per pass). */
+  chanceGroups?: Record<string, 'all' | 'one'>
   name: string
   /** Who added this clip (collab attribution) — stamped at creation. */
   createdBy?: string

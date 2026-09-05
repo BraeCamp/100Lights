@@ -72,6 +72,8 @@ export type DawAction =
   | { type: 'ADD_MIDI_NOTE'; clipId: string; note: MidiNote }
   | { type: 'REMOVE_MIDI_NOTE'; clipId: string; noteId: string }
   | { type: 'UPDATE_MIDI_NOTE'; clipId: string; noteId: string; patch: Partial<MidiNote> }
+  | { type: 'UPDATE_MIDI_NOTES'; clipId: string; notes: Array<{ id: string; patch: Partial<MidiNote> }> }
+  | { type: 'SET_CHANCE_GROUP'; clipId: string; noteIds: string[]; group: string | null; mode?: 'all' | 'one' }
   // Effects chain
   | { type: 'ADD_EFFECT'; trackId: string; effect: TrackEffect }
   | { type: 'REMOVE_EFFECT'; trackId: string; effectId: string }
@@ -559,6 +561,29 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       return { ...project, arrangementClips: clips }
     }
 
+    // Many notes, one undo step — the lanes' Randomize and Ramp, a voice
+    // "make the hats 50% chance", ⌘↑ on a selection.
+    case 'UPDATE_MIDI_NOTES': {
+      const byId = new Map(action.notes.map(n => [n.id, n.patch]))
+      const clips = project.arrangementClips.map(c => {
+        if (c.id !== action.clipId || c.kind !== 'midi') return c
+        return { ...c, notes: c.notes.map(n => (byId.has(n.id) ? { ...n, ...byId.get(n.id) } : n)) }
+      })
+      return { ...project, arrangementClips: clips }
+    }
+    case 'SET_CHANCE_GROUP': {
+      const ids = new Set(action.noteIds)
+      const clips = project.arrangementClips.map(c => {
+        if (c.id !== action.clipId || c.kind !== 'midi') return c
+        const notes = c.notes.map(n => (ids.has(n.id) ? { ...n, chanceGroup: action.group ?? undefined } : n))
+        const groups = { ...(c.chanceGroups ?? {}) }
+        if (action.group) groups[action.group] = action.mode ?? groups[action.group] ?? 'one'
+        // Drop groups nobody is in any more.
+        for (const g of Object.keys(groups)) if (!notes.some(n => n.chanceGroup === g)) delete groups[g]
+        return { ...c, notes, chanceGroups: Object.keys(groups).length ? groups : undefined }
+      })
+      return { ...project, arrangementClips: clips }
+    }
     case 'UPDATE_MIDI_NOTE': {
       const clips = project.arrangementClips.map(c => {
         if (c.id !== action.clipId || c.kind !== 'midi') return c

@@ -332,6 +332,21 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'set_chance',
+    description:
+      'CHANCE — how often a note plays. "make the hats 50 percent", "play the ghost notes half the time", "the last hat only sometimes", "always play the kick". 100 is always (the default), 0 is never. Part of a clip with `notes`, as in transpose. Use this, not delete, when they want a part to come and go.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        chance: { type: 'number', description: 'Percent of passes the notes play, 0-100. "half the time" is 50, "sometimes" about 30, "rarely" about 15, "always" 100.' },
+        ...NOTE_ADDRESS,
+        ...ADDRESS,
+      },
+      required: ['target', 'chance'],
+    },
+  },
+  {
     name: 'transport',
     description:
       'TRANSPORT — play, stop, or return to the start. ALWAYS call this when the sentence ends with "then restart", "then play it", "and play it back", or similar: "restart" means go back to the beginning and play, and it is a real request like any other, not a closing remark. "go to bar 9" moves the playhead — but ONLY when going there is the request itself. A bar mentioned inside a larger sentence is describing WHERE something should happen, not asking to move: "until the 6th bar", "add a crash at bar 5", "make it louder from bar 3" are not transport calls, and moving the playhead during one of them is an edit nobody asked for.',

@@ -54,6 +54,7 @@ const CALLS = {
   automate_parameter: { target: 'pad', parameter: 'lowpass', from: 100, to: 20, length: { bars: 2 } },
   modulate_parameter: { target: 'pad', parameter: 'lowpass', rate: '1/8', depth: 50 },
   set_delay_compensation: { on: false },
+  set_chance: { target: 'pad clip', chance: 50 },
   move_clips: { by: { bars: 1 } },
   insert_clip: { sound: 'crash', at: { bar: 2 } },
   set_tempo: { bpm: 128 },

@@ -2200,6 +2200,32 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       }
     }
 
+    case 'set_chance': {
+      const pct = spokenNumber(i.chance as string)
+      if (pct == null) return fail('Say how often — a percentage, "half the time", "always".')
+      const chance = Math.max(0, Math.min(100, pct))
+      const got = clipsForEdit(i, target, maps, project, heard, 'set_chance', { chance })
+      if (got.ask) return { actions: [], say: '', ask: got.ask }
+      if (!got.clips.length) return fail(`I couldn't find "${target || 'that'}".`)
+      const midi = got.clips.filter((c): c is MidiClip => 'notes' in c)
+      if (!midi.length) return fail('That is an audio clip — chance is for notes.')
+      const actions: unknown[] = []
+      let label = ''
+      let count = 0
+      for (const clip of midi) {
+        const pick = pickNotes(clip, i, maps, project)
+        if ('problem' in pick) return fail(pick.problem)
+        if (!pick.whole && !pick.notes.length) return fail(`I couldn't find ${pick.label} in "${clip.name}".`)
+        if (!pick.whole) label = pick.label
+        if (!pick.notes.length) continue
+        count += pick.notes.length
+        actions.push({ type: 'UPDATE_MIDI_NOTES', clipId: clip.id, notes: pick.notes.map(n => ({ id: n.id, patch: { chance: chance >= 100 ? undefined : chance / 100 } })) })
+      }
+      if (!actions.length) return fail('That clip has no notes.')
+      const how = chance >= 100 ? 'always' : chance <= 0 ? 'never' : chance === 50 ? 'half the time' : `${Math.round(chance)}% of the time`
+      return { actions, say: `${label ? `${label[0].toUpperCase()}${label.slice(1)} of ` : ''}${got.how} play${count === 1 ? 's' : ''} ${how} now — ${count} note${count === 1 ? '' : 's'}.` }
+    }
+
     // ── The studio around the song ───────────────────────────────────────
     case 'set_master_volume': {
       const pct = spokenNumber(i.volume as string)

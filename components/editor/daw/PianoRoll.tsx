@@ -21,8 +21,10 @@ import { libraryGetAll, type LibraryEntry } from '@/lib/sound-library'
 import { guessRootNote, samplePresetFor, isPickableSample, rootLabel, collapseNoteVariants, type PickableSound } from '@/lib/sample-preset'
 import { resampleBySemitones } from '@/lib/audio-resample'
 import { resolveKey } from '@/lib/keymap'
+import Knob from './Knob'
 import { useDrawMode, toggleDrawMode } from '@/lib/draw-mode'
 import { beginStroke, strokeTo, velocityFromDrag, noteUnder, type Stroke } from '@/lib/draw-notes'
+import { laneValue, lanePatch, randomizeLane, rampLane, LANE_MAX, type LaneField } from '@/lib/note-chance'
 
 /** Roots a sample can be declared at: C1 to C7, every semitone. */
 const ROOT_CHOICES = Array.from({ length: 73 }, (_, i) => 24 + i)
@@ -223,15 +225,20 @@ function PianoKeys({
 // ── Velocity lane ─────────────────────────────────────────────────────────────
 
 function VelocityLane({
-  clip, beatW, scrollLeft, trackColor, selectedNotes, onVelocityChange,
+  clip, beatW, scrollLeft, trackColor, selectedNotes, onVelocityChange, field = 'velocity',
 }: {
   clip: MidiClip
   beatW: number
   scrollLeft: number
   trackColor: string
   selectedNotes: Set<string>
-  onVelocityChange: (noteId: string, velocity: number) => void
+  /** Receives the value in the lane's units: velocity 1..127, deviation 0..127, chance 0..100. */
+  onVelocityChange: (noteId: string, value: number) => void
+  /** Which expression the lane shows (lib/note-chance.ts). */
+  field?: LaneField
 }) {
+  const MAX = LANE_MAX[field]
+  const valueOf = (n: MidiNote) => laneValue(n, field)
   function noteAtX(clientX: number, rect: DOMRect): MidiNote | null {
     const absX = clientX - rect.left + scrollLeft
     return clip.notes.find(n => {
@@ -243,7 +250,7 @@ function VelocityLane({
 
   function velocityFromY(clientY: number, rect: DOMRect): number {
     const relY = Math.max(0, Math.min(VELOCITY_H - 4, clientY - rect.top))
-    return Math.max(1, Math.min(127, Math.round((1 - relY / (VELOCITY_H - 4)) * 127)))
+    return Math.max(field === 'velocity' ? 1 : 0, Math.min(MAX, Math.round((1 - relY / (VELOCITY_H - 4)) * MAX)))
   }
 
   function onMouseDown(e: React.MouseEvent<HTMLDivElement>) {
@@ -263,7 +270,7 @@ function VelocityLane({
           const endVel = velocityFromY(ev.clientY, rect)
           sorted.forEach((note, i) => {
             const t = sorted.length > 1 ? i / (sorted.length - 1) : 1
-            onVelocityChange(note.id, Math.max(1, Math.min(127, Math.round(startVel + (endVel - startVel) * t))))
+            onVelocityChange(note.id, Math.max(0, Math.min(MAX, Math.round(startVel + (endVel - startVel) * t))))
           })
         }
         function onRampUp() {
@@ -279,7 +286,7 @@ function VelocityLane({
 
     // Normal: detect paint mode (horizontal drag) vs vertical drag
     const initialNote = noteAtX(startX, rect)
-    const startV = initialNote?.velocity ?? 64
+    const startV = initialNote ? valueOf(initialNote) : Math.round(MAX / 2)
     let paintMode = false
     let vertMode  = false
 
@@ -295,7 +302,7 @@ function VelocityLane({
         if (n) onVelocityChange(n.id, velocityFromY(ev.clientY, rect))
       } else if (vertMode && initialNote) {
         const delta = (startY - ev.clientY) / 100
-        onVelocityChange(initialNote.id, Math.max(1, Math.min(127, Math.round(startV + delta * 127))))
+        onVelocityChange(initialNote.id, Math.max(0, Math.min(MAX, Math.round(startV + delta * MAX))))
       }
     }
     function onUp() {
@@ -309,6 +316,8 @@ function VelocityLane({
   return (
     <div
       onMouseDown={onMouseDown}
+      data-help-id="note-lane"
+      data-lane={field}
       style={{
         height: VELOCITY_H, background: 'var(--bg-base)',
         borderTop: '1px solid var(--border)',
@@ -317,7 +326,7 @@ function VelocityLane({
     >
       {clip.notes.map(note => {
         const x = note.startBeat * beatW - scrollLeft
-        const h = (note.velocity / 127) * (VELOCITY_H - 4)
+        const h = (valueOf(note) / MAX) * (VELOCITY_H - 4)
         return (
           <div
             key={note.id}
@@ -326,12 +335,12 @@ function VelocityLane({
               left: x, bottom: 2,
               width: Math.max(3, (note.durationBeats * beatW) - 2),
               height: h,
-              background: trackColor,
+              background: field === 'chance' ? '#f59e0b' : field === 'deviation' ? '#38bdf8' : trackColor,
               borderRadius: '1px 1px 0 0',
-              opacity: 0.8,
+              opacity: selectedNotes.has(note.id) ? 1 : 0.65,
               pointerEvents: 'none',
             }}
-            title={`Velocity: ${note.velocity}`}
+            title={field === 'chance' ? `Chance: ${valueOf(note)}%` : field === 'deviation' ? `Deviation: ±${valueOf(note)}` : `Velocity: ${valueOf(note)}`}
           />
         )
       })}
@@ -405,6 +414,47 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const [scrollLeft, setScrollLeft] = useState(cached?.scrollLeft ?? 0)
   useEffect(() => { rollViewCache.set(clip.id, { beatW, noteH, scrollTop, scrollLeft }) }, [clip.id, beatW, noteH, scrollTop, scrollLeft])
   const [selectedNotes, setSelectedNotes] = useState<Set<string>>(new Set())
+  // Which expression lane shows under the grid, and the Randomize amount.
+  const [lane, setLane] = useState<LaneField>('velocity')
+  const [randAmount, setRandAmount] = useState(25)
+  const selectedList = () => clip.notes.filter(n => selectedNotes.has(n.id))
+  function nudgeLane(field: LaneField, delta: number) {
+    const sel = selectedList()
+    if (!sel.length) return
+    dispatch({ type: 'UPDATE_MIDI_NOTES', clipId: clip.id, notes: sel.map(n => ({ id: n.id, patch: lanePatch(field, laneValue(n, field) + delta) })) })
+  }
+  function randomizeSelected() {
+    const sel = selectedList()
+    if (!sel.length) return
+    // A new seed each press, so pressing again reshuffles; the seed rides in
+    // the ids so a render of the result is still deterministic.
+    dispatch({ type: 'UPDATE_MIDI_NOTES', clipId: clip.id, notes: randomizeLane(sel, lane, randAmount, `${clip.id}:${Date.now()}`) })
+  }
+  function rampSelected() {
+    const sel = selectedList()
+    if (sel.length < 2) return
+    const sorted = [...sel].sort((a, b) => a.startBeat - b.startBeat)
+    dispatch({ type: 'UPDATE_MIDI_NOTES', clipId: clip.id, notes: rampLane(sel, lane, laneValue(sorted[0], lane), laneValue(sorted[sorted.length - 1], lane)) })
+  }
+  // ⌘G: Play One → Play All → ungroup, for the selected notes.
+  const groupLabel = (() => {
+    const sel = selectedList()
+    if (!sel.length) return null
+    const g = sel[0].chanceGroup
+    if (!g || !sel.every(n => n.chanceGroup === g)) return null
+    return clip.chanceGroups?.[g] === 'all' ? 'Play All' : 'Play One'
+  })()
+  function cycleGroup() {
+    const sel = selectedList()
+    if (!sel.length) return
+    const g = sel[0].chanceGroup
+    const shared = !!g && sel.every(n => n.chanceGroup === g)
+    const ids = sel.map(n => n.id)
+    if (!shared) { dispatch({ type: 'SET_CHANCE_GROUP', clipId: clip.id, noteIds: ids, group: crypto.randomUUID().slice(0, 8), mode: 'one' }); return }
+    const mode = clip.chanceGroups?.[g!] ?? 'one'
+    if (mode === 'one') dispatch({ type: 'SET_CHANCE_GROUP', clipId: clip.id, noteIds: ids, group: g!, mode: 'all' })
+    else dispatch({ type: 'SET_CHANCE_GROUP', clipId: clip.id, noteIds: ids, group: null })
+  }
   const [hoverPitch, setHoverPitch] = useState<number | null>(null)
   const [hoverEdge, setHoverEdge]   = useState(false)
   const [ctxMenu, setCtxMenu] = useState<{ note: MidiNote; x: number; y: number } | null>(null)
@@ -1309,10 +1359,17 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
         const span = Math.max(...sel.map(n => n.startBeat + n.durationBeats)) - Math.min(...sel.map(n => n.startBeat))
         pasteNotes(sel, Math.min(...sel.map(n => n.startBeat)) + span)
       } },
+    // The expression lanes and probability groups (lib/note-chance.ts).
+    { id: 'roll.lane.chance', group: 'Notes', label: 'Chance lane — how often each note plays',
+      keywords: 'chance probability lane expression dice random sometimes', run: () => setLane('chance') },
+    { id: 'roll.lane.deviation', group: 'Notes', label: 'Velocity deviation lane — random ± per pass',
+      keywords: 'velocity deviation lane humanize random expression', run: () => setLane('deviation') },
+    { id: 'roll.group', group: 'Notes', label: groupLabel ? `Probability group: ${groupLabel} → ${groupLabel === 'Play One' ? 'Play All' : 'ungroup'}` : 'Group the selected notes: Play One',
+      keywords: 'probability group play one play all chance notes', when: () => selectedNotes.size > 0, run: cycleGroup },
     { id: 'roll.close', group: 'Notes', label: 'Close the piano roll',
       keywords: 'hide dismiss done back arrangement',
       run: () => { setExpandedPianoRollClipId?.(null); setEditTarget?.(null) } },
-  ], [clip.id, clip.notes, selectedNotes, rollScope, isDrum, quant, project.tempo, project.key, project.scale])
+  ], [clip.id, clip.notes, selectedNotes, rollScope, isDrum, quant, project.tempo, project.key, project.scale, groupLabel])
 
   function handleKeyDown(e: React.KeyboardEvent) {
     const selected = clip.notes.filter(n => selectedNotes.has(n.id))
@@ -1371,6 +1428,15 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       return
     }
     // Arrows: nudge time / transpose pitch (⇧ = octave; drums move by lane)
+    // The expression lanes by key (lib/keymap.ts): ⌘↑↓ velocity, ⇧⌘↑↓ deviation, ⌘⌥↑↓ chance, ⌘G group.
+    if (kb === 'notes.velUp' || kb === 'notes.velDown' || kb === 'notes.devUp' || kb === 'notes.devDown' || kb === 'notes.chanceUp' || kb === 'notes.chanceDown') {
+      e.preventDefault(); e.stopPropagation()
+      const field: LaneField = kb.startsWith('notes.vel') ? 'velocity' : kb.startsWith('notes.dev') ? 'deviation' : 'chance'
+      nudgeLane(field, kb.endsWith('Up') ? 5 : -5)
+      setLane(field)
+      return
+    }
+    if (kb === 'notes.group') { e.preventDefault(); e.stopPropagation(); cycleGroup(); return }
     if ((kb === 'notes.earlier' || kb === 'notes.later' || kb === 'notes.up' || kb === 'notes.down' || kb === 'notes.upOctave' || kb === 'notes.downOctave') && selected.length > 0) {
       e.preventDefault(); e.stopPropagation()
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
@@ -2055,14 +2121,31 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
             )}
           </div>
 
-          {/* Velocity lane */}
+          {/* Expression lanes — Velocity, Deviation, Chance — one at a time, with
+              Randomize / Amount / Ramp for the selection (lib/note-chance.ts). */}
+          <div data-help-id="note-lanes" style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 6px', borderTop: '1px solid var(--border)', background: 'var(--bg-surface)', fontSize: 9 }}>
+            {(['velocity', 'deviation', 'chance'] as LaneField[]).map(f => (
+              <button key={f} onClick={() => setLane(f)} aria-pressed={lane === f} data-help-id={`lane-${f}`}
+                style={{ ...prBtn, fontSize: 9, padding: '1px 6px', background: lane === f ? 'var(--bg-card)' : 'transparent', color: lane === f ? 'var(--text-primary)' : 'var(--text-muted)', border: lane === f ? '1px solid var(--border)' : '1px solid transparent', textTransform: 'capitalize' }}>{f}</button>
+            ))}
+            <div style={{ width: 1, height: 12, background: 'var(--border)', margin: '0 2px' }} />
+            <button onClick={randomizeSelected} disabled={!selectedNotes.size} data-help-id="lane-randomize" title={`Randomize the selected notes' ${lane} by up to ±${randAmount}% (repeatable — the same seed each time)`}
+              style={{ ...prBtn, fontSize: 9, padding: '1px 6px', opacity: selectedNotes.size ? 1 : 0.4 }}>Randomize</button>
+            <Knob value={randAmount} min={0} max={100} defaultValue={25} size={16} spec={{ label: 'Randomize amount', min: 0, max: 100, unit: '%' }} onChange={v => setRandAmount(Math.round(v))} />
+            <button onClick={rampSelected} disabled={selectedNotes.size < 2} data-help-id="lane-ramp" title={`Ramp the selected notes' ${lane} from the first to the last`}
+              style={{ ...prBtn, fontSize: 9, padding: '1px 6px', opacity: selectedNotes.size >= 2 ? 1 : 0.4 }}>Ramp</button>
+            <div style={{ width: 1, height: 12, background: 'var(--border)', margin: '0 2px' }} />
+            <button onClick={cycleGroup} disabled={!selectedNotes.size} data-help-id="lane-group" title="Probability group for the selected notes (⌘G): Play One → Play All → ungroup"
+              style={{ ...prBtn, fontSize: 9, padding: '1px 6px', opacity: selectedNotes.size ? 1 : 0.4, color: groupLabel ? '#f59e0b' : undefined }}>{groupLabel ?? 'Group'}</button>
+          </div>
           <VelocityLane
             clip={clip}
             beatW={beatW}
             scrollLeft={scrollLeft}
             trackColor={color}
             selectedNotes={selectedNotes}
-            onVelocityChange={(noteId, velocity) => dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId, patch: { velocity } })}
+            field={lane}
+            onVelocityChange={(noteId, value) => dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId, patch: lanePatch(lane, value) })}
           />
         </div>
       </div>

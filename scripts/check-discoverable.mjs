@@ -65,6 +65,7 @@ const EXPECTED = [
   ['ui scale',             ['ui scale', 'bigger interface']],
   ['second window',        ['own window']],
   ['draw mode',            ['draw mode', 'pencil']],
+  ['note chance',          ['chance']],
   ['overview strip',       ['overview']],
   ['waveform db scale',    ['waveforms']],
   ['split / splice clip',  ['splice', 'split']],

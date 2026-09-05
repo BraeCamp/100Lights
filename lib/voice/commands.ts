@@ -1401,6 +1401,34 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
   {
+    id: 'set_chance',
+    tool: 'set_chance',
+    group: 'Notes',
+    what: 'How often a part plays — chance per note',
+    say: ['make the drums 50 percent chance', 'play the pad half the time', 'the vocals only sometimes'],
+    match(w, ctx) {
+      const raw = w.raw.toLowerCase()
+      if (!/chance|probab|half the time|the time\b|sometimes|rarely|always play|every pass|randomly/.test(raw)) return null
+      // "randomize the hats" is the lane's Randomize; a sweep is automation.
+      if (w.has('automate', 'automation', 'sweep', 'randomize', 'humanize')) return null
+      const pctM = /(\d+)\s*(?:%|percent)/.exec(raw)
+      const chance = pctM ? Number(pctM[1])
+        : /half the time|half of the time/.test(raw) ? 50
+        : /(?:a )?quarter of the time/.test(raw) ? 25
+        : /\bsometimes\b/.test(raw) ? 30
+        : /\brarely\b|once in a while/.test(raw) ? 15
+        : /always/.test(raw) ? 100
+        : /never/.test(raw) ? 0
+        : null
+      if (chance == null) return null
+      const hit = clipOrSelected(w, ctx, ['chance', 'chances', 'probability', 'percent', 'half', 'quarter', 'time', 'sometimes', 'rarely',
+        'always', 'never', 'play', 'plays', 'randomly', 'only', 'make', 'give', 'set', 'notes', 'note', 'track', 'clip', 'every', 'pass'], { dropNums: true })
+      if (!hit) return null
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'set_chance', input: { target: hit.name, chance } }], confidence: nameConfidence(hit.score), needsName: true }
+    },
+  },
+  {
     id: 'set_delay_compensation',
     tool: 'set_delay_compensation',
     group: 'Mixer',

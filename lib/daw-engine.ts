@@ -14,6 +14,7 @@ import { evaluateModulators, type ModReadout, type ParamRange } from './daw-modu
 import { automatableParams } from './daw-effect-params'
 import { compensationDelays } from './latency'
 import { crossfadeGain } from './crossfader'
+import { rollNote, groupWinners, winnerFor, clipHasExpression } from './note-chance'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { buildHeliosFxChain, buildHeliosMasterBus, type HeliosChain } from './apollo/daw-fx'
 import { apolloPatchFor, newApolloResolveCache } from './apollo/resolve-apollo'
@@ -2063,7 +2064,13 @@ export class DawEngine extends EventTarget {
     const scheduleLoop = (iterationStartBeat: number) => {
       const nowBeat = this.currentBeat
       const ctxNow  = this.ctx.currentTime
-      for (const note of processedNotes) {
+      // Chance, deviation and Play One groups, per pass (lib/note-chance.ts).
+      const passKey = `${clip.id}:s${iterationStartBeat}`
+      const winners = groupWinners(clip, passKey)
+      for (const baseNote of processedNotes) {
+        const rolled = rollNote(baseNote, `${passKey}:${baseNote.id}`, winnerFor(baseNote, winners))
+        if (!rolled.fires) continue
+        const note = rolled.note
         const rfx = this._resolveNoteFx(clip, note)
         const sustainSec = rfx.sustain ?? 0
         const noteAbsBeat = iterationStartBeat + this._applySwing(note.startBeat)
@@ -2471,6 +2478,9 @@ export class DawEngine extends EventTarget {
     // Drawn groove and volume curves are applied per note, so a combined render
     // would silently lose them. Those clips keep playing live.
     if (clip.groove?.length || clip.volGraph?.length) return false
+    // Chance, velocity deviation and probability groups roll on every pass
+    // (lib/note-chance.ts); a buffer rendered once would freeze one roll.
+    if (clipHasExpression(clip)) return false
 
     const patch = inst.params as unknown as ApolloPatch
     const stamp = combinedStamp(clip, patch, this.tempo)
@@ -2741,9 +2751,21 @@ export class DawEngine extends EventTarget {
       const occurrences = uCached.occurrences
       const unisonSkip = uCached.unisonSkip
 
-      for (const { note, relBeat, key: noteKey, maxDur, connFrom } of occurrences) {
+      // Play One groups pick their winner once per pass (a pass = one
+      // repetition of a looped pattern; a plain clip has one).
+      const winnersByPass = new Map<string, Map<string, string | null>>()
+      for (const occ of occurrences) {
+        const { relBeat, key: noteKey, maxDur, connFrom } = occ
         if (this._scheduledNoteKeys.has(noteKey)) continue
         if (unisonSkip.has(noteKey)) { this._scheduledNoteKeys.add(noteKey); continue }
+        // Chance, deviation and probability groups (lib/note-chance.ts), seeded
+        // per clip · pass · note so a render is deterministic.
+        const passKey = `${clip.id}:${loopLen ? Math.floor(relBeat / loopLen) : 0}`
+        let winners = winnersByPass.get(passKey)
+        if (!winners) { winners = groupWinners(clip, passKey); winnersByPass.set(passKey, winners) }
+        const rolled = rollNote(occ.note, `${passKey}:${occ.note.id}`, winnerFor(occ.note, winners))
+        if (!rolled.fires) { this._scheduledNoteKeys.add(noteKey); continue }
+        const note = rolled.note
 
         const grooveOff = grooveLut ? (grooveLut[Math.min(63, Math.max(0, Math.floor(((relBeat % barBeats) / barBeats) * 64)))] - 0.5) * 2 * 0.06 : 0
         const noteAbsBeat = clip.startBeat + this._applySwing(relBeat) + grooveOff

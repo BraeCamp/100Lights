@@ -134,6 +134,13 @@ export const KEYMAP: KeyBinding[] = [
   { id: 'notes.later', keys: '→', scope: 'roll', group: 'Piano Roll', action: 'Nudge selected notes by the grid', modes: ['music'], hidden: true },
   { id: 'notes.up', keys: '↑', scope: 'roll', group: 'Piano Roll', action: 'Transpose selected notes a semitone (⇧ = an octave)', modes: ['music'], display: '↑ / ↓' },
   { id: 'notes.down', keys: '↓', scope: 'roll', group: 'Piano Roll', action: 'Transpose selected notes a semitone (⇧ = an octave)', modes: ['music'], hidden: true },
+  { id: 'notes.velUp', keys: '⌘↑', scope: 'roll', group: 'Piano Roll', action: 'Velocity of the selected notes up / down (⇧⌘ deviation, ⌘⌥ chance)', modes: ['music'], display: '⌘↑ / ⌘↓' },
+  { id: 'notes.velDown', keys: '⌘↓', scope: 'roll', group: 'Piano Roll', action: 'Velocity down', modes: ['music'], hidden: true },
+  { id: 'notes.devUp', keys: '⇧⌘↑', scope: 'roll', group: 'Piano Roll', action: 'Velocity deviation up', modes: ['music'], hidden: true },
+  { id: 'notes.devDown', keys: '⇧⌘↓', scope: 'roll', group: 'Piano Roll', action: 'Velocity deviation down', modes: ['music'], hidden: true },
+  { id: 'notes.chanceUp', keys: '⌘⌥↑', scope: 'roll', group: 'Piano Roll', action: 'Chance up', modes: ['music'], hidden: true },
+  { id: 'notes.chanceDown', keys: '⌘⌥↓', scope: 'roll', group: 'Piano Roll', action: 'Chance down', modes: ['music'], hidden: true },
+  { id: 'notes.group', keys: '⌘G', scope: 'roll', group: 'Piano Roll', action: 'Probability group for the selected notes — Play One, then Play All, then ungroup', modes: ['music'] },
   { id: 'notes.upOctave', keys: '⇧↑', scope: 'roll', group: 'Piano Roll', action: 'Transpose up an octave', modes: ['music'], hidden: true },
   { id: 'notes.downOctave', keys: '⇧↓', scope: 'roll', group: 'Piano Roll', action: 'Transpose down an octave', modes: ['music'], hidden: true },
 
