@@ -1,5 +1,7 @@
 'use client'
 
+import { useDisplaySettings, setDisplay, UI_SCALE_MIN, UI_SCALE_MAX, UI_SCALE_STEP } from '@/lib/display-settings'
+import { useImportSettings, setImportSettings, SHORT_SAMPLE_MODES, SHORT_SAMPLE_LABEL, LONG_SAMPLE_SEC } from '@/lib/import-settings'
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X, RotateCcw, Save, Upload, Trash2, Check, ExternalLink } from 'lucide-react'
@@ -18,6 +20,8 @@ import {
 const TEXT_KEYS: ThemeColorKey[] = ['textPrimary', 'textSecondary', 'textMuted']
 
 export default function AppearancePanel({ onClose, editorKind }: { onClose: () => void; editorKind?: EditorKind }) {
+  const display = useDisplaySettings()
+  const imp = useImportSettings()
   const { theme, setTheme, update, reset, isSignedIn } = useWorkshopTheme()
   const [perfMode, setPerfMode] = usePerfMode()
   const { isPro, ent } = usePlan()
@@ -134,6 +138,70 @@ export default function AppearancePanel({ onClose, editorKind }: { onClose: () =
             </span>
           </label>
         </div>
+
+        {/* Display & Input — layout and size, not colour (lib/display-settings.ts) */}
+        <div style={section} data-help-id="display-settings">
+          <p style={label}>Display &amp; Input</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)', flex: 1 }}>UI scale</span>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums', minWidth: 36, textAlign: 'right' }}>{display.uiScale}%</span>
+            </label>
+            <input type="range" min={UI_SCALE_MIN} max={UI_SCALE_MAX} step={UI_SCALE_STEP} value={display.uiScale} aria-label="UI scale" data-help-id="ui-scale"
+              onChange={e => setDisplay({ uiScale: Number(e.target.value) })} style={{ width: '100%', accentColor: 'var(--accent)' }} />
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.45 }}>
+              Bigger or smaller chrome — bars, buttons, labels — from 50% to 200% (⌘+ / ⌘−, ⌘0 resets). The timeline, the note grid and the knobs keep their size so nothing you click moves under the pointer.
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)' }}>Clip editor</span>
+            {([['pane', 'Bottom pane', 'The notes of the selected clip open in the clip pane at the bottom of the studio, above the devices — the selection leads.'],
+               ['inline', 'Inline under the track', 'The piano roll unfolds under its track in the arrangement, the way it used to.']] as const).map(([v, name, why]) => (
+              <label key={v} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+                <input type="radio" name="clip-editor-place" value={v} checked={display.clipEditor === v}
+                  onChange={() => setDisplay({ clipEditor: v })} style={{ accentColor: 'var(--accent)', marginTop: 2, flexShrink: 0 }} />
+                <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{name}</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.45 }}>{why}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* Warp & Import — how a sample lands when it is dropped (lib/import-settings.ts) */}
+        {editorKind === 'audio' && (
+          <div style={section} data-help-id="import-settings">
+            <p style={label}>Warp &amp; Import</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)' }}>Loop/Warp short samples</span>
+              {SHORT_SAMPLE_MODES.map(v => (
+                <label key={v} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+                  <input type="radio" name="short-samples" value={v} checked={imp.shortSamples === v} data-help-id={`import-short-${v}`}
+                    onChange={() => setImportSettings({ shortSamples: v })} style={{ accentColor: 'var(--accent)', marginTop: 2, flexShrink: 0 }} />
+                  <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{SHORT_SAMPLE_LABEL[v]}</span>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.45 }}>
+                      {v === 'oneshot' ? 'A dropped sample plays once, at its own speed — hits, stabs, effects. Warp and loop stay off.'
+                        : v === 'loop' ? 'A dropped sample is warped to a whole number of bars and loops — the Seg BPM is set so it fits.'
+                        : 'Beacon looks at the length: within a few percent of whole bars at a plausible tempo, it lands as a loop; anything else is a one-shot.'}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+              <input type="checkbox" checked={imp.autoWarpLong} data-help-id="import-auto-warp-long"
+                onChange={e => setImportSettings({ autoWarpLong: e.target.checked })} style={{ accentColor: 'var(--accent)', marginTop: 2, flexShrink: 0 }} />
+              <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>Auto-warp long samples</span>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.45 }}>
+                  A sample of {LONG_SAMPLE_SEC} seconds or more — a song, a stem — is warped straight at the song tempo, so it plays at its own speed and follows tempo changes. Off, it plays as it is.
+                </span>
+              </span>
+            </label>
+          </div>
+        )}
 
         {/* Presets */}
         <div style={section}>

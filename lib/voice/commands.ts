@@ -45,7 +45,9 @@ import { Words, near } from './words'
 import { matchApolloParam, matchFilterType, moduleHint } from '../apollo/spoken-params'
 import { characterWordsIn } from './preset-character'
 import { parseClipAddress, colourOf } from '../clip-address'
-import { parseNoteAddress } from '../note-address'
+import { parseNoteAddress, pitchOf } from '../note-address'
+import { parseFilter } from '../find-notes'
+import { parseLoopLength } from '../clip-time'
 import { parseTrackAddress } from '../track-address'
 import { viewOf, snapOf, overlayOf, matchCommand } from './workspace'
 
@@ -843,6 +845,9 @@ const COMMANDS: VoiceCommand[] = [
       if (!w.has('percent', 'volume', 'level')) return null
       // A named effect makes this a different command entirely.
       if (EFFECTS.some(e => w.has(e))) return null
+      // "humanize the guitar 30 percent" is an AMOUNT for time_feel, not a
+      // fader level — the percent is the only thing the two sentences share.
+      if (w.has('humanize', 'humanise', 'loosen')) return null
       // The name is resolved BEFORE the number is read, because which numbers
       // are arguments depends on which are part of the name.
       const set = trackSetIn(w.raw, ctx, /\b(?:set|put|to|at|volume|level|percent)\b|\d+(?:\.\d+)?|%/g)
@@ -1108,6 +1113,8 @@ const COMMANDS: VoiceCommand[] = [
       // something specific are ordered above this one and take it first.
       if (w.has('off', 'stop', 'disable')) return null
       if (w.has('first')) return null
+      // "warp the clip as a 2 bar loop" is the clip's warp (warp_markers), not the song loop.
+      if (w.has('warp', 'warped', 'warping')) return null
       if (w.nums().length >= 2) return null
       return {
         calls: [{ name: 'set_loop_region', input: { enabled: true } }],
@@ -1207,6 +1214,42 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
   {
+    id: 'set_clip_active',
+    tool: 'set_clip_active',
+    group: 'Arrangement',
+    what: 'Park a clip without deleting it, or bring it back',
+    say: ['deactivate the pad clip', 'turn the drums clip off', 'activate the vox take again'],
+    match(w, ctx) {
+      // Live's Clip Activator. "Off"/"on" only count with the word "clip",
+      // because "turn the bass off" is the track (mute), not a clip. Read from
+      // the raw sentence: "on" and "off" are filler words the token list drops.
+      const raw = w.raw.toLowerCase()
+      // ⚠️ A literal look first. w.has() bends every word of the sentence
+      // against every candidate by edit distance; on a long sentence, three
+      // rules doing that pushed the whole read past its 25 ms budget.
+      if (!/activat|disabl|enabl|park|\b(?:turn|switch|bring)\b/.test(raw)) return null
+      // "deactivate the pad notes" is the NOTES (edit_notes); a clip is never called notes or chords.
+      if (/\bnotes?\b|\bchords?\b/.test(w.raw.toLowerCase())) return null
+      const off = w.has('deactivate', 'disable') || w.exact('park')
+        || /\b(?:turn|switch)\b[^.]*\bclip\b[^.]*\boff\b/.test(raw)
+      const on = w.has('activate', 'reactivate', 'enable') || w.exact('unpark')
+        || /\b(?:turn|switch|bring)\b[^.]*\bclip\b[^.]*\b(?:on|back)\b/.test(raw)
+      if (!off && !on) return null
+      if (w.has('track', 'mute', 'unmute')) return null
+      const hit = clipOrSelected(w, ctx, ['deactivate', 'disable', 'park', 'activate', 'reactivate', 'enable', 'unpark',
+        'turn', 'switch', 'bring', 'off', 'on', 'back', 'again', 'clip'], { dropNums: true })
+      if (!hit) return null
+      // The whole sentence is this request — "again" is not a repeat and
+      // "back" is not the strip-back — so claim every word.
+      for (const word of w.all) w.markWord(word, 0)
+      return {
+        calls: [{ name: 'set_clip_active', input: { target: hit.name, active: !!on && !off } }],
+        confidence: nameConfidence(hit.score),
+        needsName: true,
+      }
+    },
+  },
+  {
     id: 'duplicate_clip',
     tool: 'duplicate_clip',
     group: 'Arrangement',
@@ -1217,10 +1260,16 @@ const COMMANDS: VoiceCommand[] = [
       // copy_notes, whatever verb comes with it; repeating the whole clip is
       // this.
       if (/\b(?:first|second|third|fourth|fifth|sixth|last|opening|\d+(?:st|nd|rd|th))\s+(?:(?:one|two|three|four|\d+)\s+)?(?:chords?|notes?|(?:\d+\s+)?(?:bars?|beats?))\b|\bchord\s+\d/.test(w.raw.toLowerCase())) return null
+      // "activate the pad clip again" is the clip activator, not a repeat:
+      // "again" there means "as before".
+      if (w.has('activate', 'reactivate', 'deactivate', 'enable', 'disable') || w.exact('park', 'unpark')) return null
       const asked = w.has('repeat', 'duplicate', 'again', 'copy')
         || (w.has('loop') && w.has('times', 'more'))
         || w.has('double')
       if (!asked) return null
+      // "duplicate the pad loop" is the clip's loop BRACE doubling (clip_time);
+      // a loop word here only means a repeat when it carries a count.
+      if (w.has('loop') && !w.has('times', 'more')) return null
       const hit = clipOrSelected(w, ctx, ['repeat', 'duplicate', 'again', 'copy', 'loop', 'times', 'more',
           'double', 'twice', 'track', 'clip'], { dropNums: true })
       if (!hit) return null
@@ -1326,23 +1375,26 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'transpose',
     group: 'Notes',
     what: 'Move a part up or down in pitch',
-    say: ['take the bass up an octave', 'drop the pad down a fifth', 'transpose the lead up 3 semitones', 'transpose the third chord of the organ chords up an octave'],
+    say: ['take the bass up an octave', 'drop the pad down a fifth', 'transpose the lead up 3 semitones', 'transpose the third chord of the organ chords up an octave', 'take the lead up two scale degrees'],
     match(w, ctx) {
       const up = w.has('up', 'raise', 'higher')
       const down = w.has('down', 'drop', 'lower')
       if (up === down) return null
-      if (!w.has('transpose', 'octave', 'semitone', 'semitones', 'fifth', 'fourth', 'third', 'step', 'steps')) {
+      if (!w.has('transpose', 'octave', 'semitone', 'semitones', 'fifth', 'fourth', 'third', 'step', 'steps', 'degree', 'degrees')) {
         return null
       }
       // Part of a clip: "transpose the third chord of the pad up an octave",
       // "take the notes above C5 down an octave". The clip is what follows
       // "of / in / on"; the part is read by lib/note-address.ts.
       const rawT = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      // "pitch the vocal clip up 3" is the audio clip's own pitch (set_clip_audio).
+      if (/\b(?:pitch|tune)\b/.test(rawT) && /\bclips?\b/.test(rawT)) return null
       const na = parseNoteAddress(rawT)
       const srcM = na ? /\b(?:of|in|on|from)\s+(?:the\s+)?([a-z0-9' ]+?)(?=\s+(?:up|down|by|an?\s+octave|and|then)\b|[,.]|$)/.exec(rawT) : null
       const hit = clipOrSelected(w, ctx, ['transpose', 'take', 'drop', 'move', 'up', 'down', 'raise', 'lower',
           'higher', 'octave', 'semitone', 'semitones', 'fifth', 'fourth', 'third',
           'second', 'step', 'steps', 'half', 'tone', 'whole', 'by', 'track', 'clip',
+          'degree', 'degrees', 'scale', 'key', 'diatonic',
           ...(na ? ['chord', 'chords', 'note', 'notes', 'above', 'below', 'over', 'under', 'every', 'all', 'at', 'bar', 'bars', 'beat', 'beats', 'of', 'in', 'on', 'from', 'to', 'two', 'three', 'first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'last', 'highest', 'lowest', 'top', 'bottom', 'opening'] : [])], { dropNums: true })
       const target = srcM?.[1]?.trim() || hit?.name
       if (!target) return null
@@ -1353,14 +1405,118 @@ const COMMANDS: VoiceCommand[] = [
       // interval word is often the UNIT rather than the size: "up 3 semitones"
       // is three, not one, and reading the word first made every counted
       // transposition move by exactly one.
-      const size = n != null && n > 0 && n <= 48 ? n : named ? INTERVALS[named] : null
+      // "up two scale degrees", "a step up in the scale", "down a degree":
+      // by degree, in the song's key (lib/pitch-time.ts). One degree when no
+      // number is said.
+      const byDegree = /\bdegrees?\b|\bin (?:the )?(?:scale|key)\b|\bdiatonic/.test(rawT)
+      const size = n != null && n > 0 && n <= 48 ? n : byDegree ? 1 : named ? INTERVALS[named] : null
       if (size == null) return null
-      if (na) for (const word of w.all) w.markWord(word, 0)
+      if (na || byDegree) for (const word of w.all) w.markWord(word, 0)
+      const move = byDegree ? { degrees: up ? size : -size } : { semitones: up ? size : -size }
       return {
-        calls: [{ name: 'transpose', input: { target, semitones: up ? size : -size, ...(na ? { notes: na.label } : {}) } }],
+        calls: [{ name: 'transpose', input: { target, ...move, ...(na ? { notes: na.label } : {}) } }],
         confidence: na ? 0.9 : nameConfidence(hit?.score ?? 0.8),
         needsName: true,
       }
+    },
+  },
+  {
+    id: 'set_chance',
+    tool: 'set_chance',
+    group: 'Notes',
+    what: 'How often a part plays — chance per note',
+    say: ['make the drums 50 percent chance', 'play the pad half the time', 'the vocals only sometimes'],
+    match(w, ctx) {
+      const raw = w.raw.toLowerCase()
+      if (!/chance|probab|half the time|the time\b|sometimes|rarely|always play|every pass|randomly/.test(raw)) return null
+      // "randomize the hats" is the lane's Randomize; a sweep is automation.
+      if (w.has('automate', 'automation', 'sweep', 'randomize', 'humanize')) return null
+      const pctM = /(\d+)\s*(?:%|percent)/.exec(raw)
+      const chance = pctM ? Number(pctM[1])
+        : /half the time|half of the time/.test(raw) ? 50
+        : /(?:a )?quarter of the time/.test(raw) ? 25
+        : /\bsometimes\b/.test(raw) ? 30
+        : /\brarely\b|once in a while/.test(raw) ? 15
+        : /always/.test(raw) ? 100
+        : /never/.test(raw) ? 0
+        : null
+      if (chance == null) return null
+      const hit = clipOrSelected(w, ctx, ['chance', 'chances', 'probability', 'percent', 'half', 'quarter', 'time', 'sometimes', 'rarely',
+        'always', 'never', 'play', 'plays', 'randomly', 'only', 'make', 'give', 'set', 'notes', 'note', 'track', 'clip', 'every', 'pass'], { dropNums: true })
+      if (!hit) return null
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'set_chance', input: { target: hit.name, chance } }], confidence: nameConfidence(hit.score), needsName: true }
+    },
+  },
+  {
+    id: 'set_delay_compensation',
+    tool: 'set_delay_compensation',
+    group: 'Mixer',
+    what: 'Delay compensation on or off',
+    say: ['turn delay compensation off', 'turn latency compensation on'],
+    match(w) {
+      if (!/compensat|\bpdc\b/.test(w.raw.toLowerCase())) return null
+      if (!w.has('compensation', 'compensate', 'pdc')) return null
+      if (!w.has('delay', 'latency', 'plugin', 'plug-in', 'pdc')) return null
+      const raw = w.raw.toLowerCase()
+      const off = /\boff\b/.test(raw) || w.has('disable', 'without', 'stop')
+      const on = /\bon\b/.test(raw) || w.has('enable', 'compensate')
+      if (off === on) return null
+      for (const word of w.all) w.markWord(word, 0)
+      // ⚠️ 0.92, not 0.9. The palette has a command whose label IS this
+      // sentence ("Turn delay compensation on"), and the generic by-name rule
+      // reads it at 0.86 with full coverage — within the ambiguity margin of a
+      // 0.9 reading, so the studio stopped to ask which of two identical
+      // things was meant. A dedicated rule for a sentence outranks the palette
+      // match for the same sentence by more than the margin.
+      return { calls: [{ name: 'set_delay_compensation', input: { on: !off } }], confidence: 0.92 }
+    },
+  },
+  {
+    id: 'modulate_parameter',
+    tool: 'modulate_parameter',
+    group: 'Arrangement',
+    what: 'Put an LFO on a parameter — a wobble, a tremolo, an auto-pan',
+    say: ['put an LFO on the pad filter', 'wobble the bass 2 cutoff every eighth', 'take the LFO off the pad'],
+    match(w, ctx) {
+      // A literal look before the fuzzy one — see set_clip_active.
+      if (!/lfo|wobbl|tremolo|modulat|auto-?pan|breath|puls/.test(w.raw.toLowerCase())) return null
+      const lfo = w.has('lfo', 'wobble', 'wobbling', 'wobbly', 'tremolo', 'modulate', 'modulation', 'modulating', 'autopan', 'auto-pan', 'breathe', 'pulse', 'pulsing')
+      if (!lfo) return null
+      // "Automate" is the ramp; a length ("over 4 bars") is a ramp too.
+      if (w.has('automate', 'automation', 'sweep', 'ramp', 'fade')) return null
+      // "LFO 2 rate to 5 hertz on the synth" is one of Apollo's own LFOs
+      // (set_apollo_param), not a modulator on a track parameter.
+      if (/\blfo\s*\d/.test(w.raw.toLowerCase()) || w.has('rate', 'synth', 'apollo', 'patch', 'oscillator', 'osc')) return null
+      const off = w.has('stop', 'remove', 'kill', 'delete', 'off', 'without') || /\b(?:take|turn)\b[^.]*\b(?:off|out)\b/.test(w.raw.toLowerCase())
+      const parameter = w.has('filter', 'cutoff', 'lowpass', 'low-pass') ? 'lowpass'
+        : w.has('highpass', 'high-pass') ? 'highpass'
+        : w.has('tremolo', 'volume', 'level', 'loudness') ? 'volume'
+        : w.has('pan', 'autopan', 'auto-pan', 'panning') ? 'pan'
+        : w.has('reverb') ? 'reverb' : w.has('delay') ? 'delay' : w.has('drive', 'saturation') ? 'drive' : w.has('chorus') ? 'chorus'
+        : null
+      const raw = w.raw.toLowerCase()
+      const rateM = /(\d+\s*\/\s*\d+)|(\d+(?:\.\d+)?)\s*(?:hz|hertz)|\b(every beat|once a bar|every bar|eighths?|sixteenths?|quarters?|triplets?|slow|slowly|fast|quickly)\b/.exec(raw)
+      const rate = rateM ? (rateM[1] ? rateM[1].replace(/\s+/g, '') : rateM[2] ? `${rateM[2]} hz` : rateM[3]) : undefined
+      const depthM = /(\d+)\s*(?:%|percent)/.exec(raw)
+      const hit = nameFrom(w, ctx, ['lfo', 'wobble', 'wobbling', 'wobbly', 'tremolo', 'modulate', 'modulation', 'modulating',
+        'autopan', 'auto-pan', 'breathe', 'pulse', 'pulsing', 'filter', 'cutoff', 'lowpass', 'low-pass', 'highpass', 'high-pass',
+        'volume', 'level', 'loudness', 'pan', 'panning', 'reverb', 'delay', 'drive', 'saturation', 'chorus',
+        'stop', 'remove', 'kill', 'delete', 'off', 'out', 'take', 'turn', 'put', 'add', 'every', 'once', 'beat', 'bar', 'bars',
+        'eighth', 'eighths', 'sixteenth', 'sixteenths', 'quarter', 'quarters', 'triplet', 'triplets', 'slow', 'slowly', 'fast', 'quickly',
+        'hz', 'hertz', 'percent', 'deep', 'depth', 'sine', 'triangle', 'saw', 'square', 'random', 'wave', 'track'], { dropNums: true })
+      if (!hit) return null
+      for (const word of w.all) w.markWord(word, 0)
+      const input: Record<string, unknown> = { target: hit.name }
+      if (parameter) input.parameter = parameter
+      if (off) input.off = true
+      else {
+        if (rate) input.rate = rate
+        if (depthM) input.depth = Number(depthM[1])
+        const shape = ['triangle', 'saw', 'square', 'random'].find(s => w.has(s))
+        if (shape) input.shape = shape
+      }
+      return { calls: [{ name: 'modulate_parameter', input }], confidence: nameConfidence(hit.score), needsName: true }
     },
   },
   {
@@ -2130,7 +2286,28 @@ const COMMANDS: VoiceCommand[] = [
       if (w.has('nothing', 'none', 'deselect')) {
         return { calls: [{ name: 'select', input: { what: 'none' } }], confidence: 0.93 }
       }
-      if (w.has('loop')) return { calls: [{ name: 'select', input: { what: 'loop' } }], confidence: 0.93 }
+      // "select the loop" is the song's loop; "select the notes in the loop of
+      // the pad" is a clip's brace — clip_time's.
+      if (w.has('loop')) return /\bnotes?\b/.test(w.raw.toLowerCase()) ? null : { calls: [{ name: 'select', input: { what: 'loop' } }], confidence: 0.93 }
+      // Notes inside a clip — Find & Select by voice (lib/find-notes.ts):
+      // "select every C in the pad", "select the quiet notes in the lead",
+      // "select the notes off the scale in the bass". The clip is what follows
+      // "in / on / of"; the rest of the sentence is the filter.
+      const rawSel = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      const noteFilter = parseFilter(rawSel, s => pitchOf(s)?.pitch ?? null)
+      // ⚠️ "the clips longer than a beat" also reads as a note filter (long).
+      // Notes are meant only when the sentence says notes, or names a pitch
+      // class or the scale — and never when it says clips.
+      const meansNotes = !/\bclips?\b/.test(rawSel) && (/\bnotes?\b|\bchords?\b/.test(rawSel) || (noteFilter != null && (noteFilter.pitchClass != null || noteFilter.scale != null)))
+      if (meansNotes) {
+        const inM = /\b(?:in|on|of|from)\s+(?:the\s+)?([a-z0-9' ]+?)$/.exec(rawSel)
+        const target = inM?.[1]?.trim() || ctx.selectedTrackName
+        if (target) {
+          for (const word of w.all) w.markWord(word, 0)
+          const filter = inM ? rawSel.slice(0, inM.index).replace(/^.*?\bselect(?:ed)?\b\s*/, '').trim() : rawSel.replace(/^.*?\bselect(?:ed)?\b\s*/, '').trim()
+          return { calls: [{ name: 'select', input: { what: 'notes', target, filter } }], confidence: 0.9, needsName: true }
+        }
+      }
       // ⚠️ The multi-select, by voice. "all the pad intro parts", "the third
       // pad intro part", "pad intro part 2", "the pad clips after bar 9", "the
       // clips shorter than a bar" — each names a SET of clips, and the set is
@@ -2207,11 +2384,115 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
   {
+    id: 'set_launch',
+    tool: 'set_launch',
+    group: 'Arrangement',
+    what: 'How a session slot answers a press: trigger, gate, toggle, repeat, legato',
+    say: ['put the session take slot in gate mode', 'make the session take slot legato', 'launch the session take slot on the bar'],
+    match(w, ctx) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      // The word "slot" or "launch" is what makes this the session's; a clip in
+      // the arrangement has no launch settings at all.
+      if (!/\bslots?\b|\blaunch/.test(raw)) return null
+      const modeM = /\b(trigger|gate|toggle|repeat)\b/.exec(raw)
+      const legato = /\blegato\b/.test(raw)
+      const velM = /\bvelocity\b[^%\d]*(\d{1,3})\s*(?:%|percent)/.exec(raw)
+      const quantM = /\bon (?:the )?(beat|bar)\b|\bevery (\d) bars?\b|\bno quantiz|\binstant/.exec(raw)
+      if (!modeM && !legato && !velM && !quantM) return null
+      // ⚠️ A session slot is NOT in ctx.clips — that list is the arrangement's,
+      // and the grid is a different place entirely. So the name is not resolved
+      // here at all: whatever is left once the command's own words are taken
+      // out is handed to the planner, which owns the grid and looks it up there.
+      const target = raw
+        .replace(/\b(?:put|set|sets|make|makes|launch|launches|launching|the|a|an|its|it|this|that|slots?|clips?|in|into|on|off|to|at|mode|amount|percent|quantize|quantization|every|no|instant|trigger|gate|toggle|repeat|legato|velocity|beats?|bars?)\b/g, ' ')
+        .replace(/\d+\s*%?/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+      if (!target) return null
+      void ctx
+      const input: Record<string, unknown> = { target }
+      if (modeM) input.mode = modeM[1]
+      if (legato) input.legato = !/\b(?:no|not|stop|off|un-?set)\s+legato\b|\blegato\s+off\b/.test(raw)
+      if (velM) input.velocity = `${velM[1]}%`
+      if (quantM) input.quantize = quantM[2] ? `${quantM[2]}bar` : quantM[1] ? quantM[1] : 'none'
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'set_launch', input }], confidence: 0.94, needsName: true }
+    },
+  },
+  {
+    id: 'audio_to_midi',
+    tool: 'audio_to_midi',
+    group: 'Arrangement',
+    what: 'Slice an audio clip to a new MIDI track, or convert it to MIDI notes',
+    say: ['slice the vox take clip to a new midi track', 'convert the vox take clip to midi', 'convert the vox take clip harmony to midi', 'convert the vox take clip to midi drums'],
+    match(w, ctx) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      if (!/\bmidi\b/.test(raw)) return null
+      const slice = /\bslice\b/.test(raw)
+      const convert = /\bconvert\b|\bturn\b|\bto midi\b|\binto midi\b|\bas midi\b/.test(raw)
+      if (!slice && !convert) return null
+      // The clip's own name first, as set_clip_audio does — a clip called
+      // "Drums" must not make this a drum conversion of something else.
+      const spoken = (ctx.clips ?? [])
+        .filter(c => c.name && raw.includes(c.name.toLowerCase()))
+        .sort((a, b) => (b.name?.length ?? 0) - (a.name?.length ?? 0))[0] ?? null
+      const rest = spoken?.name ? raw.replace(spoken.name.toLowerCase(), ' ') : raw
+      let target = spoken?.name ?? null
+      let score = 1
+      if (!target) {
+        const hit = clipOrSelected(w, ctx, ['slice', 'slices', 'convert', 'turn', 'clip', 'clips', 'to', 'a', 'an', 'new', 'midi', 'track', 'into', 'as', 'the', 'its',
+          'harmony', 'melody', 'drums', 'drum', 'notes', 'pads', 'transients', 'transient', 'markers', 'marker', 'bar', 'bars', 'grid', 'per', 'every', 'each', 'audio', 'sample'], { dropNums: true })
+        if (!hit) return null
+        target = hit.name
+        score = hit.score
+      }
+      const op = slice ? 'slice' : /\bharmony\b|\bchords?\b/.test(rest) ? 'harmony' : /\bdrums?\b|\bbeat\b|\bkick\b/.test(rest) ? 'drums' : 'melody'
+      const input: Record<string, unknown> = { target, op }
+      if (slice) {
+        const per = /\bmarkers?\b/.test(rest) ? 'markers' : /\b(?:per|every|each|on the|at the)\s+(bar|beat|quarter|eighth|sixteenth|1\/\d+)/.exec(rest)?.[1]
+        if (per) input.per = per
+        const maxM = /\b(?:at most|max(?:imum)?(?: of)?|up to)\s+(\d+)/.exec(rest)
+        if (maxM) input.max = Number(maxM[1])
+      }
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'audio_to_midi', input }], confidence: 0.94, needsName: true }
+    },
+  },
+  {
+    id: 'import_settings',
+    tool: 'import_settings',
+    group: 'View',
+    what: 'How samples land when dropped — one-shot, loop or auto; auto-warp long samples',
+    say: ['import short samples as one shots', 'loop short samples when they land', 'stop auto warping long samples'],
+    match(w) {
+      const raw = w.raw.toLowerCase()
+      // Always about "samples" in general — a named clip is set_clip_audio's.
+      if (!/\bsamples\b/.test(raw)) return null
+      const longM = /\blong samples\b/.test(raw) && /\bauto[- ]?warp/.test(raw)
+      const shortM = /\bshort samples\b/.test(raw) || /\b(?:import(?:ed)?|drop(?:ped)?|land(?:s|ed)?|when they land)\b/.test(raw)
+      if (!longM && !shortM) return null
+      const input: Record<string, unknown> = {}
+      if (longM) input.autoWarpLong = !/\b(?:stop|off|don't|do not|no longer|never)\b/.test(raw)
+      else if (/\bone[- ]?shots?\b|\bunwarped\b/.test(raw)) input.shortSamples = 'oneshot'
+      else if (/\bloops?\b|\bwarped\b/.test(raw)) input.shortSamples = 'loop'
+      else if (/\bauto\b|\bdecide\b/.test(raw)) input.shortSamples = 'auto'
+      else return null
+      for (const word of w.all) w.markWord(word, 0)
+      // ⚠️ The palette has commands called "Short samples land as: …", so the
+      // studio-command-by-name rule (0.86) reads this sentence too. Within the
+      // ambiguity margin the studio asks (or defers to the assistant) instead
+      // of acting; this rule knows exactly what was said and must win outright.
+      return { calls: [{ name: 'import_settings', input }], confidence: 0.96 }
+    },
+  },
+  {
     id: 'set_clip_audio',
     tool: 'set_clip_audio',
     group: 'Arrangement',
     what: 'Fade, level, reverse or loop an audio clip',
-    say: ['fade in the vox take clip over a bar', 'fade out the vox take clip over two beats', 'reverse the vox take', 'loop the vox take clip', 'turn the vox take clip down to 60%'],
+    say: ['fade in the vox take clip over a bar', 'fade out the vox take clip over two beats', 'reverse the vox take', 'loop the vox take clip', 'turn the vox take clip down to 60%',
+      'warp the vox take clip', 'set the vox take clip to complex mode', 'pitch the vox take clip up 3', 'the vox take clip is 90 bpm', 'put the vox take clip in beats mode',
+      'make the vox take clip the tempo leader', 'slip the vox take clip 20 milliseconds'],
     match(w, ctx) {
       const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
       // ⚠️ A clip called "Drum loop" has "loop" in it, and "reverse the drum
@@ -2232,9 +2513,30 @@ const COMMANDS: VoiceCommand[] = [
       const fadeIn = /\bfade[\s-]*in\b|\bfades?\s+(?:the\s+)?[\w\s]+?\s+in\b/.test(rest)
       const fadeOut = /\bfade[\s-]*out\b|\bfades?\s+(?:the\s+)?[\w\s]+?\s+out\b/.test(rest)
       const reverseSaid = /\b(?:reverse|reversed|backwards?)\b/.test(rest)
+      // Shaping a clip's loop — cropping to it, doubling it, its length, the
+      // notes in it — is clip_time's; this only switches looping on and off.
+      if (/\bcrop\b|\bduplicate\b|\bdouble\b|\bselect\b|\bloop\b.*\bto\b.*\b(?:bars?|beats?)\b|\bloop (?:length|end)\b/.test(rest)) return null
+      // Warping a clip AS a loop, straight, at a tempo, or its markers is warp_markers'; here Warp only switches on and off.
+      if (/\bwarp/.test(rest) && /\bas an? \S+[- ]bars?\b|\bas a loop\b|\bstraight\b|\bat\s+\d+(?:\.\d+)?\s*bpm\b|\bmarkers?\b/.test(rest)) return null
+      // Slip: the audio slides under the clip (lib/sample-editor.ts).
+      const slipM = clipWord && /\bslip\b|\bslide\b.*\baudio\b|\baudio\b.*\bslide\b/.test(rest)
+        ? /\b(?:by\s+)?(a|an|one|half a|\d+(?:\.\d+)?)\s*(milliseconds?|ms|seconds?|secs?|beats?|bars?)\b/.exec(rest)
+        : null
       const loopSaid = /\bloop(?:ed|ing)?\b/.test(rest) && clipWord
       const gainM = clipWord ? /\b(?:to|at)\s+(\d{1,3})\s*(?:%|percent)/.exec(rest) : null
-      if (!fadeIn && !fadeOut && !reverseSaid && !loopSaid && !gainM) return null
+      // The Sample Editor's settings (lib/sample-editor.ts), all wanting the
+      // word "clip": warp on / off, its mode, the pitch, the sample's own
+      // tempo, the edge fade.
+      const warpSaid = clipWord && /\bwarp(?:ed|ing)?\b/.test(rest) ? !/\b(?:un-?warp|stop|off|don't|do not|no longer)\b/.test(rest) : null
+      // The warp mode needs the word "mode" (or "warp") beside it — "beats" and "texture" mean other things alone.
+      const modeM = clipWord && /\bmode\b|\bwarp/.test(rest) ? /\b(re-?pitch|complex|beats|tones|texture)\b/.exec(rest) : null
+      const pitchM = clipWord && /\b(?:pitch|tune)\b/.test(rest) ? /\b(up|down)\s+(?:by\s+)?(\d+(?:\.\d+)?)/.exec(rest) : null
+      const bpmM = clipWord ? /(\d+(?:\.\d+)?)\s*bpm\b/.exec(rest) : null
+      const fadeM = clipWord && /\b(?:edge|clip) fades?\b/.test(rest) ? !/\boff\b|\bno\b|\bstop\b/.test(rest) : null
+      // Tempo leader (lib/tempo-leader.ts): "make the drums clip the tempo leader", "the song follows the drums clip's tempo".
+      const leaderSaid = clipWord && /\bleader\b|\bfollows?\b[\w\s']*\btempo\b|\bdrives? the (?:song'?s? )?tempo\b/.test(rest)
+        ? !/\b(?:stop|no longer|not|un-?set|release|isn't|is not|don't|do not)\b/.test(rest) : null
+      if (!fadeIn && !fadeOut && !reverseSaid && !loopSaid && !gainM && warpSaid == null && !modeM && !pitchM && !bpmM && fadeM == null && leaderSaid == null && !slipM) return null
       if ((fadeIn || fadeOut) && !clipWord) return null
       let target = spokenClip
       let score = 1
@@ -2243,7 +2545,7 @@ const COMMANDS: VoiceCommand[] = [
         const hit = clipOrSelected(w, ctx, ['fade', 'fades', 'reverse', 'reversed', 'backwards', 'backward', 'loop', 'looped', 'looping', 'unloop',
           'turn', 'set', 'make', 'play', 'stop', 'start', 'level', 'volume', 'gain', 'clip', 'clips', 'audio', 'over', 'for', 'by', 'across',
           'bar', 'bars', 'beat', 'beats', 'measure', 'measures', 'second', 'seconds', 'percent', 'half', 'down', 'up', 'in', 'out', 'the', 'a', 'an',
-          'to', 'at', 'it', 'this', 'that', 'again', 'forwards', 'forward'], { dropNums: true })
+          'to', 'at', 'it', 'this', 'that', 'again', 'forwards', 'forward', 'tempo', 'leader', 'follow', 'follows', 'song', 'drives', 'drive'], { dropNums: true })
         if (!hit) return null
         const selIds = hit.name.startsWith('#sel:') ? hit.name.slice(5).split(',') : null
         const byId = selIds ? null : (ctx.clips ?? []).find(c => hit.name === c.id || hit.name === `#${c.id}`)
@@ -2271,6 +2573,21 @@ const COMMANDS: VoiceCommand[] = [
       if (reverseSaid) input.reverse = !/\b(?:un-?reverse|stop|forwards?|back to normal)\b/.test(rest)
       if (loopSaid) input.loop = !/\b(?:stop|unloop|don't|do not|no longer|off)\b/.test(rest)
       if (gainM) input.gain = `${gainM[1]}%`
+      if (warpSaid != null) input.warp = warpSaid
+      if (modeM) input.warpMode = /complex/.test(modeM[1]) ? 'complex' : /beats/.test(modeM[1]) ? 'beats' : /tones/.test(modeM[1]) ? 'tones' : /texture/.test(modeM[1]) ? 'texture' : 'repitch'
+      if (pitchM) input.transpose = (pitchM[1] === 'down' ? -1 : 1) * Number(pitchM[2])
+      if (bpmM) input.segBpm = Number(bpmM[1])
+      if (fadeM != null) input.fade = fadeM
+      if (leaderSaid != null) input.tempoLeader = leaderSaid
+      if (slipM) {
+        const n = slipM[1] === 'a' || slipM[1] === 'an' || slipM[1] === 'one' ? 1 : slipM[1] === 'half a' ? 0.5 : (spokenNumber(slipM[1]) ?? Number(slipM[1]))
+        if (Number.isFinite(n)) {
+          input.slip = /^(?:milliseconds?|ms)$/.test(slipM[2]) ? { seconds: n / 1000 }
+            : /second|sec/.test(slipM[2]) ? { seconds: n }
+              : /beat/.test(slipM[2]) ? { beats: n } : { bars: n }
+          input.slipDirection = /\bback\b|\bearlier\b|\bleft\b/.test(rest) ? 'earlier' : 'later'
+        }
+      }
       for (const word of w.all) w.markWord(word, 0)
       return { calls: [{ name: 'set_clip_audio', input }], confidence: clipWord ? 0.95 : nameConfidence(score), needsName: true }
     },
@@ -2332,6 +2649,10 @@ const COMMANDS: VoiceCommand[] = [
       // A view word beside a thing to do to a track is not a view change:
       // "the mixer channel for the pad", "mixer volume".
       if (/\b(?:volume|level|fader|channel|pan|mute|solo|track|effects?|devices?|clip)\b/.test(raw)) return null
+      // ⚠️ "Session" is also the name of the grid a slot lives in: "put the
+      // session take slot in gate mode" is a launch setting, not a request to
+      // look at the session. A sentence about a slot is never a view change.
+      if (/\bslots?\b|\blaunch/.test(raw)) return null
       if (!/\b(?:show|switch|go|open|back|view|take me|bring up|see|let'?s|to the|the)\b/.test(raw)) return null
       for (const word of w.all) w.markWord(word, 0)
       return { calls: [{ name: 'workspace', input: { view } }], confidence: 0.9 }
@@ -2474,7 +2795,9 @@ const COMMANDS: VoiceCommand[] = [
       // ⚠️ No 'unmute': set_all_tracks already owns "unmute everything", and
       // two commands claiming one sentence is one command with a coin flip.
       // "Bring it back in" is the phrase that belongs to stripping back.
-      const restore = w.has('bring') && w.has('back', 'everything', 'all')
+      // "Bring the pad clip back" is one parked clip returning (set_clip_active),
+      // not the whole mix.
+      const restore = w.has('bring') && w.has('back', 'everything', 'all') && !w.has('clip', 'clips')
       if (restore) return { calls: [{ name: 'strip_back', input: { restore: true } }], confidence: 0.9 }
       // ⚠️ said(), not has(): "just" is filler everywhere else in the language
       // and is stripped before any rule sees it — the same trap "go" and "thin"
@@ -2495,6 +2818,9 @@ const COMMANDS: VoiceCommand[] = [
     say: ['invert the keys', 'invert the keys down'],
     match(w, ctx) {
       if (!w.has('invert', 'inverted', 'inversion')) return null
+      // A LINE turned over — "upside down", or a word for a line — is
+      // invert_notes (lib/pitch-time.ts), not a chord voicing.
+      if (/\bupside down\b|\b(?:melody|line|riff|pattern|notes|part)\b/.test(w.raw.toLowerCase())) return null
       const down = w.has('down', 'lower')
       const named = nameOrSelected(w, ctx, ['invert', 'inverted', 'inversion', 'the',
         'up', 'down', 'lower', 'higher', 'a'], { dropNums: true })
@@ -2774,7 +3100,7 @@ const COMMANDS: VoiceCommand[] = [
     what: 'Half time, double time, humanize, push or lay back',
     say: [
       'make the drums half time', 'double time the pad', 'humanize the guitar',
-      'lay the pad back a bit', 'push the drums ahead',
+      'lay the pad back a bit', 'push the drums ahead', 'humanize the guitar 30 percent',
     ],
     match(w, ctx) {
       const feel = (w.has('half') && w.has('time')) ? 'half'
@@ -2783,11 +3109,13 @@ const COMMANDS: VoiceCommand[] = [
             : (w.has('lay', 'laid', 'behind', 'lazy') && !w.has('ahead')) ? 'behind'
               : w.has('ahead', 'push', 'rushed') ? 'ahead' : null
       if (!feel) return null
+      // "humanize the guitar 30 percent" — the Amount (lib/pitch-time.ts).
+      const pctM = /(\d+)\s*(?:%|percent)/.exec(w.raw)
       const named = nameOrSelected(w, ctx, ['make', 'the', 'half', 'double', 'time',
         'humanize', 'humanise', 'loosen', 'lay', 'laid', 'back', 'behind', 'lazy',
-        'ahead', 'push', 'rushed', 'a', 'bit'])
+        'ahead', 'push', 'rushed', 'a', 'bit', 'percent', 'by'], { dropNums: true })
       if (!named) return null
-      return { calls: [{ name: 'time_feel', input: { target: named.name, feel } }], confidence: 0.88 }
+      return { calls: [{ name: 'time_feel', input: { target: named.name, feel, ...(pctM ? { amount: Number(pctM[1]) } : {}) } }], confidence: 0.88 }
     },
   },
   {
@@ -2795,17 +3123,28 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'note_length',
     group: 'Notes',
     what: 'Legato, staccato, or just longer and shorter notes',
-    say: ['make the pad legato', 'staccato the guitar', 'shorter notes on the lead'],
+    say: ['make the pad legato', 'staccato the guitar', 'shorter notes on the lead', 'make the pad eighth notes'],
     match(w, ctx) {
+      const raw = w.raw.toLowerCase()
+      // One length for every note — Set Length (lib/pitch-time.ts): "make the
+      // pad eighth notes", "set the lead to 1/16". Not when something is being
+      // ADDED in that length — that is a beat or a clip. ⚠️ Not "two beats
+      // long": that is resize_clip's sentence, and the clip is what it means.
+      const lenM = /\b((?:thirty[- ]second|sixteenth|eighth|quarter|half|whole)\s+notes?|1\/(?:32|16|8|4|2)(?:\s+notes?)?)\b/.exec(raw)
       const style = w.has('legato') ? 'legato'
         : w.has('staccato', 'stabs', 'stabby') ? 'staccato'
           : (w.has('shorter') && w.has('note', 'notes')) ? 'shorter'
-            : (w.has('longer') && w.has('note', 'notes')) ? 'longer' : null
+            : (w.has('longer') && w.has('note', 'notes')) ? 'longer'
+              : lenM && !w.has('add', 'insert', 'put', 'play', 'draw', 'write', 'record', 'quantize', 'quantise', 'snap', 'swing', 'grid',
+                'arpeggiate', 'arpeggio', 'arp', 'arpeggiator', 'rate', 'strum', 'repeat', 'echo', 'delay', 'stutter', 'roll') ? 'set' : null
       if (!style) return null
       const named = nameOrSelected(w, ctx, ['make', 'the', 'legato', 'staccato', 'stabs',
-        'stabby', 'shorter', 'longer', 'note', 'notes', 'on'])
+        'stabby', 'shorter', 'longer', 'note', 'notes', 'on', 'set', 'to', 'every', 'all', 'long', 'in', 'of', 'turn', 'into',
+        'thirty', 'second', 'sixteenth', 'eighth', 'quarter', 'half', 'whole', 'beat', 'beats', 'one', 'two', 'three', 'four'], { dropNums: true })
       if (!named) return null
-      return { calls: [{ name: 'note_length', input: { target: named.name, style } }], confidence: 0.9 }
+      if (style === 'set') for (const word of w.all) w.markWord(word, 0)
+      const length = style === 'set' ? lenM![1].replace(/\s+long$/, '') : undefined
+      return { calls: [{ name: 'note_length', input: { target: named.name, style, ...(length ? { length } : {}) } }], confidence: 0.9 }
     },
   },
   {
@@ -2876,6 +3215,163 @@ const COMMANDS: VoiceCommand[] = [
         'backward', 'play', 'the'])
       if (!named) return null
       return { calls: [{ name: 'reverse_notes', input: { target: named.name } }], confidence: 0.9 }
+    },
+  },
+  {
+    id: 'invert_notes',
+    tool: 'invert_notes',
+    group: 'Notes',
+    what: 'Flip a part upside down — the highest note becomes the lowest',
+    say: ['flip the lead upside down', 'invert the pad melody', 'turn the guitar riff upside down'],
+    match(w, ctx) {
+      const raw = w.raw.toLowerCase()
+      // Plain "invert the keys" is chord_inversion — a voicing. This is the
+      // LINE turned over, and the sentence has to say so: "upside down", or
+      // "invert" beside a word for a line. ⚠️ Not w.has('flip'): it is one
+      // edit from "clip" and would swallow half the studio.
+      if (!/\bupside down\b|\binvert(?:ed)?\b.*\b(?:melody|line|riff|pattern|notes|part)\b|\b(?:melody|line|riff|pattern|notes|part)\b.*\binvert/.test(raw)) return null
+      if (w.has('chord', 'chords', 'inversion', 'selection', 'voicing')) return null
+      const named = nameOrSelected(w, ctx, ['invert', 'inverted', 'flip', 'turn', 'upside', 'down', 'the',
+        'melody', 'line', 'riff', 'pattern', 'notes', 'part', 'of', 'in', 'on'])
+      if (!named) return null
+      for (const word of w.all) w.markWord(word, 0)
+      // 0.92: "down" is also the volume rule's word, and a tie there is a
+      // question nobody should be asked.
+      return { calls: [{ name: 'invert_notes', input: { target: named.name } }], confidence: 0.92 }
+    },
+  },
+  {
+    id: 'stretch_notes',
+    tool: 'stretch_notes',
+    group: 'Timing',
+    what: 'Stretch a part in time — twice as long, half, or by a factor',
+    say: ['stretch the lead to twice as long', 'stretch the pad by 1.5', 'squash the guitar to half'],
+    match(w, ctx) {
+      const raw = w.raw.toLowerCase()
+      if (!/\bstretch|\bsquash|\bsquish/.test(raw)) return null
+      // Audio is warping (a later batch); a bar count is a clip resize.
+      if (w.has('warp', 'audio', 'sample', 'bars', 'bar')) return null
+      const numM = /(?:by|to|times|x)\s*(\d+(?:\.\d+)?)\b|\b(\d+(?:\.\d+)?)\s*(?:x|times|×)\b/.exec(raw)
+      const factor = /\btwice\b|\bdouble\b|\b2x\b/.test(raw) ? 2
+        : /\bhalf\b/.test(raw) ? 0.5
+          : /\bthree times\b|\btriple\b/.test(raw) ? 3
+            : /one and a half/.test(raw) ? 1.5
+              : numM ? Number(numM[1] ?? numM[2]) : null
+      if (factor == null || !(factor > 0) || factor === 1) return null
+      const named = nameOrSelected(w, ctx, ['stretch', 'stretched', 'squash', 'squish', 'the', 'to', 'by', 'twice', 'as', 'long',
+        'double', 'half', 'times', 'x', 'factor', 'of', 'a', 'one', 'and', 'triple', 'three', 'out', 'notes', 'part', 'it'], { dropNums: true })
+      if (!named) return null
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'stretch_notes', input: { target: named.name, factor } }], confidence: 0.9 }
+    },
+  },
+  {
+    id: 'warp_markers',
+    tool: 'warp_markers',
+    group: 'Arrangement',
+    what: 'Warp an audio clip — as a loop of N bars, straight, at a tempo; clear its markers',
+    say: ['warp the vox take clip as a 2 bar loop', 'warp the vox take clip straight', 'warp the vox take clip at 90 bpm', 'clear the warp markers on the vox take clip'],
+    match(w, ctx) {
+      const raw = w.raw.toLowerCase()
+      if (!/\bwarp/.test(raw)) return null
+      const op = /\bas an? (\d+|one|two|four|eight)[- ]bars?\b|\bas a loop\b/.test(raw) ? 'as_loop'
+        : /\bstraight\b/.test(raw) ? 'straight'
+          : /\bat\s+\d+(?:\.\d+)?\s*bpm\b/.test(raw) ? 'at_bpm'
+            : /\bclear\b|\bremove\b|\bdelete\b/.test(raw) && /\bmarkers?\b/.test(raw) ? 'clear'
+              : null
+      if (!op) return null
+      const named = nameOrSelected(w, ctx, ['warp', 'warped', 'the', 'clip', 'as', 'a', 'an', 'bar', 'bars', 'loop', 'straight', 'at', 'bpm', 'clear', 'remove', 'delete',
+        'markers', 'marker', 'on', 'of', 'from', 'one', 'two', 'four', 'eight'], { dropNums: true })
+      if (!named) return null
+      const input: Record<string, unknown> = { target: named.name, op }
+      if (op === 'as_loop') {
+        const m = /\bas an? (\d+|one|two|four|eight)/.exec(raw)
+        const WORDS: Record<string, number> = { one: 1, two: 2, four: 4, eight: 8 }
+        input.bars = m ? (WORDS[m[1]] ?? Number(m[1])) : 1
+      }
+      if (op === 'at_bpm') input.bpm = Number(/\bat\s+(\d+(?:\.\d+)?)\s*bpm/.exec(raw)![1])
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'warp_markers', input }], confidence: 0.95 }
+    },
+  },
+  {
+    id: 'clip_time',
+    tool: 'clip_time',
+    group: 'Notes',
+    what: 'A clip\'s loop: its length, doubling it, cropping to it, selecting inside it — and cropping an audio clip\'s sample',
+    say: ['set the pad loop to two bars', 'duplicate the pad loop', 'select the notes in the loop of the pad', 'crop the vox take clip'],
+    match(w, ctx) {
+      const raw = w.raw.toLowerCase()
+      // "Crop the vocal clip" is the audio crop (the sample loses what the clip
+      // never plays) and says nothing about a loop; everything else here does.
+      const croppingAudio = /\bcrop\b/.test(raw) && !/\bloop/.test(raw)
+      if (!/\bloop/.test(raw) && !croppingAudio) return null
+      // The SONG loop ("loop the chorus", "loop bars 1 to 5", "select the loop")
+      // and looping a clip on or off belong to other rules; this is a clip's
+      // loop being SHAPED — its length, doubled, cropped to, its notes picked.
+      const op = /\bduplicate\b|\bdouble\b/.test(raw) ? 'duplicate_loop'
+        : /\bcrop\b/.test(raw) ? 'crop'
+          : /\bselect\b/.test(raw) && /\bnotes?\b/.test(raw) ? 'select_in_loop'
+            : /\bloop\b.*\bto\b.*\b(?:bars?|beats?)\b|\bloop (?:length|of)\b.*\b(?:bars?|beats?)\b/.test(raw) && /\b(?:set|make|change)\b/.test(raw) ? 'set_loop_length'
+              : null
+      if (!op) return null
+      const named = nameOrSelected(w, ctx, ['set', 'make', 'change', 'the', 'loop', 'loops', "loop's", 'to', 'of', 'its', 'duplicate', 'double', 'crop', 'clip',
+        'select', 'notes', 'note', 'in', 'inside', 'bar', 'bars', 'beat', 'beats', 'long', 'length', 'one', 'two', 'three', 'four', 'six', 'eight', 'a', 'an',
+        'sample', 'audio', 'plays', 'play', 'what', 'it'], { dropNums: true })
+        // ⚠️ A clip named on its own — "crop the vox take clip" — is invisible
+        // to that lookup: it protects the words of TRACK names only, so "take"
+        // is eaten as a near-miss of "make" and the leftover names nothing.
+        // Read the clip out of the sentence the way set_clip_audio does.
+        ?? (() => {
+          const spoken = (ctx.clips ?? [])
+            .filter(c => c.name && raw.includes(c.name.toLowerCase()))
+            .sort((a, b) => (b.name?.length ?? 0) - (a.name?.length ?? 0))[0]
+          return spoken?.name ? { name: spoken.name, score: 1 } : null
+        })()
+      if (!named) return null
+      const input: Record<string, unknown> = { target: named.name, op }
+      if (op === 'set_loop_length') {
+        const beats = parseLoopLength(raw, 4)
+        if (beats == null) return null
+        input.length = { beats }
+      }
+      for (const word of w.all) w.markWord(word, 0)
+      // Above the song-loop and duplicate-clip rules, which share its words.
+      return { calls: [{ name: 'clip_time', input }], confidence: 0.93 }
+    },
+  },
+  {
+    id: 'edit_notes',
+    tool: 'edit_notes',
+    group: 'Notes',
+    what: 'Split, chop, join, fit or deactivate the notes of a part',
+    say: ['split the pad notes in half', 'chop the lead notes into four', 'join the pad notes', 'deactivate the pad notes', 'fit the pad notes to the loop'],
+    match(w, ctx) {
+      const raw = w.raw.toLowerCase()
+      // These verbs belong to clips too — "split the pad at bar 2", "deactivate
+      // the pad clip" — so the sentence has to say NOTES (or a chord).
+      if (!/\bnotes?\b|\bchords?\b/.test(raw)) return null
+      const op = /\bchop\b/.test(raw) ? 'chop'
+        : /\bsplit\b|\bcut\b.*\bin half\b/.test(raw) ? 'split'
+          : /\bjoin\b|\bmerge\b|\bglue\b/.test(raw) ? 'join'
+            : /\bfit\b/.test(raw) ? 'fit'
+              : /\bdeactivate\b|\bturn off\b|\bsilence\b/.test(raw) ? 'deactivate'
+                : /\breactivate\b|\bactivate\b|\bturn (?:back )?on\b/.test(raw) ? 'activate' : null
+      if (!op) return null
+      // "fit … to the loop" is ours; "fit to scale" is the roll's key fix.
+      if (op === 'fit' && /\bscale\b|\bkey\b/.test(raw)) return null
+      const partsM = /\binto\s+(\d+|two|three|four|five|six|eight)\b/.exec(raw)
+      const WORDS: Record<string, number> = { two: 2, three: 3, four: 4, five: 5, six: 6, eight: 8 }
+      const parts = /\bin half\b|\bin two\b/.test(raw) ? 2 : partsM ? (WORDS[partsM[1]] ?? Number(partsM[1])) : undefined
+      const named = nameOrSelected(w, ctx, ['split', 'chop', 'cut', 'join', 'merge', 'glue', 'fit', 'deactivate', 'reactivate', 'activate',
+        'turn', 'off', 'on', 'back', 'silence', 'the', 'notes', 'note', 'chord', 'chords', 'in', 'half', 'into', 'to', 'loop', 'clip',
+        'two', 'three', 'four', 'five', 'six', 'eight', 'parts', 'pieces', 'of', 'every', 'all'], { dropNums: true })
+      if (!named) return null
+      for (const word of w.all) w.markWord(word, 0)
+      const input: Record<string, unknown> = { target: named.name, op }
+      if (parts && (op === 'split' || op === 'chop')) input.parts = parts
+      if (op === 'fit') input.range = /\bloop\b/.test(raw) ? 'loop' : 'clip'
+      return { calls: [{ name: 'edit_notes', input }], confidence: 0.9 }
     },
   },
   {
@@ -3429,14 +3925,14 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'quantize',
     group: 'Notes',
     what: 'Pull the notes onto the grid',
-    say: ['quantize the drums', 'quantize the bass 2 to eighth notes', 'tighten up the drums'],
+    say: ['quantize the drums', 'quantize the bass 2 to eighth notes', 'tighten up the drums', 'quantize the drums to eighth note triplets', 'quantize the ends of the pad notes'],
     match(w, ctx) {
       if (!w.has('quantize', 'quantise') && !w.hasPhrase('tighten', 'up') && !w.has('tighten')) {
         return null
       }
       const hit = clipOrSelected(w, ctx, ['quantize', 'quantise', 'tighten', 'up', 'grid',
         'note', 'notes', 'to', 'track', 'clip', 'eighth', 'sixteenth', 'quarter',
-        'half', 'percent', 'by'], { dropNums: true })
+        'half', 'percent', 'by', 'triplet', 'triplets', 'end', 'ends', 'endings', 'starts', 'both', 'of', 'the'], { dropNums: true })
       if (!hit) return null
       // The grid, said the way musicians say it. A quarter note is the default
       // because it is what "quantize this" means when nobody specifies.
@@ -3444,12 +3940,15 @@ const COMMANDS: VoiceCommand[] = [
         : w.has('eighth', 'eighths') ? 0.5
           : w.has('half') ? 2
             : 1
+      // Triplets (lib/quantize.ts: two thirds of the value) and which end moves.
+      const triplet = w.has('triplet', 'triplets')
+      const adjust = w.all.includes('end') || w.all.includes('ends') || w.has('endings') ? 'end' : w.all.includes('both') ? 'both' : undefined
       const n = argNumbers(w, hit.name)[0]
       const strength = n != null && n > 0 && n <= 100 && w.has('percent') ? n : undefined
       return {
         calls: [{
           name: 'quantize',
-          input: { target: hit.name, division, ...(strength != null ? { strength } : {}) },
+          input: { target: hit.name, division, ...(triplet ? { feel: 'triplet' } : {}), ...(adjust ? { adjust } : {}), ...(strength != null ? { strength } : {}) },
         }],
         confidence: nameConfidence(hit.score),
         needsName: true,
@@ -4501,6 +5000,8 @@ const COMMANDS: VoiceCommand[] = [
       // entirely: "add a marker at bar 9" moved the playhead and made no
       // marker. Naming a thing to PUT at that bar is not asking to go there.
       if (w.has('mark', 'marker', 'label')) return null
+      // "warp the clip as a 2 bar loop" names bars to warp across, not a place to go.
+      if (w.has('warp', 'warped', 'warping')) return null
       // ⚠️ The record, 16:40: "Start a low pass on bar 5. Keep it at" → moved
       // the playhead to bar 5. A thing to START at a bar — a filter, a sweep, a
       // fade, a reverb — is an automation that begins there, and the bar is

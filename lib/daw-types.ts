@@ -687,6 +687,42 @@ export interface AutomationLane {
 // ── Tone EQ ───────────────────────────────────────────────────────────────────
 // A simple 4-band tone control (all values in dB, -12..+12, 0 = flat).
 // Applied per-track (DawTrack.tone) and per-MIDI-clip (MidiClip.rollFx).
+// ── Modulation ────────────────────────────────────────────────────────────────
+//
+// A modulator is an LFO on a track that drives parameters through the same
+// namespace automation uses ('volume', 'pan', 'fx:{effectId}:{key}',
+// 'apollo:{path}', 'plugin:{id}', 'macro:N'). Automation is a shape along the
+// song; a modulator is a shape that repeats. Evaluated every scheduler tick
+// (lib/daw-modulation.ts) beside the automation lanes.
+
+export type ModShape = 'sine' | 'triangle' | 'saw' | 'square' | 'random'
+
+export interface ModRoute {
+  id: string
+  parameter: string
+  /** Swing as a fraction of the parameter's range, −1..1. */
+  amount: number
+  /** Swing above the base only (0..amount) rather than around it. */
+  unipolar?: boolean
+  enabled?: boolean
+}
+
+export interface Modulator {
+  id: string
+  trackId: string
+  name: string
+  shape: ModShape
+  rate: { kind: 'sync'; division: string } | { kind: 'hz'; hz: number }
+  /** Scales every route, 0..1. */
+  depth?: number
+  /** Starting phase, 0..1 of a cycle. */
+  phase?: number
+  /** For 'random': the same song renders the same every time. */
+  seed?: number
+  enabled?: boolean
+  routes: ModRoute[]
+}
+
 export interface ToneParams {
   sub?: number      // low shelf ~70 Hz
   bass?: number     // low shelf ~200 Hz
@@ -712,6 +748,8 @@ export interface DawTrack {
   armed: boolean
   frozen?: boolean    // freeze: render to audio buffer, disable instrument
   inputSource?: string | null  // 'mic' | 'system' | null — audio input for recording
+  /** A note the owner wrote (Edit Info Text…), shown in the Info View when the pointer is over the track. */
+  infoText?: string
   height: number      // arrangement lane height in px
   /** Collapsed = a thin row. On a group it also hides (folds) its children. */
   collapsed?: boolean
@@ -765,6 +803,12 @@ export interface AudioClip {
   createdBy?: string
   /** When it was added (ISO) — powers the away-recap. */
   createdAt?: string
+  /** Live's Clip Activator. `false` = deactivated: kept in place, drawn
+   *  dimmed, never played or rendered. Absent or `true` = active. "Deactivate,
+   *  don't delete" is how an idea is parked while auditioning others. */
+  active?: boolean
+  /** A note the owner wrote (Edit Info Text…), shown in the Info View when the pointer is over the clip. */
+  infoText?: string
   startBeat: number
   durationBeats: number
   r2Key?: string
@@ -792,7 +836,28 @@ export interface AudioClip {
   trimEnd: number
   bufferDuration?: number   // seconds — populated on first buffer load for crop math
   warpEnabled?: boolean
-  warpMode?: 'repitch' | 'stretch'
+  /** How the sample is fitted to the grid (lib/warp-modes.ts): Re-Pitch, Complex ('stretch'), Tones, Beats, Texture. */
+  warpMode?: 'repitch' | 'stretch' | 'tones' | 'beats' | 'texture'
+  /** Beats mode: cut at transients or grid divisions; how a gap after a slice is filled; the Transient Envelope. */
+  warpBeats?: { preserve: 'transients' | number; loop: 'off' | 'forward' | 'backforth'; envelope: number }
+  /** Tones mode: the grain, in ms. */
+  warpTones?: { grainMs: number }
+  /** Texture mode: the grain in ms and Flux 0–1. */
+  warpTexture?: { grainMs: number; flux: number }
+  /** Seg. BPM — the sample's own tempo (lib/sample-editor.ts). With Warp on the
+   *  clip plays at song tempo / segBpm; ×2 and ÷2 fix an octave-off detection. */
+  segBpm?: number
+  /** Live's clip Fade switch: a 4 ms fade at each edge so a cut never clicks, on top of any fadeIn/fadeOut. */
+  clipFade?: boolean
+  /** Warp markers (lib/warp.ts): beats of the clip pinned to seconds of the sample. Two or more, and Warp on, and the engine renders the sample through them. */
+  warpMarkers?: { beat: number; sec: number }[]
+  /**
+   * Tempo leader (lib/tempo-leader.ts): this clip's own tempo — its warp
+   * markers, or its Seg BPM — drives the song's tempo map. At most one clip.
+   */
+  tempoLeader?: boolean
+  /** Transient markers a person placed or moved (seconds), on top of the detected ones. */
+  transients?: number[]
   pitchSemitones?: number
   pitchCents?: number
   boomerang?: boolean
@@ -806,7 +871,16 @@ export interface AudioClip {
   /** Drawn volume automation across the clip (v 0..1). */
   volGraph?: AutoPoint[]
   color?: string
+  /**
+   * How this slot answers a press in the session (lib/launch.ts). Both clip
+   * shapes carry the same four: when to launch, what a press and a release
+   * mean, whether the launch is legato, and how much the press's velocity
+   * reaches the level.
+   */
   launchQuantization?: LaunchQuantization
+  launchMode?: LaunchMode
+  legatoLaunch?: boolean
+  velocityAmount?: number
   followAction?: FollowAction
   followActionTime?: number  // beats after which follow action fires
 }
@@ -902,6 +976,14 @@ export interface MidiNote {
   startBeat: number    // relative to clip startBeat
   durationBeats: number
   velocity: number     // 0–127
+  /** Chance of playing on any pass, 0..1. Absent = always (lib/note-chance.ts). */
+  chance?: number
+  /** Velocity deviation: ± up to this many steps, picked afresh each pass. */
+  deviation?: number
+  /** Probability group id; the clip's chanceGroups says whether the group plays all or one. */
+  chanceGroup?: string
+  /** Live's Deactivate Note (0): `false` = kept in place, drawn dimmed, silent. Absent = active. */
+  active?: boolean
   presetId?: string    // MIDI preset active when this note was recorded
   /** Per-note sound override — wins over clip rollFx and preset sound. */
   fx?: RollFx
@@ -911,11 +993,17 @@ export interface MidiClip {
   kind: 'midi'
   id: string
   trackId: string
+  /** Probability groups: Play All (each member rolls) or Play One (exactly one member plays per pass). */
+  chanceGroups?: Record<string, 'all' | 'one'>
   name: string
   /** Who added this clip (collab attribution) — stamped at creation. */
   createdBy?: string
   /** When it was added (ISO) — powers the away-recap. */
   createdAt?: string
+  /** Live's Clip Activator — see AudioClip.active. */
+  active?: boolean
+  /** A note the owner wrote (Edit Info Text…), shown in the Info View when the pointer is over the clip. */
+  infoText?: string
   startBeat: number
   durationBeats: number
   notes: MidiNote[]
@@ -926,6 +1014,9 @@ export interface MidiClip {
   loopLengthBeats?: number
   /** Recipe clips: edge-resize scales the note pattern to the new length instead of looping. */
   stretchNotes?: boolean
+  /** The clip's own time signature (Live's, display only): it draws the roll's bar lines. Absent = the song's. */
+  timeSignatureNum?: number
+  timeSignatureDen?: number
   /** Pitch class (0=C … 11=B) the pattern is rooted on — the piano roll's Root selector transposes relative to this. */
   rootNote?: number
   presetId?: string   // MIDI preset for note playback (overrides track instrument)
@@ -961,7 +1052,11 @@ export interface MidiClip {
    *  itself is session-only; the trace persists. */
   voiceMap?: { offsetMs: number; points: [number, number][] }
   color?: string
+  /** How this slot answers a press (lib/launch.ts). */
   launchQuantization?: LaunchQuantization
+  launchMode?: LaunchMode
+  legatoLaunch?: boolean
+  velocityAmount?: number
   followAction?: FollowAction
   followActionTime?: number
 }
@@ -1034,6 +1129,14 @@ export interface DawProject {
   loopEnabled: boolean
   masterVolume: number
   automationLanes: AutomationLane[]
+  /** LFOs on tracks, driving parameters every tick (see Modulator). */
+  modulators?: Modulator[]
+  /**
+   * Delay compensation: every track is delayed to match the slowest one's
+   * reported latency (lib/latency.ts), so a slow device does not put its
+   * track behind the rest. Absent = on.
+   */
+  delayCompensation?: boolean
   clipEffects: ClipEffect[]
   returnTracks: ReturnTrack[]
   takeLanes: TakeLane[]
@@ -1086,6 +1189,8 @@ export type EditTarget =
   | null
 
 export type LaunchQuantization = 'none' | 'beat' | 'bar' | '2bar' | '4bar'
+/** How a session slot answers a press. The behaviour lives in lib/launch.ts. */
+export type LaunchMode = 'trigger' | 'gate' | 'toggle' | 'repeat'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 

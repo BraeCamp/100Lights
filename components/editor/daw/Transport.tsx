@@ -472,6 +472,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
                 <span style={{ fontSize: 10, color: 'var(--text-secondary)', width: 62, flexShrink: 0 }}>{def.label}</span>
                 <Knob
                   value={fx.value} min={def.min} max={def.max} defaultValue={fx.value} size={26} color="#dc2626"
+                  spec={{ label: `Record ${def.label}`, min: def.min, max: def.max }}
                   bipolar={def.min < 0 && def.max > 0}
                   onChange={v => patchRecFx(recFx.map((f, j) => j === i ? { ...f, value: v } : f))}
                   format={def.fmt}
@@ -489,6 +490,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
           <span style={{ fontSize: 10, color: 'var(--text-secondary)', width: 62, flexShrink: 0 }}>Timing</span>
           <Knob
             value={latencyMs} min={-1} max={250} defaultValue={-1} size={26} color="#dc2626"
+            spec={{ label: 'Recording latency', min: -1, max: 250, unit: 'ms' }}
             onChange={v => commitLatency(Math.round(v))}
             format={v => (v < 0 ? 'auto' : `${Math.round(v)}ms`)}
           />
@@ -857,6 +859,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
           <Volume2 size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
           <Knob
             value={project.masterVolume} min={0} max={1} defaultValue={0.85} size={26}
+            spec={{ label: 'Master volume', min: 0, max: 1, unit: '%' }}
             onChange={v => { dispatch({ type: 'SET_MASTER_VOLUME', volume: v }); engine.setMasterVolume(v) }}
             format={v => `${Math.round(v * 100)}%`}
           />
@@ -1128,6 +1131,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
         style={metronome ? active : base}
         onClick={handleMetronomeToggle}
         title="Toggle metronome (M)"
+        aria-pressed={metronome}
         data-help-id="metronome"
       >
         <TbMetronome size={15} />
@@ -1165,6 +1169,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
                   >SWING</span>
                   <Knob
                     value={project.swing ?? 0} min={0} max={0.5} defaultValue={0} size={26}
+                    spec={{ label: 'Swing', min: 0, max: 0.5, unit: '%' }}
                     onChange={v => { dispatch({ type: 'SET_SWING', swing: v }); engine.swing = v }}
                     format={v => `${Math.round(v * 100)}%`}
                   />
@@ -1175,6 +1180,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
                   <span style={{ fontSize: 9, width: 42, color: varispeed !== 100 ? '#f59e0b' : 'var(--text-muted)', letterSpacing: '0.06em', flexShrink: 0 }} title="Tape speed — pitch follows speed">SPEED</span>
                   <Knob
                     value={varispeed} min={25} max={200} defaultValue={100} size={26}
+                    spec={{ label: 'Varispeed', min: 25, max: 200, unit: '%' }}
                     color={varispeed !== 100 ? '#f59e0b' : 'var(--accent)'}
                     onChange={v => { const pct = Math.round(v); setVarispeed(pct); engine.setPlaybackRate(pct / 100) }}
                     format={v => `${Math.round(v)}%`}
@@ -1185,6 +1191,16 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
                       style={{ ...base, width: 'auto', padding: '0 5px', fontSize: 8, fontFamily: 'monospace', background: 'rgba(245,158,11,0.15)', border: '1px solid #f59e0b', color: '#f59e0b', flexShrink: 0 }}><RotateCcw size={12} /></button>
                   )}
                 </div>
+                {/* Delay compensation (lib/latency.ts) */}
+                <button
+                  onClick={() => { const on = project.delayCompensation === false; dispatch({ type: 'SET_DELAY_COMPENSATION', on }); engine.setDelayCompensation(on) }}
+                  data-help-id="delay-compensation"
+                  aria-pressed={project.delayCompensation !== false}
+                  title="Delay compensation — every track is delayed to match the slowest one's devices, so they all arrive together"
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 7, cursor: 'pointer', textAlign: 'left', background: project.delayCompensation !== false ? 'rgb(var(--accent-rgb) / 0.12)' : 'var(--bg-card)', border: project.delayCompensation !== false ? '1px solid var(--accent)' : '1px solid var(--border-light)', color: project.delayCompensation !== false ? 'var(--accent)' : 'var(--text-secondary)', fontSize: 10, fontWeight: 700 }}>
+                  <span style={{ letterSpacing: '0.06em' }}>PDC</span>
+                  <span style={{ fontSize: 8.5, fontWeight: 400, color: 'var(--text-muted)' }}>delay compensation {project.delayCompensation !== false ? 'on' : 'off'}</span>
+                </button>
                 {/* Masking detector */}
                 <button
                   onClick={() => setShowMask(v => !v)}
@@ -1233,6 +1249,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
         <Volume2 size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
         <Knob
           value={project.masterVolume} min={0} max={1} defaultValue={0.85} size={26}
+            spec={{ label: 'Master volume', min: 0, max: 1, unit: '%' }}
           onChange={v => { dispatch({ type: 'SET_MASTER_VOLUME', volume: v }); engine.setMasterVolume(v) }}
           format={v => `${Math.round(v * 100)}%`}
         />

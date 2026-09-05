@@ -19,6 +19,7 @@ import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrum
 import { legacyToBar } from '@/lib/effect-bar'
 import type { DawAction } from '@/lib/daw-state'
 import { DawContext, DawPlayheadProvider, reducer, makeAudioClip, extractPeaks, migrateProject, useDaw } from '@/lib/daw-state'
+import { landClip, useImportSettings, setImportSettings, SHORT_SAMPLE_LABEL, type ShortSampleMode } from '@/lib/import-settings'
 import { useApolloTrackItem, ApolloTrackItemBar } from '@/components/editor/daw/ApolloTrackItem'
 import { useApolloMotion } from '@/components/editor/daw/ApolloMotion'
 import { consumeStudioSeed } from '@/lib/open-in-studio'
@@ -35,6 +36,7 @@ import { UITierProvider } from './UITierProvider'
 import { DawEngine } from '@/lib/daw-engine'
 import type { CollabPeer } from '@/lib/daw-types'
 import { uploadRecordingBlob } from '@/lib/record-upload'
+import { PcmRecorder } from '@/lib/pcm-recorder'
 import type { AudioTrackInit, ModuleKey } from '@/lib/editor-types'
 import type { PodcastMeta } from '@/lib/project-serializer'
 import { openProjectsFromFile } from '@/lib/project-serializer'
@@ -57,6 +59,11 @@ import { VUMeter } from './daw/TrackRow'
 import { DevicePopoutHost } from './daw/DeviceChain'
 import SoundLibraryPanel from './SoundLibrary'
 import { useRegisterCommands } from '@/lib/commands'
+import { resolveKey, releasedMomentary, MomentaryLatch, keysFor } from '@/lib/keymap'
+import { useDetail, toggleDetail, detailLabel } from '@/lib/detail-area'
+import { useDisplaySettings, setDisplay } from '@/lib/display-settings'
+import { applyUiScale, stepUiScale } from '@/lib/ui-scale'
+import { useDrawMode, toggleDrawMode, setPitchLock } from '@/lib/draw-mode'
 import SendToProjectButton from './SendToProjectButton'
 import PolyCodePanel from './daw/PolyCodePanel'
 import GuestPanel from './daw/GuestPanel'
@@ -116,6 +123,10 @@ const PianoRoll = dynamic(() => import('./daw/PianoRoll'), { ssr: false })
 const DeviceChain = dynamic(() => import('./daw/DeviceChain'), { ssr: false })
 const ReturnDeviceChain = dynamic(() => import('./daw/DeviceChain').then(m => ({ default: m.ReturnDeviceChain })), { ssr: false })
 const InstrumentPicker = dynamic(() => import('./daw/InstrumentPicker'), { ssr: false })
+const DetailArea = dynamic(() => import('./daw/DetailArea'), { ssr: false })
+const ArrangementMixer = dynamic(() => import('./daw/ArrangementMixer'), { ssr: false })
+const StatusBar = dynamic(() => import('./daw/StatusBar'), { ssr: false })
+const ClipViewWindow = dynamic(() => import('./daw/DetailArea').then(m => ({ default: m.ClipViewWindow })), { ssr: false })
 const PadInput = dynamic(() => import('./daw/PadInput'), { ssr: false })
 // Liveblocks only loads for saved projects — keeps collab out of the main editor chunk
 const CollabLayer = dynamic(() => import('./daw/CollabLayer'), { ssr: false })
@@ -961,7 +972,10 @@ export default function AudioEditor(props: AudioEditorProps) {
   }, [restorePrompt])
 
   // ── Per-track external input recording ──────────────────────────────────────
-  type InputRec = { recorder: MediaRecorder; startBeat: number; chunks: Blob[] }
+  // A live-input take: float32 off a MediaStreamAudioSourceNode, written
+  // as a float WAV (lib/pcm-recorder.ts) — lossless and sample-exact, which
+  // an Opus MediaRecorder was not.
+  type InputRec = { recorder: PcmRecorder; stream: MediaStream; startBeat: number }
   const inputRecsRef    = useRef<Map<string, InputRec>>(new Map())
   // Loop recording: pass counter + wrap watcher (each loop pass becomes a take)
   const recPassRef = useRef(0)
@@ -1521,6 +1535,8 @@ export default function AudioEditor(props: AudioEditorProps) {
       __dawSnapshot?: () => { project: DawProject; history: NonNullable<DawProject['history']> }
       __dawInspect?: () => unknown
       __dawRenderWav?: (opts?: Parameters<DawEngine['renderWav']>[0]) => Promise<unknown>
+      __dawMakeAudioClip?: typeof makeAudioClip
+      __dawImportAudio?: (file: File) => Promise<string | null>
       __dawRenderOffline?: (opts?: { startBeat?: number; endBeat?: number }) => Promise<unknown>
       __dawFreezeApollo?: () => Promise<unknown>
       __parseMid?: (file: File) => Promise<unknown>
@@ -1573,6 +1589,10 @@ export default function AudioEditor(props: AudioEditorProps) {
     // Bounce a beat range to lossless WAV(s) for offline mix analysis (see
     // scripts/analyze-mix.py). Real-time capture off the live engine graph.
     w.__dawRenderWav = (opts) => engineRef.current?.renderWav(opts ?? {}) ?? Promise.resolve(null)
+    // A clip built the way a library drop builds one — saved clip defaults included (lib/clip-defaults.ts).
+    w.__dawMakeAudioClip = makeAudioClip
+    // The real import path (lib/daw-audio-import.ts) for headless checks of how a sample lands.
+    w.__dawImportAudio = (file: File) => import('@/lib/daw-audio-import').then(m => m.importAudioAsNewTrack(file, { engine: engineRef.current!, dispatch, beatsPerBar: projectRef.current?.timeSignatureNum || 4 }))
     // Bounce the REAL project audio via the OFFLINE render (OfflineAudioContext) — this is the ONE
     // that produces actual sound in a headless/automated browser, unlike the realtime renderWav which
     // captures silence when there's no audio device. Returns the encoded mix as base64 so an agent can
@@ -1727,7 +1747,8 @@ export default function AudioEditor(props: AudioEditorProps) {
         dispatch({ type: 'ADD_CLIP', clip })
         const buf = await engineRef.current?.loadClipBuffer(clip)
         if (buf) {
-          dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { waveformPeaks: extractPeaks(buf), durationBeats: engineRef.current!.secondsToBeats(buf.duration), bufferDuration: buf.duration } })
+          // Loop/Warp Short Samples decides how it lands (lib/import-settings.ts).
+          dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { waveformPeaks: extractPeaks(buf), bufferDuration: buf.duration, ...landClip(clip, buf.duration, engineRef.current!.tempo, projectRef.current?.timeSignatureNum || 4).patch } })
           // Persist so the clip survives a reload — audioUrl is stripped on save.
           try {
             const ab = await (await fetch(url)).arrayBuffer()
@@ -1976,19 +1997,14 @@ export default function AudioEditor(props: AudioEditorProps) {
       recPassRef.current++
       const endBeat = projectRef.current.loopEnd
       for (const [trackId, entry] of [...inputRecsRef.current]) {
-        const { recorder, startBeat, chunks } = entry
-        if (recorder.state === 'inactive') continue
-        recorder.onstop = () => {
-          const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' })
-          finalizePassClip(trackId, blob, startBeat, endBeat, passIndex)
-        }
-        recorder.stop()
-        const stream = recorder.stream
-        const fresh = new MediaRecorder(stream, recorder.mimeType ? { mimeType: recorder.mimeType } : undefined)
-        const freshChunks: Blob[] = []
-        fresh.ondataavailable = (ev: BlobEvent) => { if (ev.data.size > 0) freshChunks.push(ev.data) }
-        fresh.start(100)
-        inputRecsRef.current.set(trackId, { recorder: fresh, startBeat: wrapToBeat, chunks: freshChunks })
+        const { recorder, stream, startBeat } = entry
+        if (recorder.state !== 'recording') continue
+        // The next pass starts at once (no gap at the wrap); the finished one
+        // lands as a clip when its last block arrives.
+        const fresh = PcmRecorder.fromStream(engineRef.current!.ctx, stream)
+        fresh.start()
+        inputRecsRef.current.set(trackId, { recorder: fresh, stream, startBeat: wrapToBeat })
+        void recorder.stop().then(take => finalizePassClip(trackId, take.blob, startBeat, endBeat, passIndex))
       }
     }
 
@@ -2025,21 +2041,11 @@ export default function AudioEditor(props: AudioEditorProps) {
                 stream = await captureAudioInput(src)
                 inputStreamsRef.current.set(src, stream)
               }
-              const chunks: Blob[] = []
-              const preferredMimes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4']
-              const mime = preferredMimes.find(m => MediaRecorder.isTypeSupported(m)) ?? ''
-              const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
-              recorder.ondataavailable = (ev: BlobEvent) => {
-                if (ev.data.size > 0) chunks.push(ev.data)
-              }
-              recorder.start(100)
+              const recorder = PcmRecorder.fromStream(engineRef.current!.ctx, stream)
+              recorder.start()
               const startBeat = engineRef.current!.currentBeat
               console.log('[rec] per-track recorder started for:', track.name, 'startBeat:', startBeat)
-              inputRecsRef.current.set(track.id, {
-                recorder,
-                startBeat,
-                chunks,
-              })
+              inputRecsRef.current.set(track.id, { recorder, stream, startBeat })
             } catch (err) {
               console.warn(`[rec] Input capture failed for "${track.name}":`, err)
             }
@@ -2053,7 +2059,7 @@ export default function AudioEditor(props: AudioEditorProps) {
         let pending = 0
 
         for (const { recorder } of inputRecsRef.current.values()) {
-          if (recorder.state !== 'inactive') pending++
+          if (recorder.state === 'recording') pending++
         }
 
         const cleanup = () => {
@@ -2067,18 +2073,17 @@ export default function AudioEditor(props: AudioEditorProps) {
 
         if (pending === 0) { cleanup(); return }
 
-        for (const [trackId, { recorder, startBeat, chunks }] of inputRecsRef.current) {
-          if (recorder.state === 'inactive') continue
-          recorder.onstop = () => {
-            const mime = recorder.mimeType || 'audio/webm'
-            const blob = new Blob(chunks, { type: mime })
-            console.log('[rec] per-track onstop — trackId:', trackId, 'blobSize:', blob.size, 'startBeat:', startBeat, 'endBeat:', endBeat, 'pass:', finalPass)
-            finalizePassClip(trackId, blob, startBeat, endBeat, finalPass)
-            pending--
-            if (pending === 0) cleanup()
+        // Each take waits for the block that carries its last frame (at most
+        // one buffer), then the clip is placed; the streams close after.
+        void (async () => {
+          for (const [trackId, { recorder, startBeat }] of inputRecsRef.current) {
+            if (recorder.state !== 'recording') continue
+            const take = await recorder.stop()
+            console.log('[rec] per-track take — trackId:', trackId, 'frames:', take.frames, 'blobSize:', take.blob.size, 'startBeat:', startBeat, 'endBeat:', endBeat, 'pass:', finalPass)
+            finalizePassClip(trackId, take.blob, startBeat, endBeat, finalPass)
           }
-          recorder.stop()
-        }
+          cleanup()
+        })()
       }
     }
 
@@ -2194,6 +2199,12 @@ export default function AudioEditor(props: AudioEditorProps) {
     }
   }, [isPodcast])
   const [view, setView] = useState<DawView>(wsInit.view)
+  const detail = useDetail()
+  const display = useDisplaySettings()
+  const importSettings = useImportSettings()
+  const draw = useDrawMode()
+  // The UI scale is a stylesheet on the document (lib/ui-scale.ts); it follows the setting.
+  useEffect(() => { applyUiScale(display.uiScale) }, [display.uiScale])
   const [editTarget, setEditTarget] = useState<EditTarget>(null)
   const [selectedTrackId_,  setSelectedTrackId_]  = useState<string | null>(null)
   const [selectedReturnId_, setSelectedReturnId_] = useState<string | null>(null)
@@ -2223,7 +2234,6 @@ export default function AudioEditor(props: AudioEditorProps) {
     }
   })
   const [selectedEffectIds, setSelectedEffectIds] = useState<Set<string>>(new Set())
-  const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
   const [leftTab,     setLeftTab]     = useState<'library' | 'code' | 'episode' | 'setup' | 'guests'>(wsInit.leftTab)
   // Start closed so the rail (logo + toggle) is all that shows on load; the
   // open/hide button reveals the panel on demand rather than it always being there.
@@ -2235,7 +2245,6 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [showAppearance, setShowAppearance] = useState(false)
   const [overlay, setOverlay] = useState<OverlayKind>('none')
   const leftResize = useResizable({ key: 'left-panel', initial: 240, min: 180, max: 520, axis: 'x' })
-  const bottomResize = useResizable({ key: 'bottom-panel', initial: 220, min: 120, max: 560, axis: 'y', invert: true })
 
   // ── Apollo check-in ────────────────────────────────────────────────────────
   // An item developed in standalone Apollo comes home here: its notes and its
@@ -2281,35 +2290,10 @@ export default function AudioEditor(props: AudioEditorProps) {
     }
   }, [dispatch])
 
-  // Tab toggles Session <-> Arrangement. They are two views of ONE project, one
-  // keystroke apart (the Ableton model the rebuild follows) - the live view is
-  // not a separate app you navigate to. Podcast mode has no session view.
-  useEffect(() => {
-    function onTab(e: KeyboardEvent) {
-      if (e.key !== 'Tab') return
-      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
-      const t = e.target as HTMLElement
-      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) return
-      if (isPodcast) return
-      e.preventDefault()   // Tab would otherwise walk focus out of the studio
-      setView(v => (v === 'session' ? 'arrangement' : 'session'))
-    }
-    window.addEventListener('keydown', onTab)
-    return () => window.removeEventListener('keydown', onTab)
-  }, [isPodcast])
+  // Tab (Session ⇄ Arrangement) lives in lib/keymap.ts with the other keys.
 
-  // B toggles the sound library panel (Ableton-style browser shortcut)
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key !== 'b' && e.key !== 'B') return
-      if (e.metaKey || e.ctrlKey || e.altKey) return
-      const t = e.target as HTMLElement
-      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) return
-      setSidebarOpen(v => !v)
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [])
+  // The library key (⌘⌥B, Live's browser chord — `B` itself is Draw Mode's)
+  // lives in lib/keymap.ts too.
   const [showPads,  setShowPads]  = useState(false)
   const [isSaving,  setIsSaving]  = useState(false)
   const [saveStatus, setSaveStatus] = useState<'saved' | 'error' | null>(null)
@@ -2356,7 +2340,6 @@ export default function AudioEditor(props: AudioEditorProps) {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
 
-  useEffect(() => { setBottomTab('devices') }, [selectedTrackId])
   useEffect(() => { if (!selectedTrackId) setShowPads(false) }, [selectedTrackId])
 
   // ── Save ─────────────────────────────────────────────────────────────────────
@@ -2610,128 +2593,155 @@ export default function AudioEditor(props: AudioEditorProps) {
   }, [doUndo, doRedo, props.projectId])
 
 
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      const target = e.target as HTMLElement
-      if (
-        target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.tagName === 'SELECT' ||
-        target.isContentEditable ||
-        // A focused slider or combo box owns its arrow keys and Space; the
-        // studio's shortcuts used to steal them (arrows seeking the playhead
-        // from inside a focused select). Plain buttons are left alone: Space
-        // is the transport everywhere else, and a toolbar button that was
-        // just clicked must not swallow it.
-        !!target.closest?.('[role="slider"], [role="combobox"], [role="textbox"], [role="listbox"]')
-      ) return
-
-      const engine = engineRef.current!
-
-      if (e.code === 'Space') {
-        e.preventDefault()
-        if (engine.isRecording) {
-          engine.stop()
-          void engine.stopRecording()
-        } else if (engine.isPlaying) {
-          engine.stop()
-        } else {
-          engine.play()
-        }
-        return
-      }
-
-      if (e.code === 'KeyR') {
-        e.preventDefault()
+  // ── Keys ─────────────────────────────────────────────────────────────────
+  // Every studio-wide key goes through lib/keymap.ts — the same table the
+  // help panel and the ⌘K palette read, so the three cannot disagree again.
+  // The runner is re-pointed every render so it always sees fresh state.
+  const keyLatchRef = useRef(new MomentaryLatch())
+  const runKeyRef = useRef<(id: string, e: KeyboardEvent) => boolean>(() => false)
+  runKeyRef.current = (id, e) => {
+    const engine = engineRef.current!
+    switch (id) {
+      case 'transport.play':
+        if (engine.isRecording) { engine.stop(); void engine.stopRecording() }
+        else if (engine.isPlaying) engine.stop()
+        else void engine.play()
+        return true
+      case 'transport.record':
         // Through the transport's own record flow (arm guards, count-in, the
         // notice when the microphone refuses) — never straight to the engine.
         window.dispatchEvent(new CustomEvent('100lights:record-toggle'))
-        return
-      }
-
-      if (e.code === 'KeyM') {
-        e.preventDefault()
-        setMetronome(prev => {
-          const next = !prev
-          engine.setMetronome(next)
-          return next
-        })
-        return
-      }
-
-      if (e.code === 'ArrowLeft' && !e.metaKey && !e.ctrlKey) {
-        e.preventDefault()
-        setPosition(Math.max(0, engine.currentBeat - 1))
-        return
-      }
-
-      if (e.code === 'ArrowRight' && !e.metaKey && !e.ctrlKey) {
-        e.preventDefault()
-        setPosition(engine.currentBeat + 1)
-        return
-      }
-
-      if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ' && !e.shiftKey) {
-        e.preventDefault(); doUndo(); return
-      }
-
-      if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ' && e.shiftKey) {
-        e.preventDefault(); doRedo(); return
-      }
-
-      if (e.code === 'Delete' || e.code === 'Backspace') {
+        return true
+      case 'transport.metronome':
+        setMetronome(prev => { const next = !prev; engine.setMetronome(next); return next })
+        return true
+      case 'transport.back': setPosition(Math.max(0, engine.currentBeat - 1)); return true
+      case 'transport.forward': setPosition(engine.currentBeat + 1); return true
+      case 'edit.undo': doUndo(); return true
+      case 'edit.redo': doRedo(); return true
+      case 'edit.deleteClip': {
         // The clip open in the piano roll is off-limits — pressing Delete
         // with a note selected must never nuke the clip itself, even when
         // focus drifted out of the roll. Other clips still delete normally.
         const rollClip = expandedRollRef.current
-        const ids = new Set([...selectedClipIdsRef.current].filter(id => id !== rollClip))
+        const ids = new Set([...selectedClipIdsRef.current].filter(cid => cid !== rollClip))
         if (ids.size > 0) {
-          e.preventDefault()
-          ids.forEach(id => dispatch({ type: 'REMOVE_CLIP', clipId: id }))
+          ids.forEach(cid => dispatch({ type: 'REMOVE_CLIP', clipId: cid }))
           setSelectedClipIds(new Set())
           setSelectedClipId(null)
-        } else if (selectedClipIdRef.current && selectedClipIdRef.current !== rollClip) {
-          e.preventDefault()
+          return true
+        }
+        if (selectedClipIdRef.current && selectedClipIdRef.current !== rollClip) {
           dispatch({ type: 'REMOVE_CLIP', clipId: selectedClipIdRef.current })
           setSelectedClipId(null)
+          return true
         }
-        return
+        return false
       }
-
-      if ((e.metaKey || e.ctrlKey) && e.code === 'KeyS') {
-        e.preventDefault()
-        handleSaveRef.current()
-      }
-
-      // ⌘/Ctrl+J — consolidate: print every selected looping MIDI clip's
-      // repetitions as real notes so single repeats become editable.
-      if ((e.metaKey || e.ctrlKey) && e.code === 'KeyJ') {
+      case 'file.save': handleSaveRef.current(); return true
+      case 'edit.consolidate': {
+        // Print every selected looping MIDI clip's repetitions as real notes
+        // so single repeats become editable.
         const ids = selectedClipIdsRef.current
-        if (ids.size === 0) return
-        e.preventDefault()
-        for (const id of ids) {
-          const clip = projectRef.current.arrangementClips.find(c => c.id === id)
+        if (ids.size === 0) return false
+        for (const cid of ids) {
+          const clip = projectRef.current.arrangementClips.find(c => c.id === cid)
           if (!clip || !isMidiClip(clip) || !canConsolidate(clip)) continue
           const flat = consolidateMidiClip(clip)
-          dispatch({ type: 'UPDATE_CLIP', clipId: id, patch: { notes: flat.notes, loopEnabled: false, loopLengthBeats: undefined } })
+          dispatch({ type: 'UPDATE_CLIP', clipId: cid, patch: { notes: flat.notes, loopEnabled: false, loopLengthBeats: undefined } })
         }
+        return true
       }
-
-      // Escape deselects everything. Modals/dropdowns consume Escape first
-      // (capture-phase listeners with stopPropagation), so reaching here
-      // means nothing was open.
-      if (e.key === 'Escape' && !e.defaultPrevented) {
+      case 'edit.deselect':
+        // Modals/dropdowns consume Escape first (capture-phase listeners with
+        // stopPropagation), so reaching here means nothing was open. Escape
+        // is never swallowed — the piano roll and the help panel want it too.
+        if (e.defaultPrevented) return false
         setSelectedClipIds(new Set())
         setSelectedClipId(null)
         setSelectedEffectIds(new Set())
         setSelectedTrackId(null)
         setSelectedReturnId(null)
+        return false
+      case 'view.session':
+        // Session and Arrangement are two views of ONE project, one keystroke
+        // apart (the Ableton model the rebuild follows) — the live view is not
+        // a separate app you navigate to. Tab would otherwise walk focus out
+        // of the studio. Tap to switch; hold to peek (momentary).
+        setView(v => (v === 'session' ? 'arrangement' : 'session'))
+        return true
+      case 'view.library':
+        if (sidebarOpen && leftTab === 'library') setSidebarOpen(false)
+        else { setSidebarOpen(true); setLeftTab('library') }
+        return true
+      case 'view.draw': toggleDrawMode(); return true
+      case 'view.inspect':
+        // InspectMode owns the mode; the key is the studio's.
+        window.dispatchEvent(new CustomEvent('100lights:inspect-toggle'))
+        return true
+      // The detail area (lib/detail-area.ts): panes on and off, focus flip, full size.
+      case 'detail.clip': toggleDetail('clip'); return true
+      case 'detail.device': toggleDetail('device'); return true
+      case 'detail.full': toggleDetail('full'); return true
+      case 'detail.flip': window.dispatchEvent(new CustomEvent('100lights:detail-flip')); return true
+      case 'view.info': setDisplay({ infoView: !display.infoView }); return true
+      case 'view.scaleUp': setDisplay({ uiScale: stepUiScale(display.uiScale, 1) }); return true
+      case 'view.scaleDown': setDisplay({ uiScale: stepUiScale(display.uiScale, -1) }); return true
+      case 'view.scaleReset': setDisplay({ uiScale: 100 }); return true
+      case 'view.arrangementMixer': {
+        if (view !== 'arrangement') setView('arrangement')
+        const am = display.arrangementMixer
+        setDisplay({ arrangementMixer: { ...am, open: !am.open } })
+        return true
+      }
+      default:
+        return false
+    }
+  }
+  useEffect(() => {
+    const mode = isPodcast ? 'podcast' : 'music'
+    function typing(target: HTMLElement) {
+      return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable
+        // A popover dialog (Quantize Settings, Pitch & Time) owns the keys typed into it.
+        || !!target.closest?.('[role="dialog"]')
+        // A focused slider or combo box owns its arrow keys and Space; the
+        // studio's shortcuts used to steal them (arrows seeking the playhead
+        // from inside a focused select). Plain buttons are left alone: Space
+        // is the transport everywhere else, and a toolbar button that was
+        // just clicked must not swallow it.
+        || !!target.closest?.('[role="slider"], [role="combobox"], [role="textbox"], [role="listbox"]')
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      const b = resolveKey(e, ['global'], mode)
+      if (!b) return
+      // A focused input or knob owns its keys — except the detail area's
+      // chords (⇧Tab, ⌘⌥3/4/E), which are about the panes, not the field.
+      if (typing(e.target as HTMLElement) && !b.id.startsWith('detail.')) return
+      if (b.momentary) {
+        e.preventDefault()
+        // Auto-repeat while held must not flip it back and forth.
+        if (!keyLatchRef.current.down(b.id, performance.now())) return
+        runKeyRef.current(b.id, e)
+        return
+      }
+      if (runKeyRef.current(b.id, e)) e.preventDefault()
+    }
+    function onKeyUp(e: KeyboardEvent) {
+      // A held momentary key toggles back on release; a tap latches.
+      for (const b of releasedMomentary(e, ['global'], mode)) {
+        if (keyLatchRef.current.up(b.id, performance.now())) runKeyRef.current(b.id, e)
       }
     }
-
+    function onBlur() { keyLatchRef.current.clear() }
     document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [setPosition, doUndo, doRedo])
+    document.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      document.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [isPodcast])
 
   // ── Context value ────────────────────────────────────────────────────────────
   const contextValue = useMemo(() => ({
@@ -2814,20 +2824,82 @@ export default function AudioEditor(props: AudioEditorProps) {
   // ── Command palette (⌘K): existing audio actions only ────────
   useRegisterCommands([
     {
-      id: 'audio.save', group: 'Audio', label: 'Save', keywords: 'cloud persist', shortcut: '⌘S',
+      id: 'audio.save', group: 'Audio', label: 'Save', keywords: 'cloud persist', shortcut: keysFor('file.save'),
       when: () => !!props.onSave && !props.readOnly,
       run: () => { void handleSaveRef.current() },
     },
     { id: 'audio.view.session',     group: 'Audio', label: 'Switch to Session view',     keywords: 'clips scenes', when: () => !isPodcast && view !== 'session',     run: () => setView('session') },
     { id: 'audio.view.arrangement', group: 'Audio', label: 'Switch to Arrangement view', keywords: 'timeline',      when: () => view !== 'arrangement', run: () => setView('arrangement') },
     { id: 'audio.view.mixer',       group: 'Audio', label: 'Switch to Mixer view',       keywords: 'channels faders', when: () => view !== 'mixer',       run: () => setView('mixer') },
+    // The detail area's panes (lib/detail-area.ts) — the same store the keys
+    // and the toggles at the bottom right use, so the label is always right.
+    { id: 'audio.detail.clip', group: 'Audio', label: detailLabel(detail, 'clip'), keywords: 'clip pane detail area show hide bottom',
+      shortcut: keysFor('detail.clip'), run: () => toggleDetail('clip') },
+    { id: 'audio.detail.device', group: 'Audio', label: detailLabel(detail, 'device'), keywords: 'device pane detail area effects rack show hide bottom',
+      shortcut: keysFor('detail.device'), run: () => toggleDetail('device') },
+    { id: 'audio.detail.full', group: 'Audio', label: detailLabel(detail, 'full'), keywords: 'detail area full size bigger maximize normal',
+      shortcut: keysFor('detail.full'), run: () => toggleDetail('full') },
+    { id: 'audio.view.arrMixer', group: 'Audio', label: `${display.arrangementMixer.open ? 'Hide' : 'Show'} the mixer under the arrangement`,
+      keywords: 'mixer strip arrangement faders sends returns crossfader in out section', shortcut: keysFor('view.arrangementMixer'), when: () => !isPodcast,
+      run: () => { if (view !== 'arrangement') setView('arrangement'); setDisplay({ arrangementMixer: { ...display.arrangementMixer, open: !display.arrangementMixer.open } }) } },
+    // A second window (components/PopOut.tsx): the mixer or the clip view leave
+    // the studio and draw in their own OS window, on any screen.
+    { id: 'audio.window.mixer', group: 'View', label: display.popout === 'mixer' ? 'Bring the mixer back into the studio' : 'Open the mixer in its own window',
+      keywords: 'mixer second window pop out detach separate screen monitor float',
+      run: () => { if (display.popout === 'mixer') setDisplay({ popout: null }); else { setDisplay({ popout: 'mixer' }); if (view === 'mixer') setView('arrangement') } } },
+    { id: 'audio.window.clip', group: 'View', label: display.popout === 'clip' ? 'Bring the clip view back into the studio' : 'Open the clip view in its own window',
+      keywords: 'clip view piano roll second window pop out detach separate screen monitor float', when: () => !isPodcast,
+      run: () => setDisplay({ popout: display.popout === 'clip' ? null : 'clip' }) },
+    // Draw Mode (lib/draw-mode.ts): the pencil in the note editor.
+    { id: 'audio.draw', group: 'Edit', label: `Draw Mode ${draw.on ? 'off' : 'on'} (the pencil)`,
+      keywords: 'draw mode pencil paint notes hats run brush b', shortcut: keysFor('view.draw'), when: () => !isPodcast,
+      run: () => toggleDrawMode() },
+    { id: 'audio.draw.pitchLock', group: 'Edit', label: `Pitch lock ${draw.pitchLock ? 'off' : 'on'} — a drawn run ${draw.pitchLock ? 'follows the pointer' : 'stays on one pitch'}`,
+      keywords: 'pitch lock draw mode pencil row same note hats', when: () => !isPodcast,
+      run: () => setPitchLock(!draw.pitchLock) },
+    { id: 'audio.view.scaleUp', group: 'View', label: `Bigger interface (UI scale ${display.uiScale}% → ${stepUiScale(display.uiScale, 1)}%)`,
+      keywords: 'ui scale zoom display bigger larger text interface size', shortcut: keysFor('view.scaleUp'), when: () => display.uiScale < 200,
+      run: () => setDisplay({ uiScale: stepUiScale(display.uiScale, 1) }) },
+    { id: 'audio.view.scaleDown', group: 'View', label: `Smaller interface (UI scale ${display.uiScale}% → ${stepUiScale(display.uiScale, -1)}%)`,
+      keywords: 'ui scale zoom display smaller text interface size', shortcut: keysFor('view.scaleDown'), when: () => display.uiScale > 50,
+      run: () => setDisplay({ uiScale: stepUiScale(display.uiScale, -1) }) },
+    { id: 'audio.view.scaleReset', group: 'View', label: 'Interface at 100% (reset UI scale)',
+      keywords: 'ui scale zoom display reset normal size', shortcut: keysFor('view.scaleReset'), when: () => display.uiScale !== 100,
+      run: () => setDisplay({ uiScale: 100 }) },
+    // Loop/Warp Short Samples and Auto-Warp Long Samples: how a dropped sample lands (lib/import-settings.ts).
+    ...(['oneshot', 'auto', 'loop'] as ShortSampleMode[]).map(m => ({
+      id: `audio.import.short.${m}`, group: 'Audio', label: `Short samples land as: ${SHORT_SAMPLE_LABEL[m]}${importSettings.shortSamples === m ? ' (current)' : ''}`,
+      keywords: `import short samples land drop loop warp one-shot one shot unwarped auto ${m}`, when: () => importSettings.shortSamples !== m,
+      run: () => setImportSettings({ shortSamples: m }),
+    })),
+    { id: 'audio.import.autoWarpLong', group: 'Audio', label: importSettings.autoWarpLong ? 'Stop auto-warping long samples on import' : 'Auto-warp long samples on import',
+      keywords: 'import long samples auto-warp auto warp song stem straight follow tempo land',
+      run: () => setImportSettings({ autoWarpLong: !importSettings.autoWarpLong }) },
+    { id: 'audio.view.info', group: 'Audio', label: `${display.infoView ? 'Hide' : 'Show'} the status bar (Info View)`,
+      keywords: 'info view status bar help text hover selection readout', shortcut: keysFor('view.info'),
+      run: () => setDisplay({ infoView: !display.infoView }) },
+    { id: 'audio.view.follow', group: 'Audio', label: `Follow the playhead: ${display.follow === 'off' ? 'off → page' : display.follow === 'page' ? 'page → scroll' : 'scroll → off'}`,
+      keywords: 'follow playhead auto scroll page tape view', shortcut: keysFor('view.follow'), when: () => !isPodcast,
+      run: () => setDisplay({ follow: display.follow === 'off' ? 'page' : display.follow === 'page' ? 'scroll' : 'off' }) },
+    { id: 'audio.view.overview', group: 'Audio', label: `${display.overview ? 'Hide' : 'Show'} the overview strip`,
+      keywords: 'overview minimap song map zoom box navigate', shortcut: keysFor('view.overview'),
+      run: () => setDisplay({ overview: !display.overview }) },
+    { id: 'audio.view.waveformScale', group: 'Audio', label: `Waveforms: ${display.waveformScale === 'db' ? 'dB → linear' : 'linear → dB'} scale`,
+      keywords: 'waveform db decibel linear scale quiet zoom vertical',
+      run: () => setDisplay({ waveformScale: display.waveformScale === 'db' ? 'linear' : 'db' }) },
+    { id: 'audio.settings.clipEditor', group: 'Audio', label: display.clipEditor === 'pane' ? 'Clip editor: inline under the track' : 'Clip editor: bottom pane',
+      keywords: 'piano roll notes editor place bottom pane inline display setting',
+      run: () => setDisplay({ clipEditor: display.clipEditor === 'pane' ? 'inline' : 'pane' }) },
+    { id: 'audio.settings.delayComp', group: 'Sound', label: `Turn delay compensation ${project.delayCompensation === false ? 'on' : 'off'}`,
+      keywords: 'latency compensation pdc plugin delay align', when: () => !props.readOnly,
+      run: () => { const on = projectRef.current.delayCompensation === false; dispatch({ type: 'SET_DELAY_COMPENSATION', on }); engineRef.current?.setDelayCompensation(on) } },
     {
-      id: 'audio.library', group: 'Audio', label: 'Open Sound Library', keywords: 'instruments sounds browser', shortcut: 'B',
+      id: 'audio.library', group: 'Audio', label: 'Open Sound Library', keywords: 'instruments sounds browser', shortcut: keysFor('view.library'),
       when: () => !isPodcast,
       run: () => { setSidebarOpen(true); setLeftTab('library') },
     },
     { id: 'audio.transport.play', group: 'Audio', label: 'Play / stop', keywords: 'start begin pause space transport',
-      shortcut: 'Space', run: () => { const e = engineRef.current; if (!e) return; if (e.isPlaying) e.stop(); else void e.play() } },
+      shortcut: keysFor('transport.play'), run: () => { const e = engineRef.current; if (!e) return; if (e.isPlaying) e.stop(); else void e.play() } },
     { id: 'audio.transport.top', group: 'Audio', label: 'Go to start', keywords: 'beginning rewind home transport',
       run: () => engineRef.current?.seek(0) },
     { id: 'audio.track.add', group: 'Audio', label: 'Add track', keywords: 'new create track',
@@ -2882,7 +2954,7 @@ export default function AudioEditor(props: AudioEditorProps) {
       keywords: `density spacing compact smaller bigger room ${DENSITY_INFO[d].blurb}`,
       run: () => setDensity(d),
     })),
-  ], [view, isPodcast, props.onSave, props.readOnly, dispatch, density, setDensity])
+  ], [view, isPodcast, props.onSave, props.readOnly, dispatch, density, setDensity, detail, display, draw, project.delayCompensation])
 
   // ── Sounds and tracks, by name ───────────────────────────────────────────────
   //
@@ -2909,6 +2981,24 @@ export default function AudioEditor(props: AudioEditorProps) {
       { id: 'audio.track.apollo', group: 'Sound', label: `Edit ${paletteTrack.name} in Apollo`,
         keywords: 'synth patch rack instrument sound design edit',
         run: () => setApolloRack({ trackId: paletteTrack.id, seed: null, follow: true }) },
+      // The modulation bus (lib/daw-modulation.ts): an LFO on the track's
+      // low-pass cutoff, added if it has none — the same mapping the voice
+      // tool uses, so "put an LFO on the pad filter" and this land the same.
+      { id: 'audio.track.lfo', group: 'Sound', label: `Add an LFO to ${paletteTrack.name}’s filter (a wobble)`,
+        keywords: 'lfo wobble modulate modulation tremolo cutoff move', when: () => !props.readOnly,
+        run: () => {
+          const have = (paletteTrack.effects ?? []).find(e => e.type === 'filter' && (e.params as { type?: string } | undefined)?.type === 'lowpass')
+          const effectId = have?.id ?? crypto.randomUUID()
+          if (!have) dispatch({ type: 'ADD_EFFECT', trackId: paletteTrack.id, effect: { id: effectId, type: 'filter', params: { enabled: true, type: 'lowpass', frequency: 1900, q: 1 } } })
+          dispatch({ type: 'ADD_MODULATOR', modulator: {
+            id: crypto.randomUUID(), trackId: paletteTrack.id, name: 'LFO', shape: 'sine', rate: { kind: 'sync', division: '1/4' },
+            depth: 1, phase: 0, enabled: true, routes: [{ id: crypto.randomUUID(), parameter: `fx:${effectId}:frequency`, amount: 0.5 }],
+          } })
+        } },
+      { id: 'audio.track.lfoOff', group: 'Sound', label: `Remove the LFOs on ${paletteTrack.name}`,
+        keywords: 'lfo wobble modulation stop remove still',
+        when: () => !props.readOnly && (project.modulators ?? []).some(m => m.trackId === paletteTrack.id),
+        run: () => { for (const m of (project.modulators ?? []).filter(m => m.trackId === paletteTrack.id)) dispatch({ type: 'REMOVE_MODULATOR', modulatorId: m.id }) } },
     ] : []),
     // Jump straight to a track instead of finding it in a long list.
     ...project.tracks.filter(t => t.id !== selectedTrackId).map(t => ({
@@ -2919,7 +3009,7 @@ export default function AudioEditor(props: AudioEditorProps) {
     // the moment the library grows — a palette whose results are mostly one kind
     // of thing has stopped being a palette. Presets belong in a browser that can
     // page, preview and categorise; the palette's job is to get you TO it.
-  ], [project.tracks, selectedTrackId, paletteTrack, props.readOnly, dispatch, setApolloRack, setSelectedTrackId])
+  ], [project.tracks, project.modulators, selectedTrackId, paletteTrack, props.readOnly, dispatch, setApolloRack, setSelectedTrackId])
 
   // ── The rest of the studio ───────────────────────────────────────────────────
   //
@@ -3020,22 +3110,32 @@ export default function AudioEditor(props: AudioEditorProps) {
 
     // ── Edit ─────────────────────────────────────────────────────────────────
     { id: 'audio.edit.undo', group: 'Edit', label: 'Undo', keywords: 'revert back mistake step',
-      shortcut: '⌘Z', when: () => editable, run: doUndo },
+      shortcut: keysFor('edit.undo'), when: () => editable, run: doUndo },
     { id: 'audio.edit.redo', group: 'Edit', label: 'Redo', keywords: 'forward again reapply',
-      shortcut: '⇧⌘Z', when: () => editable, run: doRedo },
+      shortcut: keysFor('edit.redo'), when: () => editable, run: doRedo },
     { id: 'audio.edit.selectAll', group: 'Edit', label: 'Select every clip', keywords: 'all everything',
       run: () => setSelectedClipIds(new Set(projectRef.current.arrangementClips.map(c => c.id))) },
     { id: 'audio.edit.deselect', group: 'Edit', label: 'Deselect everything', keywords: 'none clear selection',
       run: () => { setSelectedClipIds(new Set()); setSelectedClipId(null) } },
     { id: 'audio.edit.deleteClip', group: 'Edit', label: `Delete ${clipLabel}`,
-      keywords: 'remove erase clip', shortcut: '⌫', when: () => editable && anyClips,
+      keywords: 'remove erase clip', shortcut: keysFor('edit.deleteClip'), when: () => editable && anyClips,
       run: () => {
         const ids = selectedClipIds.size ? [...selectedClipIds] : (clipTarget() ? [clipTarget()!.id] : [])
         ids.forEach(id => dispatch({ type: 'REMOVE_CLIP', clipId: id }))
         setSelectedClipIds(new Set()); setSelectedClipId(null)
       } },
+    // Live's Clip Activator: park a clip without deleting it (key 0).
+    { id: 'audio.edit.toggleClipActive', group: 'Edit',
+      label: paletteClip && paletteClip.active === false ? `Activate ${clipLabel}` : `Deactivate ${clipLabel}`,
+      keywords: 'deactivate activate disable enable park clip off on silent', shortcut: keysFor('clip.activate'), when: () => editable && anyClips,
+      run: () => {
+        const ids = selectedClipIds.size ? [...selectedClipIds] : (clipTarget() ? [clipTarget()!.id] : [])
+        if (!ids.length) return
+        const first = projectRef.current.arrangementClips.find(c => c.id === ids[0])
+        dispatch({ type: 'SET_CLIPS_ACTIVE', clipIds: ids, active: first?.active === false })
+      } },
     { id: 'audio.edit.duplicateClip', group: 'Edit', label: `Duplicate ${clipLabel}`,
-      keywords: 'copy repeat again clip', shortcut: '⌘D', when: () => editable && anyClips,
+      keywords: 'copy repeat again clip', shortcut: keysFor('clip.duplicate'), when: () => editable && anyClips,
       run: () => withClip(c => {
         const copy: DawClip = { ...structuredClone(c), id: crypto.randomUUID(), startBeat: c.startBeat + c.durationBeats }
         dispatch({ type: 'ADD_CLIP', clip: copy })
@@ -3663,6 +3763,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                       key={tab}
                       onClick={() => { if (isActive) setSidebarOpen(false); else { setLeftTab(tab); setSidebarOpen(true) } }}
                       title={label}
+                      aria-pressed={isActive}
                       data-help-id={help}
                       style={{
                         width: 28, height: 28, borderRadius: 6, border: 'none', cursor: 'pointer',
@@ -3835,6 +3936,13 @@ export default function AudioEditor(props: AudioEditorProps) {
                   {v.charAt(0).toUpperCase() + v.slice(1)}
                 </button>
               ))}
+              <button
+                onClick={() => { if (display.popout === 'mixer') setDisplay({ popout: null }); else { setDisplay({ popout: 'mixer' }); if (view === 'mixer') setView('arrangement') } }}
+                data-help-id="mixer-window"
+                aria-pressed={display.popout === 'mixer'}
+                title={display.popout === 'mixer' ? 'Bring the mixer back into the studio' : 'Open the mixer in its own window'}
+                style={{ background: display.popout === 'mixer' ? 'rgb(var(--accent-rgb) / 0.18)' : 'transparent', border: display.popout === 'mixer' ? '1px solid var(--accent)' : '1px solid transparent', borderRadius: 4, color: display.popout === 'mixer' ? 'var(--accent)' : 'var(--text-muted)', cursor: 'pointer', padding: '3px 6px', display: 'inline-flex', alignItems: 'center' }}
+              ><ExternalLink size={12} /></button>
               <div style={{ flex: 1 }} />
               {isOffline && (
                 <span style={{
@@ -3946,69 +4054,35 @@ export default function AudioEditor(props: AudioEditorProps) {
           : rack
       })()}
               {view === 'arrangement' && <ArrangementView />}
-              {view === 'mixer' && <Mixer />}
+              {view === 'arrangement' && <ArrangementMixer />}
+              {view === 'mixer' && display.popout !== 'mixer' && <Mixer />}
+              {view === 'mixer' && display.popout === 'mixer' && (
+                <div data-help-id="mixer-away" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, fontSize: 12, color: 'var(--text-muted)' }}>
+                  The mixer is in its own window.
+                  <button onClick={() => setDisplay({ popout: null })} data-help-id="mixer-window-back"
+                    style={{ fontSize: 11, padding: '3px 10px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>Bring it back</button>
+                </div>
+              )}
             </div>
+            {/* A panel out in its own OS window — the same React tree, drawn elsewhere (components/PopOut.tsx). */}
+            {display.popout === 'mixer' && (
+              <PopOut title="Mixer" width={1100} height={560} onClose={() => setDisplay({ popout: null })}>
+                <div data-help-id="mixer-window-content" style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg-base)' }}><Mixer /></div>
+              </PopOut>
+            )}
+            {display.popout === 'clip' && (
+              <PopOut title="Clip view" width={1000} height={520} onClose={() => setDisplay({ popout: null })}>
+                <ClipViewWindow />
+              </PopOut>
+            )}
 
             {/* Piano roll is now rendered inline under each track in TrackRow */}
 
-            {/* Device chain / instrument panel — shown when a track or return is selected */}
-            {(selectedTrackId !== null || selectedReturnId !== null) && (
-              <div style={{ flexShrink: 0, borderTop: '1px solid var(--border)', background: 'var(--bg-base)', position: 'relative' }}>
-                <ResizeHandle axis="y" edge="top" onPointerDown={bottomResize.handleProps.onPointerDown} />
-                {/* Tab bar */}
-                <div style={{ height: 28, display: 'flex', alignItems: 'center', gap: 1, padding: '0 8px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
-                  {selectedTrackId && (['devices', 'instrument'] as const).map(tab => (
-                    <button
-                      key={tab}
-                      onClick={() => setBottomTab(tab)}
-                      data-help-id={`bottom-${tab}`}
-                      style={{ background: bottomTab === tab ? 'var(--bg-card)' : 'transparent', border: bottomTab === tab ? '1px solid var(--border)' : '1px solid transparent', borderRadius: 4, color: bottomTab === tab ? 'var(--text-primary)' : 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '2px 10px', textTransform: 'capitalize' }}
-                    >
-                      {tab === 'devices' ? 'Devices' : 'Instrument'}
-                    </button>
-                  ))}
-                  {/* Name label */}
-                  {(() => {
-                    if (selectedTrackId) {
-                      const t = project.tracks.find(tr => tr.id === selectedTrackId)
-                      return t ? <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 8, borderLeft: `2px solid ${t.color}`, paddingLeft: 6 }}>{t.name}</span> : null
-                    }
-                    if (selectedReturnId) {
-                      const rt = project.returnTracks.find(r => r.id === selectedReturnId)
-                      return rt ? <span style={{ fontSize: 10, color: 'var(--accent-light)', marginLeft: 8, borderLeft: `2px solid ${rt.color}`, paddingLeft: 6 }}>{rt.name} — FX</span> : null
-                    }
-                    return null
-                  })()}
-                  {/* Pad Input toggle — only for MIDI / drum tracks */}
-                  {selectedTrackId && (() => {
-                    const t = project.tracks.find(tr => tr.id === selectedTrackId)
-                    // Show whenever the track has an instrument — track.type stays
-                    // 'audio' even after picking one, so gate on the instrument
-                    return t && (t.type !== 'audio' || t.instrument.type !== 'none') ? (
-                      <button
-                        onClick={() => setShowPads(v => !v)}
-                        title="Open pad / keyboard input"
-                        data-help-id="pads"
-                        style={{ marginLeft: 8, background: showPads ? 'var(--accent)' : 'transparent', border: showPads ? '1px solid var(--accent)' : '1px solid var(--border)', borderRadius: 4, color: showPads ? 'var(--accent-contrast)' : 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '2px 8px' }}
-                      ><span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Keyboard size={12} /> Pads</span></button>
-                    ) : null
-                  })()}
-                  <button
-                    onClick={() => { setSelectedTrackId(null); setSelectedReturnId(null) }}
-                    style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: '0 4px' }}
-                    title="Close panel"
-                  ><X size={16} /></button>
-                </div>
-                {/* Panel content */}
-                <div style={{ height: bottomResize.size, overflowY: 'auto', overflowX: 'auto' }}>
-                  {selectedTrackId && bottomTab === 'devices'    && <DeviceChain trackId={selectedTrackId} />}
-                  {selectedTrackId && bottomTab === 'instrument' && <InstrumentPicker trackId={selectedTrackId} />}
-                  {selectedReturnId && <ReturnDeviceChain returnId={selectedReturnId} />}
-                </div>
-              </div>
-            )}
+            {/* The detail area: the clip pane above the device pane (components/editor/daw/DetailArea.tsx). */}
+            <DetailArea />
           </div>
         </div>
+        <StatusBar />
       </div>
 
       {/* Floating pad / keyboard overlay */}

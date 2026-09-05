@@ -6,6 +6,7 @@ import { HelpCircle, Search, X, Lock } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { useUITierOptional } from '../UITierProvider'
 import { type UITier, ELEMENT_MIN_TIER, TIER_RANK, TIER_INFO, tierAtLeast } from '@/lib/ui-tiers'
+import { shortcutGroups, resolveKey } from '@/lib/keymap'
 
 // ── Feature highlight ──────────────────────────────────────────────────────────
 // Buttons across the editor carry data-help-id attributes. Clicking a feature in
@@ -37,64 +38,35 @@ type Mode = 'music' | 'podcast'
 interface Shortcut { keys: string; action: string }
 interface ShortcutGroup { label: string; modes?: Mode[]; items: Shortcut[] }
 
-// ⌘ is swapped for Ctrl at render time on non-Mac platforms
-const SHORTCUT_GROUPS: ShortcutGroup[] = [
-  {
-    label: 'Transport & Global',
-    items: [
-      { keys: 'Space', action: 'Play / Stop' },
-      { keys: 'R', action: 'Start / stop recording' },
-      { keys: 'M', action: 'Toggle metronome' },
-      { keys: '← / →', action: 'Move playhead ±1 beat (no clips selected)' },
-      { keys: '⌘Z', action: 'Undo' },
-      { keys: '⇧⌘Z', action: 'Redo' },
-      { keys: '⌘S', action: 'Save project' },
-      { keys: 'Delete', action: 'Delete selected clips' },
-      { keys: 'B', action: 'Toggle the sound library panel' },
-      { keys: 'I', action: 'Inspect mode — hover anything for its name and details' },
-      { keys: 'Hold E / L', action: 'While dragging a clip edge — force Expand or Loop for that drag' },
-      { keys: 'H or ?', action: 'Open this help menu' },
-    ],
-  },
-  {
-    label: 'Arrangement — selection & editing',
-    items: [
-      { keys: 'Drag empty space', action: 'Box-select clips (replaces the current selection)' },
-      { keys: '⌘ click', action: 'Add / remove a single clip from the selection' },
-      { keys: '⇧ click', action: 'Select the range of clips up to here (across tracks)' },
-      { keys: '⌘ drag', action: 'Add the box to the current selection' },
-      { keys: '⌥ drag clip', action: 'Copy the clip as you drag' },
-      { keys: '← / →', action: 'Nudge selected clips by snap (⇧ = 1 beat)' },
-      { keys: '↑ / ↓', action: 'Move selected clips to the track above / below' },
-      { keys: '⌘C / ⌘V', action: 'Copy / paste clips or effects' },
-      { keys: '⌘D', action: 'Duplicate selection after itself' },
-      { keys: '⌘A', action: 'Select all clips' },
-      { keys: 'Esc', action: 'Clear selection' },
-      { keys: 'S', action: 'Split selected clip at playhead' },
-      { keys: 'Delete', action: 'Delete selected effects' },
-    ],
-  },
-  {
-    label: 'Arrangement — view & playback',
-    items: [
-      { keys: 'Home', action: 'Jump playhead to start' },
-      { keys: 'L', action: 'Toggle loop' },
-      { keys: 'P', action: 'Set loop region to selected clips' },
-      { keys: 'G', action: 'Toggle ripple edit' },
-      { keys: 'F', action: 'Fit arrangement to window' },
-      { keys: '1–5', action: 'Snap mode: Off / 1/16 / 1/8 / Beat / Bar' },
-      { keys: '⌥ drag', action: 'Bypass snap while dragging' },
-    ],
-  },
-  {
-    label: 'Piano Roll',
-    modes: ['music'],
-    items: [
-      { keys: 'Delete', action: 'Delete selected notes' },
-      { keys: '⌘A', action: 'Select all notes' },
-    ],
-  },
-]
+// ⌘ is swapped for Ctrl at render time on non-Mac platforms.
+//
+// The KEY rows come from lib/keymap.ts — the table the handlers themselves
+// resolve against — so this panel cannot advertise a key nothing listens to
+// (it did: `B` for the library, for a long time). The mouse rows have no
+// table to come from and are written here.
+const GESTURES: Record<string, Shortcut[]> = {
+  'Transport & Global': [
+    { keys: 'Hold E / L', action: 'While dragging a clip edge — force Expand or Loop for that drag' },
+  ],
+  'Arrangement — selection & editing': [
+    { keys: 'Drag empty space', action: 'Box-select clips (replaces the current selection)' },
+    { keys: '⌘ click', action: 'Add / remove a single clip from the selection' },
+    { keys: '⇧ click', action: 'Select the range of clips up to here (across tracks)' },
+    { keys: '⌘ drag', action: 'Add the box to the current selection' },
+    { keys: '⌥ drag clip', action: 'Copy the clip as you drag' },
+  ],
+  'Arrangement — view & playback': [
+    { keys: '⌥ drag', action: 'Bypass snap while dragging' },
+  ],
+  'Knobs': [
+    { keys: 'Right-click', action: 'MIDI-learn a device knob — turn a hardware control to bind it' },
+  ],
+}
+const SHORTCUT_GROUPS: ShortcutGroup[] = shortcutGroups().map(g => ({
+  label: g.label,
+  modes: g.modes,
+  items: [...g.items.map(({ keys, action }) => ({ keys, action })), ...(GESTURES[g.label] ?? [])],
+}))
 
 interface Feature {
   name: string
@@ -116,7 +88,7 @@ const FEATURES: Feature[] = [
   { group: 'Transport', name: 'Play / Stop', helpIds: ['play'],
     description: 'Start and stop playback from the current playhead position. The transport keeps time in beats and bars, and Space toggles it from anywhere in the editor.' },
   { group: 'Transport', name: 'Record', helpIds: ['record'],
-    description: 'Opens the record setup box: toggle the monitor to hear yourself, add effects to the take, then start recording into new clips on every armed track. Effects land as FX bars under the recording.' },
+    description: 'Opens the record setup box: toggle the monitor to hear yourself, add effects to the take, then start recording into new clips on every armed track. Takes are lossless — 32-bit float WAV at the studio’s sample rate, sample-exact from the first frame — so they punch, quantize and bounce cleanly. Effects land as FX bars under the recording.' },
   { group: 'Transport', name: 'Rewind', helpIds: ['rewind'],
     description: 'Jump the playhead straight back to the start of the project — the quickest way to audition your arrangement from the top right after an edit.' },
   { group: 'Transport', name: 'Loop', helpIds: ['loop'],
@@ -151,6 +123,8 @@ const FEATURES: Feature[] = [
     description: 'The timeline where clips are laid out on tracks against beats and bars. This is where you build the full structure of your song or episode.' },
   { group: 'Views & Layout', name: 'Mixer', helpIds: ['view-mixer'],
     description: 'Channel strips for every track with volume faders, pan, mute/solo, and live spectrum meters — the place to balance your entire mix in one view.' },
+  { group: 'Views & Layout', name: 'Mixer under the Arrangement', helpIds: ['arrangement-mixer'], modes: ['music'], hint: 'Press ⌘⌥M in the Arrangement, or ⌘K → "Show the mixer under the arrangement".',
+    description: 'One row of channel strips beneath the arrangement, so you balance the mix without leaving the clips. The drop-down swaps what the row shows: Mixer, Sends, Returns, In / Out, Track Options, Crossfader (assign tracks to A or B and fade between them), Performance Impact.' },
   { group: 'Views & Layout', name: 'Sound Library', helpIds: ['sound-library'], modes: ['music'],
     description: 'Browse thousands of built-in and imported sounds organized into folders. Drag any sound straight onto a track, and save your own captures back into it.' },
   { group: 'Views & Layout', name: 'Code', helpIds: ['sound-code'], modes: ['music'],
@@ -161,6 +135,14 @@ const FEATURES: Feature[] = [
   // ── Arrangement Tools ──
   { group: 'Arrangement Tools', name: 'Zoom', helpIds: ['zoom-in', 'zoom-out'], hint: ARR_HINT,
     description: 'Zoom the timeline in for fine, detailed edits or out for a bird’s-eye view of the whole arrangement — your position stays anchored while you zoom.' },
+  { group: 'Arrangement Tools', name: 'Overview', helpIds: ['overview'], hint: ARR_HINT,
+    description: 'The strip above the ruler is the whole song in miniature — every clip a sliver in its track’s colour, with a box over what is on screen. Drag the box to scroll, drag an edge to zoom, click anywhere to jump there, double-click to fit the song to the window.' },
+  { group: 'Arrangement Tools', name: 'Follow', helpIds: ['follow'], hint: ARR_HINT,
+    description: 'Keeps the playhead on screen while the song plays — by the page (the view jumps when the playhead runs off the edge) or by scrolling (it glides along). Pauses the moment you scroll or drag so an edit is never pulled out from under you, and resumes when you play again.' },
+  { group: 'Arrangement Tools', name: 'Fit Heights', helpIds: ['fit-height'], hint: ARR_HINT,
+    description: 'Sizes every track so all of them fit the window at once (⌥H) — the partner to Fit to Window, which does the same for time (F or W).' },
+  { group: 'Arrangement Tools', name: 'Waveform Scale', helpIds: ['wf-scale'], hint: ARR_HINT,
+    description: 'Waveforms drawn linear (loud is tall) or on a 60 dB scale, where the quiet tail of a note is still visible. Sits beside the waveform zoom.' },
   { group: 'Arrangement Tools', name: 'Fit to Window', helpIds: ['fit-window'], hint: ARR_HINT,
     description: 'Instantly scale the timeline so your entire arrangement fits the visible area — the fastest way to reorient after zooming deep. Also on the F key.' },
   { group: 'Arrangement Tools', name: 'Snap', helpIds: ['snap'], hint: ARR_HINT,
@@ -173,8 +155,48 @@ const FEATURES: Feature[] = [
     description: 'Automatically slice the selected audio clip at every detected hit or transient — perfect for chopping a drum break into individually editable pieces.' },
   { group: 'Arrangement Tools', name: 'Spectral Morph', helpIds: ['morph'], hint: 'Select exactly two audio clips in the Arrangement view first.',
     description: 'Blend two selected audio clips into one brand-new sound by interpolating their spectra over time — an experimental sound-design tool for unique textures.' },
-  { group: 'Arrangement Tools', name: 'Piano Roll', helpIds: ['piano-roll'], modes: ['music'], hint: ARR_HINT,
-    description: 'Open the MIDI editor for the selected track to draw, move, and resize notes on a grid, with velocity editing and key/scale highlighting built in.' },
+  { group: 'Arrangement Tools', name: 'Draw Mode', helpIds: ['draw-mode'], modes: ['music'], hint: 'Open a MIDI clip — Draw is the middle tool in the piano roll’s bar, or press B anywhere.',
+    description: 'The pencil. Tap B to switch it on (hold B to draw a run and let go). Click for a grid-length note; drag across for one note per step — on one pitch with Pitch Lock, or following the pointer (⌥ flips it for a stroke); drag up or down first to set the velocity, which the next notes inherit; drag back to erase; click a note to erase it.' },
+  { group: 'Arrangement Tools', name: 'Fold, Scale & Focus', helpIds: ['roll-fold', 'roll-fold-scale', 'roll-highlight-scale', 'roll-focus'], modes: ['music'], hint: 'Open a MIDI clip — the buttons sit in the piano roll’s Musical bar.',
+    description: 'Fold (F) shows only the pitches the clip uses; Fold to Scale (G) only the notes of the song’s scale, plus any note outside it so nothing hides; Highlight Scale (K) tints the scale on the keys and the grid, the root more so; Focus (N) scrolls to where the notes are.' },
+  { group: 'Arrangement Tools', name: 'Step Entry', helpIds: ['roll-step-entry'], modes: ['music'], hint: 'Open a MIDI clip — Step is in the piano roll’s Musical bar.',
+    description: 'Write a part one key at a time: with Step on, playing a key on the piano roll’s keyboard writes a note at the insert marker and the marker steps on by the grid; ← and → move the marker when nothing is selected.' },
+  { group: 'Arrangement Tools', name: 'Pitch & Time', helpIds: ['pitch-time'], modes: ['music'], hint: 'Open a MIDI clip — Pitch & Time is in the piano roll’s Musical bar.',
+    description: 'The note utilities, on the selected notes or the whole clip: Transpose (by scale degree with the scale on — ⌥↑ / ⌥↓ for a semitone then), Invert (highest becomes lowest; in key with the scale on), Add Interval (a copy of every note an interval away — degrees with the scale on — and the copies become the selection), Stretch (positions and lengths together; ×2 is half speed, ÷2 double), Set Length (every note the chosen duration), Humanise (each start moved a random amount up to the Amount, a share of the grid step), Reverse (backwards within the selection, or the whole clip) and Legato.' },
+  { group: 'Arrangement Tools', name: 'Sample Editor', helpIds: ['sample-editor', 'clip-warp', 'clip-seg-bpm'], modes: ['music'], hint: 'Select an audio clip — its waveform and settings open in the clip pane at the bottom.',
+    description: 'The audio clip’s own view: the full waveform with trim handles at both edges (drag to trim, the dimmed part is not played), the playhead riding over it, and the clip panel — Warp on or off; the warp mode (Re-Pitch changes speed and pitch together, Complex keeps the pitch); Seg. BPM, the sample’s own tempo, with ÷2 and ×2 for a detection an octave off — with Warp on the clip plays at song tempo over Seg. BPM; Gain in dB; Pitch in semitones and Detune in cents (Complex only); Reverse; Fade, a 4 ms edge fade so cuts never click; the sample’s rate, channels and length; and Save Default Clip, which remembers these settings for that sample so the next clip made from it starts the same way.' },
+  { group: 'Arrangement Tools', name: 'Warp Modes', helpIds: ['clip-warp-mode', 'warp-beats-params'], modes: ['music'], hint: 'Select an audio clip, switch Warp on — the mode chooser is beside it.',
+    description: 'How a warped sample is fitted to the grid. Beats slices it at the transients (or at grid divisions — Preserve) and plays each slice as recorded: a slice too long for its beat is cut short, one too short leaves a gap that the Transient Loop Mode fills (Off: silence, the Transient Envelope fading the slice; Forward: the slice repeats; Back & Forth: it ping-pongs) — drums, and with Loop Off a gate. Tones stretches with a longer grain and keeps the pitch — vocals, bass, single lines. Texture is granular, grains of a set size with Flux jittering where they read from — pads and noise. Re-Pitch plays faster or slower and the pitch moves with it. Complex stretches and keeps the pitch — full mixes.' },
+  { group: 'Arrangement Tools', name: 'Tempo Leader', helpIds: ['clip-tempo-leader'], modes: ['music'], hint: 'Select an audio clip — Leader sits beside the warp mode in the clip panel.',
+    description: 'One audio clip\'s own tempo drives the song. Press Leader on a clip and the song\'s tempo map is rewritten from its warp markers — every pair of markers becomes a tempo segment — so the clip plays exactly as recorded, and everything else (MIDI, other warped clips, synced delays, the ruler) keeps time with its pushes and pulls. Without markers the clip is straight and the song takes its Seg BPM. Move the leader and its tempo changes move with it; edit its markers and the map follows. Only one clip leads at a time; typing a tempo releases it and the song keeps the tempo it had.' },
+  { group: 'Arrangement Tools', name: 'Loop/Warp Short Samples', helpIds: ['import-settings', 'import-short-auto', 'import-auto-warp-long'], modes: ['music'], hint: 'Appearance › Warp & Import, or type "short samples" in ⌘K.',
+    description: 'How a sample lands when you drop it — from the library, an imported file, or by voice. Unwarped one-shot: it plays once at its own speed with Warp and loop off — hits and stabs. Warped loop: it is warped to a whole number of bars and loops, the Seg BPM set to fit. Auto: Beacon looks at the length — within a few percent of whole bars at a plausible tempo it is a loop, otherwise a one-shot. Auto-warp long samples: anything of 30 seconds or more is warped straight at the song tempo so it follows tempo changes; off, it plays as it is. A sample with a saved default clip keeps that instead.' },
+  { group: 'Session', name: 'Launch Modes', helpIds: ['session-launch', 'launch-mode', 'launch-legato', 'launch-velocity'], modes: ['music'], hint: 'Right-click a session slot — Launch Mode is under the colours.',
+    description: 'How a slot answers a press. Trigger starts it from the top and ignores the release, so pressing again starts it over. Gate plays only while you hold the button. Toggle starts it and stops it on the next press — what Beacon\'s slots have always done, so it stays the default; Live\'s default is Trigger and it is one click away. Repeat starts the clip again every launch-quantization step while you hold, which is how a held pad stutters in time. Beside them: Legato, where a clip launched over a playing one picks up where that one had got to instead of starting from its own beginning — the way a fill is swapped in without the groove restarting — and Velocity Amount, how much the velocity of the press reaches the clip\'s level (0% ignores it, which is what a mouse click means).' },
+  { group: 'Arrangement Tools', name: 'Slip Edit & Crop', helpIds: ['clip-slip', 'clip-crop'], modes: ['music'], hint: 'Hold ⇧⌥ and drag inside an audio clip, or use the Slip row in the clip panel.',
+    description: 'Slip slides the audio under the clip: the clip keeps its place and its length, and the sample moves inside it — for pushing a vocal a hair later without moving anything else. ⇧⌥-drag the clip in the arrangement or the waveform in the clip panel, or ⇧⌥← / ⇧⌥→ for 10 ms at a time. On a clip with warp markers the markers slide (they are what maps the sample onto the beats); otherwise the trims do, so the room to slip is whatever audio is trimmed off each end. Crop (⇧⌘J) throws away the audio the clip never plays, so the trims say exactly what you hear — only an unwarped, non-looping clip has any, since a warped one fits its whole sample to its beats and a looping one repeats it.' },
+  { group: 'Arrangement Tools', name: 'Multi-Clip Editing', helpIds: ['multi-clip'], modes: ['music'], hint: 'Select several audio clips (⌘-click or a rubber band) — the clip panel says how many.',
+    description: 'With more than one audio clip selected, the clip panel edits all of them: level, pitch, reverse, the fades, the edge fade, looping, Warp on or off, the warp mode and its parameters. What describes one sample stays with the clip you opened — the trims, the warp markers, Seg BPM, the clip\'s length and the tempo leader — because copying those across different samples would be nonsense. By voice the same holds: "turn the drum clips down to 60%" reaches every clip the words address.' },
+  { group: 'Arrangement Tools', name: 'Slice to New MIDI Track', helpIds: ['clip-slice', 'slice-dialog'], modes: ['music'], hint: 'Select an audio clip — To MIDI › Slice… in the clip panel, or right-click the clip.',
+    description: 'Cuts an audio clip into slices — one per transient, per warp marker, or per grid step (1 bar down to 1/32), up to 64 — and makes every slice a pad of a new drum track, chromatic from C1 the way a Drum Rack fills. A MIDI clip on that track plays the pads where the slices sit, each note lasting to the next slice, so it sounds like the original until you move, repeat or drop notes. The audio clip stays. A warped clip slices to the beats it plays at, not the sample\'s own seconds.' },
+  { group: 'Arrangement Tools', name: 'Convert to MIDI', helpIds: ['clip-to-midi', 'to-midi-result'], modes: ['music'], hint: 'Select an audio clip — To MIDI › Harmony, Melody or Drums in the clip panel, or right-click the clip.',
+    description: 'Hears an audio clip as notes and writes them to a new MIDI track beside it; the audio stays. Harmony keeps every voice it hears — chords, pads, piano. Melody keeps one line, one note per attack — vocals, bass, leads. Drums hears the attacks and calls each a kick, a snare or a hat by where its energy sits, on a new drum track. All local and instant; notes the transcriber was unsure of are counted in the result — worth a listen, and a nudge in the roll where it guessed.' },
+  { group: 'Arrangement Tools', name: 'Warp Markers & Transients', helpIds: ['warp-markers', 'transient-markers'], modes: ['music'], hint: 'Select an audio clip, switch Warp on — the markers live along the top of its waveform.',
+    description: 'Warping pins moments of the sample to beats of the clip. The small grey ticks along the top are the detected transients; double-click one (or anywhere on the upper half) to make a warp marker there, and drag a marker to slide the audio under the grid — the beat stays, the sample moves. ⌘I inserts a marker at the insert point, ⇧⌘I a transient, Delete removes the selected marker, ⌘← / ⌘→ step between them. Right-click the waveform for Set 1.1.1 Here (this moment becomes the first beat), Warp From Here (Straight), Warp as a 1 / 2 / 4 / 8-bar loop, Warp at the Seg BPM, Quantize the transients to the grid, and Clear. Re-Pitch plays each span faster or slower (pitch moves with it); Complex stretches it and keeps the pitch.' },
+  { group: 'Arrangement Tools', name: 'Keyboard Editing', helpIds: ['insert-marker', 'time-selection', 'piano-roll'], modes: ['music'], hint: 'Open a MIDI clip and press Esc so nothing is selected — the insert marker is the thin line in the grid.',
+    description: 'The note editor with no mouse. With nothing selected, ← / → move the insert marker by the grid, ⌥← / ⌥→ jump it to the previous or next note boundary, Home / End to the clip’s ends. ⇧← / ⇧→ grow a time selection from the marker (⇧⌥ to a boundary); Enter selects the notes inside it, and Enter on a note selection turns it back into the time it spans; Esc clears. With notes selected, ← / → nudge, ↑ / ↓ transpose, ⇧← / ⇧→ lengthen or shorten by the grid, ⌘↑ / ⌘↓ velocity, ⌘⌥↑ / ⌘⌥↓ chance. A time selection is what Split at (⌘E), Crop (⇧⌘J), Fit (⌘⌥J) and the time commands work on.' },
+  { group: 'Arrangement Tools', name: 'Loop Brace & Time Commands', helpIds: ['loop-brace', 'roll-loop'], modes: ['music'], hint: 'Open a MIDI clip — Loop is in the piano roll’s Musical bar; the brace is the bar above the grid while it loops.',
+    description: 'Loop repeats the clip’s pattern every loop length. The brace above the grid shows it: drag its end, or click it and use ⌘← / ⌘→ to shorten or lengthen by the grid, ⌘↑ / ⌘↓ to double or halve, ⌘D to Duplicate Loop — the loop doubles and its notes are copied, with what came after moved along. Set End puts the loop’s end at the playhead. ⇧⌘L selects the notes inside the loop; ⇧⌘J crops the clip to it. The time commands — Insert, Delete and Duplicate Time — open, close or copy the loop’s span (or the whole clip when it does not loop). A clip can carry its own time signature for its bar lines.' },
+  { group: 'Arrangement Tools', name: 'Quantize Settings', helpIds: ['quantize-dialog', 'roll-quantize'], modes: ['music'], hint: 'Open a MIDI clip — Quantize is in the piano roll’s toolbar; ⇧⌘U opens the settings.',
+    description: 'Q (or ⌘U) quantizes the selected notes — or the whole clip from the palette — with the current settings. ⇧⌘U opens them: the grid (follow the editor’s, or 1/4 to 1/32, straight or triplet — a triplet is two thirds of the value), whether note starts, ends or both move, and the Amount — 100 % snaps, 50 % moves halfway and keeps the feel. The settings stay set.' },
+  { group: 'Arrangement Tools', name: 'Split, Chop, Join & Deactivate', helpIds: ['roll-grid', 'stretch-markers'], modes: ['music'], hint: 'Open a MIDI clip and select some notes.',
+    description: 'Note surgery. Hold E and click or drag through notes to split them where the pointer crosses (⌥ off the grid). ⌘E chops the selected notes on the grid — the Chop palette command takes a number of parts — or, with nothing selected, splits at the playhead. ⌘J joins the selected notes on each key into one. ⌘⌥J fits the selection to the loop, or the whole clip. 0 deactivates the selected notes: kept in place, dimmed, silent — and 0 again brings them back. A note dropped onto the start of another on the same key replaces it; dropped inside one, it shortens it. With two or more notes selected, stretch markers appear above them: drag an end to stretch the selection in time, drag one past the other to mirror it, drag the middle one to warp the inside.' },
+  { group: 'Arrangement Tools', name: 'Find & Select Notes', helpIds: ['roll-find', 'find-notes-bar'], modes: ['music'], hint: 'Open a MIDI clip — the magnifier sits in the piano roll’s toolbar.',
+    description: 'A filter over the clip’s notes that becomes the selection: a pitch class in every octave, a pitch span, a time window (repeating every N beats), velocity, chance and duration ranges, a condition (deactivated, chance under 100 %, has deviation), every nth note, and in or out of the scale. The filters combine; Invert flips them. Select applies it; anything that acts on the selection — velocity, chance, transpose, delete — then acts on exactly those notes.' },
+  { group: 'Arrangement Tools', name: 'Chance & Expression Lanes', helpIds: ['note-lanes'], modes: ['music'], hint: 'Open a MIDI clip — the lanes sit under the note grid.',
+    description: 'Under the note grid, one lane at a time: Velocity, Velocity Deviation (± steps picked afresh each pass), and Chance (how often a note plays, 0–100%). Draw in them, or select notes and use Randomize (with an Amount) and Ramp. ⌘↑↓ nudges velocity, ⇧⌘↑↓ deviation, ⌘⌥↑↓ chance. ⌘G puts the selected notes in a probability group: Play One (one of them per pass, weighted by chance), then Play All, then ungroup. Every roll is seeded, so a render is the same every time.' },
+  { group: 'Arrangement Tools', name: 'Piano Roll', helpIds: ['piano-roll'], modes: ['music'], hint: 'Select a MIDI clip — its notes open in the clip pane at the bottom (or double-click the clip). Appearance → Display & Input chooses bottom pane or inline.',
+    description: 'The MIDI editor: draw, move, and resize notes on a grid, with velocity editing and key/scale highlighting built in. It lives in the clip pane at the bottom of the studio and follows the selected clip — Notes and Envelopes tabs top-right — or, by the Display setting, unfolds inline under the track.' },
   { group: 'Arrangement Tools', name: 'Export', helpIds: ['export'], hint: ARR_HINT,
     description: 'Render your finished project to an audio file — lossless WAV for mastering and distribution, or compact WebM/Opus for quick sharing on the web.' },
   { group: 'Arrangement Tools', name: 'Save Project', helpIds: ['save'], hint: ARR_HINT,
@@ -215,6 +237,8 @@ const FEATURES: Feature[] = [
     description: 'Halt every playing session clip at once and hand playback back to the arrangement timeline — the clean way out of a live jam.' },
 
   // ── Clips ──
+  { group: 'Clips', name: 'Deactivate / Activate', helpIds: [], hint: CLIP_HINT,
+    description: 'Park a clip without deleting it: press 0 (or right-click → Deactivate) and it stays in place, dimmed and dashed, skipped by playback and every render until you activate it again. The way to try the arrangement without an idea and still keep the idea.' },
   { group: 'Clips', name: 'Clip Settings', helpIds: [], hint: CLIP_HINT,
     description: 'Gain, pitch, warp mode, fades, boomerang, and more for the selected clip. Warp keeps a clip locked to the project tempo; pitch stays independent of speed.' },
   { group: 'Clips', name: 'Crop', helpIds: [], hint: CLIP_HINT,
@@ -237,6 +261,20 @@ const FEATURES: Feature[] = [
     description: 'Play instruments live from clickable pads, your computer keyboard, or a plugged-in MIDI keyboard. Instrument notes record as editable MIDI; sample pads bounce audio.' },
   { group: 'Instruments & Effects', name: 'Capture MIDI', helpIds: [], modes: ['music'], hint: 'Open the Pad Input window — CAPTURE sits next to the REC button.',
     description: 'Everything you play while the transport runs is remembered for 30 seconds, even when not recording. One click on CAPTURE turns that great unrecorded take into a MIDI clip.' },
+  { group: 'Tracks & Mixing', name: 'Delay Compensation', helpIds: ['delay-compensation'], modes: ['music'], hint: 'Open More in the transport bar — PDC is the toggle there. A track with latency shows a Δ chip in its device chain.',
+    description: 'Some devices hold the signal — a plug-in hosted out of process, a lookahead. Delay compensation finds the slowest track and delays every other one by the difference, so they all arrive together. Turn it off while recording live through a slow device.' },
+  { group: 'Views & Layout', name: 'Second Window', helpIds: ['mixer-window', 'clip-window'], hint: 'The ⧉ beside the view buttons opens the mixer in its own window; the one in the clip pane’s tab bar does the same for the clip view.',
+    description: 'The mixer, or the clip view, leaves the studio and draws in its own OS window — on a second screen if you have one. It is the same studio, not a copy: one engine, one project, one undo. Close the window, or click the icon again, to bring it back.' },
+  { group: 'Views & Layout', name: 'UI Scale', helpIds: ['ui-scale'], hint: 'Appearance → Display & Input has the slider; ⌘+ and ⌘− step it, ⌘0 resets.',
+    description: 'Bigger or smaller chrome, 50–200%: the top bar, toolbars, buttons and labels grow or shrink. The timeline, the note grid, knobs and faders keep their size, so nothing you click moves under the pointer.' },
+  { group: 'Views & Layout', name: 'Info View & Status Bar', helpIds: ['status-bar'], hint: 'The bar along the very bottom of the studio. ⌘⌥I shows and hides it.',
+    description: 'Point at anything and the Info View, bottom left, says what it does — the same words as this help. A clip or track can carry your own note (right-click → Edit Info Text…), shown there whenever the pointer is over it. Bottom right, the status readout: the selection’s start, end and length in bars.beats and in clock time, or the playhead when nothing is selected.' },
+  { group: 'Views & Layout', name: 'Detail Area', helpIds: ['detail-toggles'], hint: 'Select a clip or a track — the detail area opens along the bottom of the studio.',
+    description: 'The bottom of the screen, two panes tall: the clip pane (what the selected clip is — its name, where it sits, its length, loop and on/off) above the device pane (the selected track’s effects and instrument). Show or hide each with the toggles at the bottom right, ⌘⌥3 and ⌘⌥4; ⇧Tab flips keyboard focus between them; ⌘⌥E stretches the area to full size.' },
+  { group: 'Instruments & Effects', name: 'LFO Modulation', helpIds: [], modes: ['music'], hint: 'Select a track, then ⌘K → "Add an LFO" — or say "put an LFO on the pad filter", "tremolo the keys at 4 Hz", "take the LFO off".',
+    description: 'An LFO on a track keeps a parameter moving — a wobble on the filter cutoff, a tremolo on the volume, an auto-pan, reverb that breathes — in time with the song (every eighth, once a bar) or at a rate in hertz. Automation is a shape drawn once; modulation repeats. It rides on top of automation and steps aside when removed.' },
+  { group: 'Instruments & Effects', name: 'Knobs by Keyboard', helpIds: [], hint: 'Click or Tab to any knob — mixer pan, EQ, sends, device parameters — then use the arrow keys, or press Enter and type the number.',
+    description: 'Every knob is a slider to the keyboard and to a screen reader: arrows nudge it (Shift for fine, Page keys for coarse), Delete resets it, Enter opens a typed entry that understands units — "800", "1.2k", "-6dB", "50%", "L30".' },
 
   // ── Collaboration ──
   { group: 'Collaboration', name: 'Invite Collaborators', helpIds: ['invite'], hint: 'Open a saved project — the invite button lives in the collaboration bar at the top.',
@@ -327,7 +365,7 @@ export default function HelpButton() {
       if (e.defaultPrevented) return
       // Pad window active → every key is potential performance input
       if (document.body.dataset.padInputActive === '1') return
-      if ((e.key === '?' || e.key === 'h' || e.key === 'H') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (resolveKey(e, ['global'])?.id === 'help.open') {
         e.preventDefault()
         setQuery('')
         setOpen(true)

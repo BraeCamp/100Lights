@@ -4,7 +4,7 @@ import React, { createContext, useContext, useEffect, useState, type Dispatch } 
 import type {
   DawProject, DawTrack, DawClip, AudioClip, MidiClip, MidiNote,
   Scene, DawView, EditTarget,
-  TrackEffect, AutomationLane, AutomationPoint, ClipEffect,
+  TrackEffect, AutomationLane, AutomationPoint, ClipEffect, Modulator, ModRoute,
   ReturnTrack, TakeLane, MidiEffect, CueMarker, CollabPeer, DawHistoryEntry,
 } from './daw-types'
 import { repairAutomationPoints } from './automation-repair'
@@ -18,6 +18,9 @@ import {
 } from './daw-types'
 import { DawEngine } from './daw-engine'
 import { legacyToBar } from './effect-bar'
+import { resolveOverlaps } from './note-ops'
+import { clipDefaultsFor, clipDefaultsKey } from './clip-defaults'
+import { followLeader, releaseLeader, setLeader, touchesLeader } from './tempo-leader'
 
 // ── Action types ────────────────────────────────────────────────────────
 
@@ -37,6 +40,9 @@ export type DawAction =
   | { type: 'ADD_CLIP'; clip: DawClip }
   | { type: 'REMOVE_CLIP'; clipId: string }
   | { type: 'UPDATE_CLIP'; clipId: string; patch: Partial<AudioClip> | Partial<MidiClip> }
+  // Live's Clip Activator (key `0`): park clips without deleting them. One
+  // action for the whole selection so it undoes as one step.
+  | { type: 'SET_CLIPS_ACTIVE'; clipIds: string[]; active: boolean }
   | { type: 'MOVE_CLIP'; clipId: string; startBeat: number; trackId?: string }
   // Session grid
   | { type: 'SET_SESSION_SLOT'; trackId: string; sceneIndex: number; clip: DawClip | null }
@@ -54,6 +60,7 @@ export type DawAction =
   | { type: 'REMOVE_TEMPO_MARKER'; markerId: string }
   | { type: 'ADD_METER_MARKER'; marker: { id: string; beat: number; num: number; den: number } }
   | { type: 'REMOVE_METER_MARKER'; markerId: string }
+  | { type: 'SET_TEMPO_LEADER'; clipId: string | null }
   | { type: 'ADD_SECTION'; section: { id: string; beat: number; name: string; color: string } }
   | { type: 'REMOVE_SECTION'; sectionId: string }
   | { type: 'ADD_COMMENT'; comment: import('./daw-types').TimelineComment }
@@ -69,6 +76,13 @@ export type DawAction =
   | { type: 'ADD_MIDI_NOTE'; clipId: string; note: MidiNote }
   | { type: 'REMOVE_MIDI_NOTE'; clipId: string; noteId: string }
   | { type: 'UPDATE_MIDI_NOTE'; clipId: string; noteId: string; patch: Partial<MidiNote> }
+  | { type: 'UPDATE_MIDI_NOTES'; clipId: string; notes: Array<{ id: string; patch: Partial<MidiNote> }> }
+  | { type: 'ADD_MIDI_NOTES'; clipId: string; notes: MidiNote[] }
+  /** Split / Chop / Join: some notes out, some in, one undo step (lib/note-ops.ts). */
+  | { type: 'SPLICE_MIDI_NOTES'; clipId: string; remove: string[]; add: MidiNote[] }
+  /** Live's overlap rule for notes that just landed — after a move or resize ends. */
+  | { type: 'RESOLVE_NOTE_OVERLAPS'; clipId: string; noteIds: string[] }
+  | { type: 'SET_CHANCE_GROUP'; clipId: string; noteIds: string[]; group: string | null; mode?: 'all' | 'one' }
   // Effects chain
   | { type: 'ADD_EFFECT'; trackId: string; effect: TrackEffect }
   | { type: 'REMOVE_EFFECT'; trackId: string; effectId: string }
@@ -80,6 +94,12 @@ export type DawAction =
   | { type: 'ADD_AUTOMATION_LANE'; lane: AutomationLane }
   | { type: 'REMOVE_AUTOMATION_LANE'; laneId: string }
   | { type: 'UPDATE_AUTOMATION_LANE'; laneId: string; patch: Partial<AutomationLane> }
+  | { type: 'ADD_MODULATOR'; modulator: Modulator }
+  | { type: 'UPDATE_MODULATOR'; modulatorId: string; patch: Partial<Modulator> }
+  | { type: 'REMOVE_MODULATOR'; modulatorId: string }
+  | { type: 'ADD_MOD_ROUTE'; modulatorId: string; route: ModRoute }
+  | { type: 'UPDATE_MOD_ROUTE'; modulatorId: string; routeId: string; patch: Partial<ModRoute> }
+  | { type: 'REMOVE_MOD_ROUTE'; modulatorId: string; routeId: string }
   | { type: 'ADD_AUTOMATION_POINT'; laneId: string; point: AutomationPoint }
   | { type: 'REMOVE_AUTOMATION_POINT'; laneId: string; pointId: string }
   | { type: 'UPDATE_AUTOMATION_POINT'; laneId: string; pointId: string; patch: Partial<AutomationPoint> }
@@ -108,6 +128,7 @@ export type DawAction =
   | { type: 'SET_WAVEFORM_ZOOM'; zoom: number }
   // Swing + key/scale
   | { type: 'SET_SWING'; swing: number }
+  | { type: 'SET_DELAY_COMPENSATION'; on: boolean }
   | { type: 'SET_KEY_SCALE'; key: number; scale: string }
   // Cue markers
   | { type: 'ADD_CUE_MARKER'; marker: CueMarker }
@@ -335,6 +356,18 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       const clips = project.arrangementClips.map(c =>
         c.id === action.clipId ? ({ ...c, ...action.patch } as DawClip) : c
       )
+      const next = { ...project, arrangementClips: clips }
+      // The tempo leader's map is made of its markers and its place
+      // (lib/tempo-leader.ts): a patch touching those re-derives the song's tempo.
+      return touchesLeader(action.patch as Record<string, unknown>) ? followLeader(next) : next
+    }
+
+    case 'SET_CLIPS_ACTIVE': {
+      const ids = new Set(action.clipIds)
+      if (!ids.size) return project
+      const clips = project.arrangementClips.map(c =>
+        ids.has(c.id) ? ({ ...c, active: action.active ? undefined : false } as DawClip) : c
+      )
       return { ...project, arrangementClips: clips }
     }
 
@@ -353,7 +386,8 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
               : e
           )
         : (project.clipEffects ?? [])
-      return { ...project, arrangementClips: clips, clipEffects }
+      // A moved tempo leader takes its tempo changes with it (lib/tempo-leader.ts).
+      return followLeader({ ...project, arrangementClips: clips, clipEffects })
     }
 
     case 'SET_SESSION_SLOT': {
@@ -505,8 +539,14 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
           ? { ...c, durationBeats: Math.max(0.125, c.durationBeats * ratio) }
           : c
       )
-      return { ...project, tempo, tempoMarkers, arrangementClips }
+      // A tempo the user typed wins over a leader clip: the leader is released.
+      return releaseLeader({ ...project, tempo, tempoMarkers, arrangementClips })
     }
+
+    // One audio clip's own tempo drives the set (lib/tempo-leader.ts). Only
+    // ever one leader; null releases it, the tempo staying where it left it.
+    case 'SET_TEMPO_LEADER':
+      return setLeader(project, action.clipId)
 
     case 'SET_TIME_SIG':
       return { ...project, timeSignatureNum: action.num, timeSignatureDen: action.den }
@@ -540,6 +580,70 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       return { ...project, arrangementClips: clips }
     }
 
+    // Many notes, one undo step — the lanes' Randomize and Ramp, a voice
+    // "make the hats 50% chance", ⌘↑ on a selection.
+    case 'UPDATE_MIDI_NOTES': {
+      const byId = new Map(action.notes.map(n => [n.id, n.patch]))
+      const clips = project.arrangementClips.map(c => {
+        if (c.id !== action.clipId || c.kind !== 'midi') return c
+        const notes = c.notes.map(n => (byId.has(n.id) ? { ...n, ...byId.get(n.id) } : n))
+        // Stretch ×2 can push the phrase past the clip's end; grow to fit, the
+        // way a single note's move does, so nothing is silently cut off.
+        const end = Math.max(0, ...notes.filter(n => byId.has(n.id)).map(n => n.startBeat + n.durationBeats))
+        return growToFitNoteEnd({ ...c, notes } as MidiClip, end, project.timeSignatureNum)
+      })
+      return { ...project, arrangementClips: clips }
+    }
+    // Many notes added as one undo step — Add Interval's copies, a voice
+    // "harmonize the lead a third above".
+    case 'ADD_MIDI_NOTES': {
+      if (!action.notes.length) return project
+      const clips = project.arrangementClips.map(c => {
+        if (c.id !== action.clipId || c.kind !== 'midi') return c
+        const end = Math.max(...action.notes.map(n => n.startBeat + n.durationBeats))
+        return growToFitNoteEnd({ ...c, notes: [...c.notes, ...action.notes] } as MidiClip, end, project.timeSignatureNum)
+      })
+      return { ...project, arrangementClips: clips }
+    }
+    case 'SPLICE_MIDI_NOTES': {
+      if (!action.remove.length && !action.add.length) return project
+      const gone = new Set(action.remove)
+      const clips = project.arrangementClips.map(c => {
+        if (c.id !== action.clipId || c.kind !== 'midi') return c
+        const notes = [...c.notes.filter(n => !gone.has(n.id)), ...action.add]
+        const end = Math.max(0, ...action.add.map(n => n.startBeat + n.durationBeats))
+        return growToFitNoteEnd({ ...c, notes } as MidiClip, end, project.timeSignatureNum)
+      })
+      return { ...project, arrangementClips: clips }
+    }
+    // Live's overlap rule (lib/note-ops.ts): a note that lands on the start
+    // of another on the same key replaces it; one that lands inside another
+    // shortens it. Run when a gesture ENDS — not per move, or a group drag
+    // would eat its own notes on the way.
+    case 'RESOLVE_NOTE_OVERLAPS': {
+      const clips = project.arrangementClips.map(c => {
+        if (c.id !== action.clipId || c.kind !== 'midi') return c
+        const { remove, patches } = resolveOverlaps(c.notes, new Set(action.noteIds))
+        if (!remove.length && !patches.length) return c
+        const gone = new Set(remove)
+        const byId = new Map(patches.map(p => [p.id, p.patch]))
+        return { ...c, notes: c.notes.filter(n => !gone.has(n.id)).map(n => (byId.has(n.id) ? { ...n, ...byId.get(n.id) } : n)) }
+      })
+      return { ...project, arrangementClips: clips }
+    }
+    case 'SET_CHANCE_GROUP': {
+      const ids = new Set(action.noteIds)
+      const clips = project.arrangementClips.map(c => {
+        if (c.id !== action.clipId || c.kind !== 'midi') return c
+        const notes = c.notes.map(n => (ids.has(n.id) ? { ...n, chanceGroup: action.group ?? undefined } : n))
+        const groups = { ...(c.chanceGroups ?? {}) }
+        if (action.group) groups[action.group] = action.mode ?? groups[action.group] ?? 'one'
+        // Drop groups nobody is in any more.
+        for (const g of Object.keys(groups)) if (!notes.some(n => n.chanceGroup === g)) delete groups[g]
+        return { ...c, notes, chanceGroups: Object.keys(groups).length ? groups : undefined }
+      })
+      return { ...project, arrangementClips: clips }
+    }
     case 'UPDATE_MIDI_NOTE': {
       const clips = project.arrangementClips.map(c => {
         if (c.id !== action.clipId || c.kind !== 'midi') return c
@@ -646,6 +750,28 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       )
       return { ...project, automationLanes }
     }
+
+    // ── Modulators ──────────────────────────────────────────────────────────
+    case 'ADD_MODULATOR': {
+      const mods = project.modulators ?? []
+      if (mods.some(m => m.id === action.modulator.id)) return project
+      return { ...project, modulators: [...mods, action.modulator] }
+    }
+    case 'UPDATE_MODULATOR':
+      return { ...project, modulators: (project.modulators ?? []).map(m => m.id === action.modulatorId ? { ...m, ...action.patch } : m) }
+    case 'REMOVE_MODULATOR':
+      return { ...project, modulators: (project.modulators ?? []).filter(m => m.id !== action.modulatorId) }
+    case 'ADD_MOD_ROUTE':
+      return { ...project, modulators: (project.modulators ?? []).map(m => {
+        if (m.id !== action.modulatorId || m.routes.some(r => r.id === action.route.id)) return m
+        return { ...m, routes: [...m.routes, action.route] }
+      }) }
+    case 'UPDATE_MOD_ROUTE':
+      return { ...project, modulators: (project.modulators ?? []).map(m => m.id !== action.modulatorId ? m
+        : { ...m, routes: m.routes.map(r => r.id === action.routeId ? { ...r, ...action.patch } : r) }) }
+    case 'REMOVE_MOD_ROUTE':
+      return { ...project, modulators: (project.modulators ?? []).map(m => m.id !== action.modulatorId ? m
+        : { ...m, routes: m.routes.filter(r => r.id !== action.routeId) }) }
 
     case 'ADD_AUTOMATION_POINT': {
       const automationLanes = project.automationLanes.map(l => {
@@ -791,6 +917,9 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
 
     case 'SET_SWING':
       return { ...project, swing: Math.max(0, Math.min(1, action.swing)) }
+
+    case 'SET_DELAY_COMPENSATION':
+      return { ...project, delayCompensation: action.on ? undefined : false }
 
     case 'SET_KEY_SCALE':
       return { ...project, key: action.key, scale: action.scale }
@@ -1184,6 +1313,9 @@ export function makeAudioClip(
     fadeOut: 0,
     trimStart: 0,
     trimEnd: 0,
+    // Save Default Clip (lib/clip-defaults.ts): the sample's remembered
+    // settings sit under whatever the caller says explicitly.
+    ...(clipDefaultsFor(clipDefaultsKey(opts)) ?? {}),
     ...opts,
   }
 }

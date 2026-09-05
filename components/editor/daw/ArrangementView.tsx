@@ -28,6 +28,10 @@ import { useIsMobile } from '@/lib/use-is-mobile'
 import { CommentComposer, CommentThread } from './TimelineComments'
 import VersionHistory from './VersionHistory'
 import { detectTransients } from './ClipView'
+import { resolveKey } from '@/lib/keymap'
+import ArrangementOverview, { FollowPlayhead } from './ArrangementOverview'
+import { useDisplaySettings, setDisplay } from '@/lib/display-settings'
+import { fitHeights, FOLLOW_MODES } from '@/lib/arrangement-overview'
 import dynamic from 'next/dynamic'
 
 const AudioExportModal = dynamic(() => import('./AudioExportModal'), { ssr: false })
@@ -540,6 +544,20 @@ export default function ArrangementView() {
   const playheadRef = useRef<HTMLDivElement>(null)
   const rafRef      = useRef<number | undefined>(undefined)
   const [viewWidth, setViewWidth] = useState(800)
+  const display = useDisplaySettings()
+  // Bumped whenever the person scrolls or drags the view, so Follow pauses
+  // instead of fighting them (lib/arrangement-overview.ts FollowPlayhead).
+  const [followPause, setFollowPause] = useState(0)
+  const pauseFollow = () => { if (display.follow !== 'off') setFollowPause(n => n + 1) }
+  const cycleFollow = () => { const i = FOLLOW_MODES.indexOf(display.follow); setDisplay({ follow: FOLLOW_MODES[(i + 1) % FOLLOW_MODES.length] }) }
+  // Live's H: every track sized so all of them fit the lanes viewport.
+  function fitTrackHeights() {
+    const h = laneRef.current?.clientHeight ?? 0
+    const visible = project.tracks.filter(t => !(t.groupId && project.tracks.find(g => g.id === t.groupId)?.collapsed))
+    if (!h || !visible.length) return
+    const each = fitHeights(h, visible.length)
+    for (const t of visible) if (t.height !== each) dispatch({ type: 'UPDATE_TRACK', trackId: t.id, patch: { height: each } })
+  }
   const [rubberBand, setRubberBand] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
   // Beat-span of the last rubber-band selection (grid-snapped). Copy and
   // group-loop use it so "the whole bar" — blank space included — is the unit.
@@ -824,6 +842,7 @@ export default function ArrangementView() {
   // gone. The manual BPM box still sets the global tempo (SET_TEMPO / marker edit).
 
   function handleWheel(e: React.WheelEvent) {
+    pauseFollow()
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault()
       const factor = Math.min(1.43, Math.max(0.7, Math.exp(-e.deltaY * ZOOM_SENS)))
@@ -1019,6 +1038,7 @@ export default function ArrangementView() {
   }
 
   function onLaneMouseDown(e: React.MouseEvent<HTMLDivElement>) {
+    pauseFollow()
     if (e.button !== 0) return
     const preSelected = new Set(selectedClipIds)   // for Cmd/Shift-additive selection
     const laneEl = laneRef.current
@@ -1237,16 +1257,29 @@ export default function ArrangementView() {
   const snapRef = useRef(snap); snapRef.current = snap
   const rippleEditRef = useRef(rippleEdit); rippleEditRef.current = rippleEdit
   const fitToWindowRef = useRef(fitToWindow); fitToWindowRef.current = fitToWindow
+  const fitHeightsRef = useRef(fitTrackHeights); fitHeightsRef.current = fitTrackHeights
+  const cycleFollowRef = useRef(cycleFollow); cycleFollowRef.current = cycleFollow
+  const displayRef = useRef(display); displayRef.current = display
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      // The note editors own their keys (F folds, G folds to scale, ⌘D
+      // duplicates notes…). This listener runs in the capture phase, before
+      // theirs, so it has to step aside or F both folds the roll AND fits the
+      // arrangement to the window.
+      // Keys aimed at the roll, the step sequencer or an open dialog (the
+      // Quantize / Pitch & Time popovers) are theirs — an Escape typed into a
+      // dialog's knob used to clear the clip selection and close the roll.
+      if ((e.target as HTMLElement)?.closest?.('[data-help-id="piano-roll"], [data-help-id="step-sequencer"], [role="dialog"]')) return
 
       const meta = e.metaKey || e.ctrlKey
+      // What this key means here, from the one table (lib/keymap.ts).
+      const kb = resolveKey(e, ['arrangement'])?.id
 
       // ← → : nudge selected clips (capture phase blocks AudioEditor's seek when clips are selected)
-      if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+      if (kb === 'clip.nudgeLeft' || kb === 'clip.nudgeRight' || kb === 'clip.nudgeLeftBeat' || kb === 'clip.nudgeRightBeat') {
         const ids = selectedClipIds.size > 0 ? [...selectedClipIds] : selectedClipId ? [selectedClipId] : []
         if (ids.length === 0) return  // no clips selected → let AudioEditor move playhead
         e.preventDefault()
@@ -1268,7 +1301,7 @@ export default function ArrangementView() {
       }
 
       // ↑ ↓ : move selected clips to prev / next track lane
-      if (e.code === 'ArrowUp' || e.code === 'ArrowDown') {
+      if (kb === 'clip.trackUp' || kb === 'clip.trackDown') {
         const ids = selectedClipIds.size > 0 ? [...selectedClipIds] : selectedClipId ? [selectedClipId] : []
         if (ids.length === 0) return
         e.preventDefault()
@@ -1286,7 +1319,18 @@ export default function ArrangementView() {
         return
       }
 
-      if (meta && e.key === 'c') {
+      // Live's Clip Activator: `0` parks the selected clips — kept in place,
+      // dimmed, silent — and `0` again brings them back.
+      if (kb === 'clip.activate') {
+        const ids = selectedClipIds.size > 0 ? [...selectedClipIds] : selectedClipId ? [selectedClipId] : []
+        if (!ids.length) return
+        e.preventDefault()
+        const first = project.arrangementClips.find(c => c.id === ids[0])
+        dispatch({ type: 'SET_CLIPS_ACTIVE', clipIds: ids, active: first?.active === false })
+        return
+      }
+
+      if (kb === 'clip.copy') {
         e.preventDefault()
         if (selectedEffectIds.size > 0) {
           handleCopyEffects(selectedEffectIds)
@@ -1297,7 +1341,7 @@ export default function ArrangementView() {
         return
       }
 
-      if (meta && e.key === 'v') {
+      if (kb === 'clip.paste') {
         e.preventDefault()
         if (_lastCopied === 'effects') {
           handlePasteEffects()
@@ -1308,7 +1352,7 @@ export default function ArrangementView() {
       }
 
       // Cmd+D = duplicate selected clips immediately after their current position
-      if (meta && e.key === 'd') {
+      if (kb === 'clip.duplicate') {
         e.preventDefault()
         const ids = selectedClipIds.size > 0 ? selectedClipIds : selectedClipId ? new Set([selectedClipId]) : new Set<string>()
         const clipsToDup = project.arrangementClips.filter(c => ids.has(c.id))
@@ -1333,20 +1377,20 @@ export default function ArrangementView() {
       }
 
       // Cmd+A = select all clips
-      if (meta && e.key === 'a') {
+      if (kb === 'clip.selectAll') {
         e.preventDefault()
         setSelectedClipIds(new Set(project.arrangementClips.map(c => c.id)))
         return
       }
 
-      if (e.key === 'Escape') {
+      if (kb === 'clip.deselect') {
         setSelectedClipIds(new Set())
         setSelectedClipId(null)
         setSelectedEffectIds(new Set())
         return
       }
 
-      if (e.key === 'Home') {
+      if (kb === 'transport.home') {
         e.preventDefault()
         engine.seek(0)
         setPosition(0)
@@ -1356,21 +1400,21 @@ export default function ArrangementView() {
       // S: HOLDING S is a splice modifier for the marquee drag (see the lane
       // drag). A plain S TAP splices the selected clip at the playhead — but on
       // keyUP, so holding S never auto-repeats a split. Just track the hold here.
-      if (!meta && e.key === 's') {
+      if (kb === 'clip.split') {
         e.preventDefault()
         if (!e.repeat) { sHeldRef.current = true; sSpliceUsedRef.current = false }
         return
       }
 
       // L = toggle loop
-      if (!meta && e.key === 'l') {
+      if (kb === 'loop.toggle') {
         e.preventDefault()
         dispatch({ type: 'SET_LOOP_ENABLED', enabled: !project.loopEnabled })
         return
       }
 
       // P = set loop region to span selected clips and enable loop
-      if (!meta && e.key === 'p') {
+      if (kb === 'loop.toSelection') {
         e.preventDefault()
         const ids = selectedClipIds.size > 0 ? selectedClipIds : selectedClipId ? new Set([selectedClipId]) : new Set<string>()
         const clips = project.arrangementClips.filter(c => ids.has(c.id))
@@ -1381,7 +1425,7 @@ export default function ArrangementView() {
       }
 
       // G = toggle ripple edit
-      if (!meta && e.key === 'g') {
+      if (kb === 'edit.ripple') {
         e.preventDefault()
         rippleEditRef.current  // read; actual toggle via setter
         setRippleEdit(r => !r)
@@ -1389,21 +1433,24 @@ export default function ArrangementView() {
       }
 
       // F = fit arrangement to window
-      if (!meta && e.key === 'f') {
+      if (kb === 'view.fit') {
         e.preventDefault()
         fitToWindowRef.current()
         return
       }
+      if (kb === 'view.fitHeight') { e.preventDefault(); fitHeightsRef.current(); return }
+      if (kb === 'view.follow') { e.preventDefault(); cycleFollowRef.current(); return }
+      if (kb === 'view.overview') { e.preventDefault(); setDisplay({ overview: !displayRef.current.overview }); return }
 
       // 1–5 = snap mode (Off / 1/16 / 1/8 / Beat / Bar)
-      if (!meta && ['1', '2', '3', '4', '5'].includes(e.key)) {
+      if (kb?.startsWith('snap.')) {
         const modes: SnapMode[] = ['off', '1/16', '1/8', 'beat', 'bar']
         setSnap(modes[parseInt(e.key) - 1])
         return
       }
 
       // Delete / Backspace for selected effects (clips handled in AudioEditor)
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedEffectIds.size > 0) {
+      if (kb === 'clip.deleteEffects' && selectedEffectIds.size > 0) {
         e.preventDefault()
         for (const id of selectedEffectIds) dispatch({ type: 'REMOVE_CLIP_EFFECT', effectId: id })
         setSelectedEffectIds(new Set())
@@ -1496,7 +1543,13 @@ export default function ArrangementView() {
       <div style={{ height: 30, display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
         <button onClick={() => setBeatW(w => Math.min(MAX_BEAT_W, w * 1.3))} style={toolBtn} title="Zoom in" data-help-id="zoom-in"><ZoomIn size={13} /></button>
         <button onClick={() => setBeatW(w => Math.max(MIN_BEAT_W, w * 0.77))} style={toolBtn} title="Zoom out" data-help-id="zoom-out"><ZoomOut size={13} /></button>
-        <button onClick={fitToWindow} style={toolBtn} title="Fit to window" data-help-id="fit-window"><Maximize2 size={13} /></button>
+        <button onClick={fitToWindow} style={toolBtn} title="Fit the song to the window (F / W)" data-help-id="fit-window"><Maximize2 size={13} /></button>
+        <button onClick={fitTrackHeights} style={{ ...toolBtn, fontSize: 10, fontWeight: 700 }} title="Fit every track into the window (⌥H)" data-help-id="fit-height" aria-label="Fit track heights">H</button>
+        <button onClick={cycleFollow} data-help-id="follow" aria-pressed={display.follow !== 'off'} data-follow={display.follow}
+          title={`Follow the playhead: ${display.follow} — click to change (⇧⌘F). Pauses while you scroll or drag; resumes on play.`}
+          style={{ ...toolBtn, fontSize: 9, fontWeight: 700, letterSpacing: '0.04em', padding: '2px 6px', background: display.follow !== 'off' ? 'rgb(var(--accent-rgb) / 0.18)' : undefined, color: display.follow !== 'off' ? 'var(--accent)' : undefined, border: display.follow !== 'off' ? '1px solid var(--accent)' : '1px solid transparent' }}>
+          FOLLOW{display.follow !== 'off' ? ` · ${display.follow}` : ''}
+        </button>
         <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
         <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>SNAP</span>
         <div style={{ position: 'relative' }} data-help-id="snap">
@@ -1575,6 +1628,13 @@ export default function ArrangementView() {
           title="Increase waveform zoom"
           data-help-id="wf-zoom"
         >+</button>
+        <button
+          onClick={() => setDisplay({ waveformScale: display.waveformScale === 'db' ? 'linear' : 'db' })}
+          style={{ ...toolBtn, fontSize: 8.5, fontWeight: 700, padding: '2px 5px', color: display.waveformScale === 'db' ? 'var(--accent)' : undefined }}
+          title={display.waveformScale === 'db' ? 'Waveforms on a dB scale — the quiet parts show. Click for linear.' : 'Waveforms linear. Click for a dB scale that shows the quiet parts.'}
+          aria-pressed={display.waveformScale === 'db'}
+          data-help-id="wf-scale"
+        >{display.waveformScale === 'db' ? 'dB' : '×'}</button>
         <div style={{ width: 1, height: 16, background: 'var(--border)', marginLeft: 4 }} />
         {/* Ripple edit toggle */}
         <button
@@ -1827,6 +1887,16 @@ export default function ArrangementView() {
         <VersionHistory />
       </div>
       )}
+
+      {/* Overview strip — the whole song, with a box over what is on screen */}
+      {display.overview && !isMobile && (
+        <ArrangementOverview beatW={beatW} scrollLeft={scrollLeft} viewWidth={viewWidth} hdrW={hdrW}
+          minScroll={MIN_SCROLL} minBeatW={MIN_BEAT_W} maxBeatW={MAX_BEAT_W}
+          onScroll={s => { pauseFollow(); setScrollLeft(s) }}
+          onZoom={(w, s) => { pauseFollow(); setBeatW(w); setScrollLeft(s) }}
+          onFit={fitToWindow} />
+      )}
+      <FollowPlayhead mode={display.follow} beatW={beatW} scrollLeft={scrollLeft} viewWidth={viewWidth} minScroll={MIN_SCROLL} pauseNonce={followPause} onScroll={setScrollLeft} />
 
       {/* Ruler row */}
       <div style={{ display: 'flex', flexShrink: 0 }} onWheel={handleWheel}>

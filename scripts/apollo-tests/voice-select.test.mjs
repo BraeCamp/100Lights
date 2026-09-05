@@ -186,7 +186,7 @@ const ofType = (p, type) => (p.actions ?? []).filter(a => a.type === type)
 // ── The assistant is told the same ─────────────────────────────────────────
 {
   const tools = readFileSync('lib/voice/music-tools.ts', 'utf8')
-  check('select takes "clips" and an address', /enum: \['all', 'none', 'track', 'loop', 'clips'\]/.test(tools) && /const ADDRESS = \{/.test(tools))
+  check('select takes "clips" and an address', /enum: \['all', 'none', 'track', 'loop', 'clips', 'notes'\]/.test(tools) && /const ADDRESS = \{/.test(tools))
   check('remove_clip takes the address', /name: 'remove_clip'[\s\S]*?properties: \{ target: TARGET, \.\.\.ADDRESS \}/.test(tools))
   for (const name of ['set_colour', 'set_clip_audio', 'move_track']) check(`the ${name} tool exists`, new RegExp(`name: '${name}'`).test(tools))
 }

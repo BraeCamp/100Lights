@@ -1,14 +1,20 @@
 'use client'
 
+import { PcmRecorder } from './pcm-recorder'
 import { midiToNoteName } from './scale-constants'
 import { rngFor } from '@/lib/seeded-random'
-import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams, PolyInstrumentParams, ApolloInstrumentParams, RollFx, TrackInstrument } from './daw-types'
+import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, Modulator, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams, PolyInstrumentParams, ApolloInstrumentParams, RollFx, TrackInstrument } from './daw-types'
 import { isAudioClip, isMidiClip, POLY_PRESETS } from './daw-types'
 import { tempoSegments, tempoAt, beatsAtEvenSeconds, beatToSeconds as mapBeatToSeconds, secondsToBeat as mapSecondsToBeat, meterSegments, nearestBarBeat, type TempoSegment, type MeterSegment } from './tempo-map'
 import { resolveNoteFx, fxHasAudibleField, fxHasPitchMod, FX_FIELD_BY_KEY, fieldIsSet } from './roll-fx'
 import { resolveArtic, ARTIC_GAP_BEATS, LEGATO_ONSET_SKIP, type ClipArtic } from './articulation'
 import { barParamValue, activeBarFields } from './effect-bar'
 import { ensurePolySample } from './poly-sample-cache'
+import { evaluateModulators, type ModReadout, type ParamRange } from './daw-modulation'
+import { automatableParams } from './daw-effect-params'
+import { compensationDelays } from './latency'
+import { crossfadeGain } from './crossfader'
+import { rollNote, groupWinners, winnerFor, clipHasExpression } from './note-chance'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { buildHeliosFxChain, buildHeliosMasterBus, type HeliosChain } from './apollo/daw-fx'
 import { apolloPatchFor, newApolloResolveCache } from './apollo/resolve-apollo'
@@ -23,6 +29,11 @@ import { playInstrumentNote, preloadDrumInstrument, type DrumVoiceHandle } from 
 import { CLIP_EFFECT_PARAM_META, sampleAutomation, sampleAutomationAt, normToParam } from './clip-effect-utils'
 import { encodeWav } from './wav-codec'
 import { wsola, extractTrimmed, pitchShiftBuffer } from './wsola'
+import { validMarkers, markersKey, warpStraight, beatToSec } from './warp'
+import { renderWarped } from './warp-render'
+import { DEFAULT_BEATS, DEFAULT_TONES, DEFAULT_TEXTURE, type WarpModeName } from './warp-modes'
+import { onPress, onRelease, repeats, repeatBeats, velocityGain, legatoOffset } from './launch'
+import { detectOnsets, monoOf } from './onsets'
 import { libraryGetByFolder, libraryGetById } from './sound-library'
 import { libraryFulfill, renderPresetAtPitch } from './default-samples'
 import { resampleBySemitones } from './audio-resample'
@@ -53,6 +64,7 @@ interface TrackNodes {
   effectsInput: GainNode    // sources connect here
   midiInput: GainNode       // MIDI voices connect here → effectsInput; swapped on stop so ringing notes cut off
   effectsOutput: GainNode   // routes into panner
+  compDelay: DelayNode      // delay compensation: (slowest track − this track), see _updateDelayCompensation
   sendGains: Map<string, GainNode>     // returnTrackId → send gain (post-fader tap from analyser)
   preSendGains: Map<string, GainNode>  // returnTrackId → send gain (pre-fader tap from effectsOutput)
   sendModes: Map<string, 'pre' | 'post'>
@@ -82,6 +94,9 @@ interface SessionSlot {
   source: AudioBufferSourceNode | null
   gainNode: GainNode | null
   startContextTime: number
+  /** Seconds into the trimmed sample where this launch began reading. Zero
+   *  normally; on a legato launch, wherever the outgoing clip had got to. */
+  startOffset: number
   launchBeat: number
   loopCount: number
 }
@@ -180,6 +195,21 @@ export function audioLatencyHint(): LatencyChoice {
   return 'interactive'
 }
 
+/**
+ * The clip as it PLAYS: without its deactivated notes (Live's 0, lib/note-ops.ts).
+ * The scheduler's own path filters them in _processedNotes; this is for the
+ * paths that hand the clip on whole — the Apollo combine render and its stamp.
+ * Memoised on the clip object (the reducer never mutates one), so the notes
+ * array keeps its identity and lib/apollo/clip-stamp.ts's memo still hits.
+ */
+const playableClips = new WeakMap<MidiClip, MidiClip>()
+function playableClip(clip: MidiClip): MidiClip {
+  if (!clip.notes.some(n => n.active === false)) return clip
+  let v = playableClips.get(clip)
+  if (!v) { v = { ...clip, notes: clip.notes.filter(n => n.active !== false) }; playableClips.set(clip, v) }
+  return v
+}
+
 export class DawEngine extends EventTarget {
   ctx: AudioContext
   masterGain: GainNode
@@ -236,6 +266,8 @@ export class DawEngine extends EventTarget {
   varispeedRate = 1.0
   bufferCache = new Map<string, AudioBuffer>()
   private stretchedBufferCache = new Map<string, AudioBuffer>()
+  /** Detected transients per clip buffer — Beats mode cuts at them (lib/warp-modes.ts). */
+  private _transientCache = new Map<string, { len: number; t: number[] }>()
   private pitchShiftCache      = new Map<string, AudioBuffer>()
   private boomerangCache       = new Map<string, AudioBuffer>()
 
@@ -248,7 +280,13 @@ export class DawEngine extends EventTarget {
   // quantized against transport beats through the tempo map. A track with an
   // active session slot is "taken over": its arrangement content is suppressed
   // until backToArrangement() (or transport stop) releases it.
-  private _sessionQueue      = new Map<string, { clip: AudioClip; launchBeat: number; launchCtxTime: number }>()
+  private _sessionQueue      = new Map<string, { clip: AudioClip; launchBeat: number; launchCtxTime: number; velocity?: number }>()
+  /**
+   * Slots being HELD (lib/launch.ts): Gate stops when the hand lets go, and
+   * Repeat starts the clip again every launch-quantization step until it does.
+   * Keyed by track, since a track plays one slot at a time.
+   */
+  private _sessionHeld = new Map<string, { clipId: string; kind: 'audio' | 'midi' }>()
   private _sessionMidiQueue  = new Map<string, { clip: MidiClip; launchBeat: number; launchCtxTime: number }>()
   private _sessionStopQueue  = new Map<string, { stopBeat: number; stopCtxTime: number }>()
   private _sessionSlots      = new Map<string, SessionSlot>()
@@ -374,6 +412,11 @@ export class DawEngine extends EventTarget {
   private _midiClips: MidiClip[] = []
   private _tracks: DawTrack[] = []
   private _automationLanes: AutomationLane[] = []
+  // The modulation bus (lib/daw-modulation.ts): LFOs on tracks, evaluated
+  // every tick beside the lanes and pushed through the same _applyAutomation.
+  private _modulators: Modulator[] = []
+  private _modReadout = new Map<string, ModReadout>()
+  private _modTouched = new Set<string>()
   private _clipEffects: ClipEffect[] = []
   private _irCache = new Map<number, AudioBuffer>()
 
@@ -563,7 +606,9 @@ export class DawEngine extends EventTarget {
   private _processedNotes(clip: MidiClip, track: DawTrack): MidiNote[] {
     const hit = this._midiFxCache.get(clip.id)
     if (hit) return hit
-    const out = this._applyMidiEffects(clip.notes, track.midiEffects ?? [])
+    // A deactivated note (Live's 0, `active: false`) is kept on the roll and
+    // never scheduled — lib/note-ops.ts.
+    const out = this._applyMidiEffects(clip.notes.filter(n => n.active !== false), track.midiEffects ?? [])
     this._midiFxCache.set(clip.id, out)
     return out
   }
@@ -639,7 +684,12 @@ export class DawEngine extends EventTarget {
       const eqHi = this.ctx.createBiquadFilter()
       eqHi.type = 'highshelf'; eqHi.frequency.value = 8000; eqHi.gain.value = 0
 
-      effectsOutput.connect(eqSub)
+      // Delay compensation sits right after the chain: the whole mixer path
+      // (tone EQ, fader, pan, sends) is then in the aligned time.
+      const compDelay = this.ctx.createDelay(2)
+      compDelay.delayTime.value = 0
+      effectsOutput.connect(compDelay)
+      compDelay.connect(eqSub)
       eqSub.connect(eqLow)
       eqLow.connect(eqMid)
       eqMid.connect(eqHi)
@@ -664,7 +714,7 @@ export class DawEngine extends EventTarget {
         sendModes.set(returnId, 'post')
       }
 
-      this.trackNodes.set(id, { gain, panner, analyser, effectsInput, midiInput, effectsOutput, sendGains, preSendGains, sendModes, mainDest: this.masterGain })
+      this.trackNodes.set(id, { gain, panner, analyser, effectsInput, midiInput, effectsOutput, compDelay, sendGains, preSendGains, sendModes, mainDest: this.masterGain })
 
       // High-res analyser for masking detection — separate from VU meter analyser
       const maskingAnalyser = this.ctx.createAnalyser()
@@ -733,6 +783,7 @@ export class DawEngine extends EventTarget {
       old?.dispose()
       this.effectsChains.delete(trackId)
       nodes.effectsInput.connect(nodes.effectsOutput)
+      this._updateDelayCompensation()
       return
     }
 
@@ -760,6 +811,7 @@ export class DawEngine extends EventTarget {
       nodes.effectsInput.connect(chain.input)
       chain.output.connect(nodes.effectsOutput)
       this._wireSidechains(trackId, effects)
+      this._updateDelayCompensation()
     }
     if (helios) void helios.ready.then(swap)
     else swap()
@@ -947,6 +999,11 @@ export class DawEngine extends EventTarget {
   // each collaborator can rebalance their own headphones without moving the
   // shared faders. Multiplied into every volume write below.
   private _localMix = new Map<string, number>()
+  // The crossfader's gain per track (lib/crossfader.ts): 1 for a track on
+  // neither side. Folded into the fader with the local mix, so a fader move
+  // from the UI keeps it.
+  private _xfGain = new Map<string, number>()
+  private _gainMult(id: string): number { return (this._localMix.get(id) ?? 1) * (this._xfGain.get(id) ?? 1) }
   private _baseVol  = new Map<string, number>()
 
   setLocalTrackGain(id: string, mult: number) {
@@ -963,7 +1020,7 @@ export class DawEngine extends EventTarget {
   setTrackVolume(id: string, volume: number) {
     this._baseVol.set(id, volume)
     const nodes = this.trackNodes.get(id)
-    if (nodes) nodes.gain.gain.setTargetAtTime(volume * (this._localMix.get(id) ?? 1), this.ctx.currentTime, 0.01)
+    if (nodes) nodes.gain.gain.setTargetAtTime(volume * this._gainMult(id), this.ctx.currentTime, 0.01)
   }
 
   /** Point a track's main output at a new destination (a group bus, or master),
@@ -1392,10 +1449,13 @@ export class DawEngine extends EventTarget {
     this.loopStart    = project.loopStart
     this.loopEnd      = project.loopEnd
     this.swing        = project.swing ?? 0
+    this._delayCompensation = project.delayCompensation !== false
     this._beatsPerBar = project.timeSignatureNum ?? 4
     this._meterSegs   = meterSegments(project)
-    this._clips       = project.arrangementClips.filter(isAudioClip)
-    this._midiClips   = project.arrangementClips.filter(isMidiClip)
+    // A deactivated clip (Live's Clip Activator, `active: false`) is parked:
+    // it is simply not in the lists the scheduler and the renderers read.
+    this._clips       = project.arrangementClips.filter(isAudioClip).filter(c => c.active !== false)
+    this._midiClips   = project.arrangementClips.filter(isMidiClip).filter(c => c.active !== false)
     // Notes may have changed — drop the cached occurrences/unison sets so they
     // rebuild from the new note data on the next tick. (Fires only on edits.)
     this._unisonCache.clear()
@@ -1523,6 +1583,7 @@ export class DawEngine extends EventTarget {
       for (const l of oscs) if (l.source === 'sample' && l.sampleId) void ensurePolySample(this.ctx, l.sampleId)
     }
     this._automationLanes = project.automationLanes ?? []
+    this._modulators      = project.modulators ?? []
     this._clipEffects     = project.clipEffects ?? []
     this.setMasterVolume(project.masterVolume)
 
@@ -1546,6 +1607,8 @@ export class DawEngine extends EventTarget {
       const groupNodes = group ? this.trackNodes.get(group.id) : undefined
       this._routeTrackOutput(t.id, groupNodes ? groupNodes.effectsInput : this.masterGain)
       const silenced = this._trackSilenced(t, group, anySoloed, project.tracks)
+      const xf = crossfadeGain(t.crossfader, project.crossfaderValue ?? 0.5)
+      if (Math.abs(xf - 1) < 1e-6) this._xfGain.delete(t.id); else this._xfGain.set(t.id, xf)
       this.setTrackVolume(t.id, silenced ? 0 : t.volume)
       this.setTrackPan(t.id, t.pan)
       this.setTrackTone(t.id, t.tone)
@@ -1565,6 +1628,62 @@ export class DawEngine extends EventTarget {
     for (const id of this.trackNodes.keys()) {
       if (!project.tracks.find(t => t.id === id)) this.removeTrack(id)
     }
+    this._updateDelayCompensation()
+  }
+
+  // ── Delay compensation ─────────────────────────────────────────────────────
+  //
+  // A track's latency is what its chain reports (a lookahead, an FFT block —
+  // EffectHandle.latencySamples) plus what its instrument's host reports
+  // (an out-of-process plug-in's ring, via reportTrackLatency). The slowest
+  // track sets the time; every other track's compDelay makes up the
+  // difference (lib/latency.ts), so all of them arrive together. Off, every
+  // compDelay is zero and tracks play as their devices deliver them.
+
+  private _delayCompensation = true
+  private _instrumentLatency = new Map<string, number>()
+  private _compDelays = new Map<string, number>()
+
+  /** Frames this track holds the signal for before it reaches the mixer. */
+  trackLatencySamples(trackId: string): number {
+    const chain = this.effectsChains.get(trackId) as { latencySamples?: () => number } | undefined
+    return (chain?.latencySamples?.() ?? 0) + (this._instrumentLatency.get(trackId) ?? 0)
+  }
+
+  /** Frames of compensation the track is currently getting. */
+  trackCompensationSamples(trackId: string): number {
+    return this._compDelays.get(trackId) ?? 0
+  }
+
+  /** What an instrument host knows about its own delay — a bridge plug-in's ring, say. */
+  reportTrackLatency(trackId: string, samples: number): void {
+    if (samples > 0) this._instrumentLatency.set(trackId, samples)
+    else this._instrumentLatency.delete(trackId)
+    this._updateDelayCompensation()
+  }
+
+  get delayCompensation(): boolean { return this._delayCompensation }
+
+  setDelayCompensation(on: boolean): void {
+    if (this._delayCompensation === on) return
+    this._delayCompensation = on
+    this._updateDelayCompensation()
+  }
+
+  private _updateDelayCompensation(): void {
+    const latencies = new Map<string, number>()
+    for (const id of this.trackNodes.keys()) latencies.set(id, this.trackLatencySamples(id))
+    const delays = compensationDelays(latencies, this._delayCompensation)
+    let changed = false
+    for (const [id, frames] of delays) {
+      if (this._compDelays.get(id) === frames) continue
+      changed = true
+      this._compDelays.set(id, frames)
+      const nodes = this.trackNodes.get(id)
+      if (nodes) nodes.compDelay.delayTime.value = Math.min(2, frames / this.ctx.sampleRate)
+    }
+    for (const id of [...this._compDelays.keys()]) if (!delays.has(id)) { this._compDelays.delete(id); changed = true }
+    if (changed) this.dispatchEvent(new CustomEvent('latency'))
   }
 
   // ── Session launch (quantized) ─────────────────────────────────────────────
@@ -1615,14 +1734,16 @@ export class DawEngine extends EventTarget {
     const now = this.ctx.currentTime
     for (const [trackId, queued] of this._sessionQueue.entries()) {
       if (now + SCHEDULE_LOOKAHEAD >= queued.launchCtxTime) {
-        this._launchSessionSlot(trackId, queued.clip, queued.launchCtxTime, queued.launchBeat)
+        this._launchSessionSlot(trackId, queued.clip, queued.launchCtxTime, queued.launchBeat, queued.velocity)
         this._sessionQueue.delete(trackId)
+        this._queueRepeat(trackId, queued.clip, queued.launchCtxTime, queued.launchBeat, queued.velocity)
       }
     }
     for (const [trackId, queued] of this._sessionMidiQueue.entries()) {
       if (now + SCHEDULE_LOOKAHEAD >= queued.launchCtxTime) {
         this._launchSessionMidiSlot(trackId, queued.clip, queued.launchCtxTime, queued.launchBeat)
         this._sessionMidiQueue.delete(trackId)
+        this._queueRepeatMidi(trackId, queued.clip, queued.launchCtxTime, queued.launchBeat)
       }
     }
     for (const [trackId, s] of this._sessionStopQueue.entries()) {
@@ -1633,10 +1754,37 @@ export class DawEngine extends EventTarget {
         this._sessionStopQueue.delete(trackId)
       }
     }
-    const hasActive = this._sessionQueue.size > 0 || this._sessionSlots.size > 0
+    // Held Repeat slots keep the ticker alive even between retriggers.
+    const hasActive = this._sessionHeld.size > 0 || this._sessionQueue.size > 0 || this._sessionSlots.size > 0
                    || this._sessionMidiQueue.size > 0 || this._sessionMidiSlots.size > 0
                    || this._sessionStopQueue.size > 0
     if (!hasActive) this._stopSessionTicker()
+  }
+
+  /**
+   * Repeat: a held slot starts again every launch-quantization step (a beat
+   * when it has none). Queueing the NEXT launch as this one fires keeps it on
+   * the same clock the first launch resolved to, so the stutter stays in time
+   * however long the finger stays down.
+   */
+  private _queueRepeat(trackId: string, clip: AudioClip, launchCtxTime: number, launchBeat: number, velocity?: number) {
+    if (!repeats(clip.launchMode) || !this.isSessionHeld(trackId, clip.id)) return
+    const beats = repeatBeats(clip.launchQuantization ?? this.launchQuantization, this._beatsPerBar)
+    this._sessionQueue.set(trackId, {
+      clip, velocity,
+      launchBeat: launchBeat + beats,
+      launchCtxTime: launchCtxTime + beats * (60 / (tempoAt(launchBeat, this._tempoSegs) || 120)),
+    })
+  }
+
+  private _queueRepeatMidi(trackId: string, clip: MidiClip, launchCtxTime: number, launchBeat: number) {
+    if (!repeats(clip.launchMode) || !this.isSessionHeld(trackId, clip.id)) return
+    const beats = repeatBeats(clip.launchQuantization ?? this.launchQuantization, this._beatsPerBar)
+    this._sessionMidiQueue.set(trackId, {
+      clip,
+      launchBeat: launchBeat + beats,
+      launchCtxTime: launchCtxTime + beats * (60 / (tempoAt(launchBeat, this._tempoSegs) || 120)),
+    })
   }
 
   // ── Session takeover (a playing slot suppresses the track's arrangement) ──
@@ -1727,15 +1875,21 @@ export class DawEngine extends EventTarget {
     return { queued, nextBeat, beatsRemaining: Math.max(0, nextBeat - this.currentBeat) }
   }
 
-  async queueSession(trackId: string, clip: AudioClip, quantOverride?: LaunchQuantization) {
+  async queueSession(trackId: string, clip: AudioClip, quantOverride?: LaunchQuantization, opts?: { velocity?: number }) {
+    if (clip.active === false) return   // a parked clip does not launch
     if (this.ctx.state === 'suspended') await this.ctx.resume()
 
-    // Toggle off if this clip is already playing
+    // What a press means depends on the clip's launch mode (lib/launch.ts).
+    // Toggle — the default, and what Beacon's slots have always done — stops a
+    // clip that is already playing; Trigger, Gate and Repeat start it again.
     const playing = this._sessionSlots.get(trackId)
-    if (playing && playing.clip.id === clip.id) {
+    if (onPress(clip.launchMode, !!playing && playing.clip.id === clip.id) === 'stop') {
       this._stopSessionTrack(trackId)
       return
     }
+    // Gate and Repeat answer the release too, so the hold is remembered.
+    if (onRelease(clip.launchMode) === 'stop') this._sessionHeld.set(trackId, { clipId: clip.id, kind: 'audio' })
+    else this._sessionHeld.delete(trackId)
 
     // Preload buffer BEFORE resolving the boundary — a slow decode must not
     // push the launch past its quantize point.
@@ -1745,12 +1899,35 @@ export class DawEngine extends EventTarget {
     this._announcePlayback()
 
     this._sessionStopQueue.delete(trackId)
-    this._sessionQueue.set(trackId, { clip, launchBeat, launchCtxTime })
+    this._sessionQueue.set(trackId, { clip, launchBeat, launchCtxTime, velocity: opts?.velocity })
     this._ensureSessionTicker()
 
     this.dispatchEvent(new CustomEvent('session-state', {
       detail: { trackId, clipId: clip.id, state: 'queued', launchBeat },
     }))
+  }
+
+  /**
+   * The hand let go of a slot. Gate stops there and then; Repeat stops after
+   * the retrigger it is inside. Every other mode ignores it, so a surface can
+   * call this on every pointer-up without knowing the mode.
+   */
+  releaseSession(trackId: string, clipId?: string) {
+    const held = this._sessionHeld.get(trackId)
+    if (!held || (clipId && held.clipId !== clipId)) return
+    this._sessionHeld.delete(trackId)
+    if (held.kind === 'midi') this._stopSessionMidiTrack(trackId)
+    else this._stopSessionTrack(trackId)
+  }
+
+  /** Seconds into the sample where the playing slot began reading — 0 unless it was launched legato. */
+  getSessionStartOffset(trackId: string): number {
+    return this._sessionSlots.get(trackId)?.startOffset ?? 0
+  }
+
+  /** Is this slot being held down? (Repeat keeps firing while it is.) */
+  isSessionHeld(trackId: string, clipId: string): boolean {
+    return this._sessionHeld.get(trackId)?.clipId === clipId
   }
 
   stopSessionTrack(trackId: string, opts?: { quantized?: boolean }) {
@@ -1790,7 +1967,7 @@ export class DawEngine extends EventTarget {
     // semantics) until backToArrangement() or transport stop.
   }
 
-  private _launchSessionSlot(trackId: string, clip: AudioClip, launchCtxTime: number, launchBeat: number) {
+  private _launchSessionSlot(trackId: string, clip: AudioClip, launchCtxTime: number, launchBeat: number, velocity?: number) {
     const buf = this.bufferCache.get(clip.id)
     if (!buf) return
 
@@ -1799,8 +1976,11 @@ export class DawEngine extends EventTarget {
     this._takeOverTrack(trackId, launchCtxTime)
     this._captureLaunch(trackId, clip, launchBeat)
 
-    // Stop any currently playing slot
+    // Stop any currently playing slot — but read how far it had got first: a
+    // legato launch starts the new clip THERE instead of at its own beginning
+    // (lib/launch.ts), and in a moment there will be nothing left to ask.
     const existing = this._sessionSlots.get(trackId)
+    const outgoingPlayed = existing ? Math.max(0, this.ctx.currentTime - existing.startContextTime) : 0
     if (existing) {
       try { existing.source?.stop() } catch { /* ok */ }
       existing.source?.disconnect()
@@ -1815,23 +1995,27 @@ export class DawEngine extends EventTarget {
       source.loopStart = clip.trimStart
       source.loopEnd   = buf.duration - clip.trimEnd
     }
-    gainNode.gain.value = clip.gain
+    // Velocity Amount: how much the press's velocity reaches the level (lib/launch.ts).
+    gainNode.gain.value = clip.gain * velocityGain(clip.velocityAmount, velocity)
     source.connect(gainNode)
     gainNode.connect(nodes.effectsInput)
 
     const contextNow = this.ctx.currentTime
     const duration   = buf.duration - clip.trimStart - clip.trimEnd
     // If we're past the launch time (scheduled ahead), offset into the clip so the
-    // first loop boundary stays aligned with the session clock
+    // first loop boundary stays aligned with the session clock — plus, on a
+    // legato launch, wherever the outgoing clip had reached.
     const elapsed = Math.max(0, contextNow - launchCtxTime)
-    const offset  = clip.trimStart + (elapsed % duration)
+    const into    = ((clip.legatoLaunch ? legatoOffset(outgoingPlayed, duration) : 0) + (elapsed % duration)) % duration
+    const offset  = clip.trimStart + into
     const startAt = Math.max(contextNow, launchCtxTime)
 
-    source.start(startAt, offset, clip.loopEnabled ? undefined : duration - (elapsed % duration))
+    source.start(startAt, offset, clip.loopEnabled ? undefined : duration - into)
 
     const slot: SessionSlot = {
       clip, source, gainNode,
       startContextTime: startAt,
+      startOffset: into,
       launchBeat,
       loopCount: 0,
     }
@@ -1917,13 +2101,18 @@ export class DawEngine extends EventTarget {
   }
 
   async queueSessionMidi(trackId: string, clip: MidiClip, quantOverride?: LaunchQuantization) {
+    if (clip.active === false) return   // a parked clip does not launch
     if (this.ctx.state === 'suspended') await this.ctx.resume()
 
+    // The launch mode decides what a press means (lib/launch.ts), the same way
+    // it does for audio slots.
     const playing = this._sessionMidiSlots.get(trackId)
-    if (playing && playing.clip.id === clip.id) {
+    if (onPress(clip.launchMode, !!playing && playing.clip.id === clip.id) === 'stop') {
       this._stopSessionMidiTrack(trackId)
       return
     }
+    if (onRelease(clip.launchMode) === 'stop') this._sessionHeld.set(trackId, { clipId: clip.id, kind: 'midi' })
+    else this._sessionHeld.delete(trackId)
 
     const { launchBeat, launchCtxTime } = await this._resolveLaunch(quantOverride)
     this._announcePlayback()
@@ -1968,7 +2157,7 @@ export class DawEngine extends EventTarget {
     this._captureLaunch(trackId, clip, launchBeat)
 
     const clipDurBeats = clip.durationBeats || 4
-    const processedNotes = this._applyMidiEffects(clip.notes, track.midiEffects ?? [])
+    const processedNotes = this._applyMidiEffects(clip.notes.filter(n => n.active !== false), track.midiEffects ?? [])
 
     // Beat-based iteration scheduling: each loop pass lands on the transport's
     // beat grid THROUGH the tempo map, so session MIDI stays locked across
@@ -1976,7 +2165,13 @@ export class DawEngine extends EventTarget {
     const scheduleLoop = (iterationStartBeat: number) => {
       const nowBeat = this.currentBeat
       const ctxNow  = this.ctx.currentTime
-      for (const note of processedNotes) {
+      // Chance, deviation and Play One groups, per pass (lib/note-chance.ts).
+      const passKey = `${clip.id}:s${iterationStartBeat}`
+      const winners = groupWinners(clip, passKey)
+      for (const baseNote of processedNotes) {
+        const rolled = rollNote(baseNote, `${passKey}:${baseNote.id}`, winnerFor(baseNote, winners))
+        if (!rolled.fires) continue
+        const note = rolled.note
         const rfx = this._resolveNoteFx(clip, note)
         const sustainSec = rfx.sustain ?? 0
         const noteAbsBeat = iterationStartBeat + this._applySwing(note.startBeat)
@@ -2110,10 +2305,13 @@ export class DawEngine extends EventTarget {
     const playing     = this._sessionSlots.get(trackId)
     const midiQueued  = this._sessionMidiQueue.get(trackId)
     const midiPlaying = this._sessionMidiSlots.get(trackId)
-    if (queued?.clip.id      === clipId) return 'queued'
+    // ⚠️ Playing beats queued for the SAME clip. A Repeat slot queues its next
+    // retrigger the instant the current one fires (lib/launch.ts), so a held
+    // pad was permanently "queued" — blinking, never lit — while it sounded.
     if (playing?.clip.id     === clipId) return 'playing'
-    if (midiQueued?.clip.id  === clipId) return 'queued'
     if (midiPlaying?.clip.id === clipId) return 'playing'
+    if (queued?.clip.id      === clipId) return 'queued'
+    if (midiQueued?.clip.id  === clipId) return 'queued'
     return 'idle'
   }
 
@@ -2134,8 +2332,14 @@ export class DawEngine extends EventTarget {
     if (slot) {
       const buf = this.bufferCache.get(slot.clip.id)
       if (!buf) return 0
-      const elapsed  = this.ctx.currentTime - slot.startContextTime
+      // ⚠️ Where the AUDIO is, not how long the slot has been running: a
+      // legato launch starts partway into the sample, and a bar that ignored
+      // that would say "just started" while the middle of the clip played.
+      const elapsed  = this.ctx.currentTime - slot.startContextTime + slot.startOffset
       const duration = buf.duration - slot.clip.trimStart - slot.clip.trimEnd
+      // A slot scheduled a moment ahead has not started yet: that is the top of
+      // the clip, never a negative bar.
+      if (elapsed <= 0) return 0
       if (slot.clip.loopEnabled) return (elapsed % duration) / duration
       return Math.min(1, elapsed / duration)
     }
@@ -2328,7 +2532,8 @@ export class DawEngine extends EventTarget {
       .map(x => ({
         trackId: x.trackId,
         patch: x.inst.params as unknown as ApolloPatch,
-        clips: this._midiClips.filter(c => c.trackId === x.trackId && c.notes.length > 0),
+        // Without the deactivated notes — the render is made from these.
+        clips: this._midiClips.filter(c => c.trackId === x.trackId && c.notes.length > 0).map(playableClip).filter(c => c.notes.length > 0),
       }))
       .filter(g => g.clips.length > 0)
   }
@@ -2378,12 +2583,19 @@ export class DawEngine extends EventTarget {
     if (this._renderNow != null) return false
     const inst = this._resolveInstrument(track)
     if (inst?.type !== 'apollo') return false
+    // A combined buffer is rendered from the clip's notes directly, so the
+    // deactivated ones (lib/note-ops.ts) have to be out of the clip it sees —
+    // and out of its stamp, or the old render would keep playing them.
+    clip = playableClip(clip)
     // Already playing live in this pass — leave it alone until the transport
     // restarts, or the buffer doubles what is already sounding.
     if (this._liveScheduledClips.has(clip.id)) return false
     // Drawn groove and volume curves are applied per note, so a combined render
     // would silently lose them. Those clips keep playing live.
     if (clip.groove?.length || clip.volGraph?.length) return false
+    // Chance, velocity deviation and probability groups roll on every pass
+    // (lib/note-chance.ts); a buffer rendered once would freeze one roll.
+    if (clipHasExpression(clip)) return false
 
     const patch = inst.params as unknown as ApolloPatch
     const stamp = combinedStamp(clip, patch, this.tempo)
@@ -2654,9 +2866,21 @@ export class DawEngine extends EventTarget {
       const occurrences = uCached.occurrences
       const unisonSkip = uCached.unisonSkip
 
-      for (const { note, relBeat, key: noteKey, maxDur, connFrom } of occurrences) {
+      // Play One groups pick their winner once per pass (a pass = one
+      // repetition of a looped pattern; a plain clip has one).
+      const winnersByPass = new Map<string, Map<string, string | null>>()
+      for (const occ of occurrences) {
+        const { relBeat, key: noteKey, maxDur, connFrom } = occ
         if (this._scheduledNoteKeys.has(noteKey)) continue
         if (unisonSkip.has(noteKey)) { this._scheduledNoteKeys.add(noteKey); continue }
+        // Chance, deviation and probability groups (lib/note-chance.ts), seeded
+        // per clip · pass · note so a render is deterministic.
+        const passKey = `${clip.id}:${loopLen ? Math.floor(relBeat / loopLen) : 0}`
+        let winners = winnersByPass.get(passKey)
+        if (!winners) { winners = groupWinners(clip, passKey); winnersByPass.set(passKey, winners) }
+        const rolled = rollNote(occ.note, `${passKey}:${occ.note.id}`, winnerFor(occ.note, winners))
+        if (!rolled.fires) { this._scheduledNoteKeys.add(noteKey); continue }
+        const note = rolled.note
 
         const grooveOff = grooveLut ? (grooveLut[Math.min(63, Math.max(0, Math.floor(((relBeat % barBeats) / barBeats) * 64)))] - 0.5) * 2 * 0.06 : 0
         const noteAbsBeat = clip.startBeat + this._applySwing(relBeat) + grooveOff
@@ -2971,6 +3195,9 @@ export class DawEngine extends EventTarget {
     }
 
     // ── Automation ───────────────────────────────────────────────────────
+    // What each lane wrote this tick, so a modulator on the same parameter
+    // swings around the lane's value rather than fighting it.
+    const laneValues = new Map<string, number>()
     for (const lane of this._automationLanes) {
       if (lane.points.length === 0) continue
       // An overridden lane keeps its curve but stops driving the parameter —
@@ -2983,10 +3210,85 @@ export class DawEngine extends EventTarget {
       const value = lane.curve === 'log' && lane.min > 0
         ? lane.min * Math.pow(lane.max / lane.min, Math.min(1, Math.max(0, norm)))
         : lane.min + norm * (lane.max - lane.min)
+      laneValues.set(`${lane.trackId}|${lane.parameter}`, value)
       this._applyAutomation(lane.trackId, lane.parameter, value)
     }
 
+    // ── Modulation ───────────────────────────────────────────────────────
+    // Song seconds, not context seconds, so a Hz-rate LFO lands on the same
+    // samples live and in an offline render.
+    this._runModBus(now, this._spanSeconds(0, now), laneValues)
+
     this.dispatchEvent(new CustomEvent('tick', { detail: { beat: now } }))
+  }
+
+  /**
+   * The modulation bus: every enabled LFO route gets its value for this tick
+   * and is pushed like a lane. A parameter that was modulated last tick and is
+   * not any more goes back to its base, so removing an LFO does not leave the
+   * cutoff wherever the wave happened to be.
+   *
+   * ⚠️ 25 ms tick: fine for sweeps and tremolo up to a few hertz, audibly
+   * stepped above ~8 Hz. Audio-rate LFOs wait for AudioParam exposure.
+   */
+  private _runModBus(beat: number, seconds: number, laneValues: Map<string, number>) {
+    const touched = new Set<string>()
+    if (this._modulators.length) {
+      const readouts = evaluateModulators(this._modulators, { beat, seconds },
+        (trackId, parameter) => laneValues.get(`${trackId}|${parameter}`) ?? this._paramBase(trackId, parameter),
+        (trackId, parameter) => this._paramRange(trackId, parameter))
+      for (const r of readouts) {
+        const key = `${r.trackId}|${r.parameter}`
+        touched.add(key)
+        this._modReadout.set(key, r)
+        this._applyAutomation(r.trackId, r.parameter, r.value)
+      }
+    }
+    for (const key of this._modTouched) {
+      if (touched.has(key)) continue
+      const r = this._modReadout.get(key)
+      this._modReadout.delete(key)
+      if (r && !laneValues.has(key)) this._applyAutomation(r.trackId, r.parameter, r.base)
+    }
+    this._modTouched = touched
+  }
+
+  /** The parameter's value without modulation — the project's own number. */
+  private _paramBase(trackId: string, parameter: string): number | null {
+    const track = this._tracks.find(t => t.id === trackId)
+    if (!track) return null
+    if (parameter === 'volume') return track.volume
+    if (parameter === 'pan') return track.pan ?? 0
+    if (parameter.startsWith('fx:')) {
+      const [, effectId, key] = parameter.split(':')
+      const fx = track.effects?.find(e => e.id === effectId)
+      const v = (fx?.params as Record<string, unknown> | undefined)?.[key]
+      return typeof v === 'number' ? v : null
+    }
+    return null
+  }
+
+  private _paramRange(trackId: string, parameter: string): ParamRange | null {
+    if (parameter === 'volume') return { min: 0, max: 1 }
+    if (parameter === 'pan') return { min: -1, max: 1 }
+    if (parameter.startsWith('fx:')) {
+      const [, effectId, key] = parameter.split(':')
+      const fx = this._tracks.find(t => t.id === trackId)?.effects?.find(e => e.id === effectId)
+      if (!fx) return null
+      const p = automatableParams(fx).find(x => x.key === key)
+      return p ? { min: p.min, max: p.max, curve: p.curve } : null
+    }
+    return null
+  }
+
+  /** What the bus last pushed to a parameter, for a ring or a readout to draw. */
+  modulatedValue(trackId: string, parameter: string): ModReadout | null {
+    return this._modReadout.get(`${trackId}|${parameter}`) ?? null
+  }
+
+  /** Every parameter the bus is driving right now. */
+  modReadouts(): ModReadout[] {
+    return [...this._modReadout.values()]
   }
 
   /** Push a plugin parameter straight to the running worklet, so turning a
@@ -3005,7 +3307,7 @@ export class DawEngine extends EventTarget {
 
     if (parameter === 'volume') {
       this._baseVol.set(trackId, value)
-      nodes.gain.gain.setTargetAtTime(value * (this._localMix.get(trackId) ?? 1), t, 0.01)
+      nodes.gain.gain.setTargetAtTime(value * this._gainMult(trackId), t, 0.01)
       return
     }
     if (parameter === 'pan') {
@@ -3208,7 +3510,63 @@ export class DawEngine extends EventTarget {
       boomerangActive = true
     }
 
-    if (clip.warpEnabled && !clip.reverse) {
+    // The warp mode (lib/warp-modes.ts). Re-Pitch and Complex without markers
+    // keep their direct paths below; every other case — markers, or Beats /
+    // Tones / Texture — renders through the map, straight when there are no
+    // markers.
+    const warpModeName = (clip.warpMode ?? 'repitch') as WarpModeName
+    const warpMarkers = clip.warpEnabled && !clip.reverse
+      ? (validMarkers(clip.warpMarkers) ?? (warpModeName === 'beats' || warpModeName === 'tones' || warpModeName === 'texture'
+          ? validMarkers(warpStraight(clip.trimStart, buf.duration - clip.trimEnd, clip.durationBeats)) : null))
+      : null
+    if (warpMarkers) {
+      // Warp markers (lib/warp.ts): the sample rendered through its map ONCE
+      // (lib/warp-render.ts), span by span into the wall seconds each span's
+      // beats take through the tempo map, then played like any other buffer —
+      // the fades, the drawn effects and the seek arithmetic below stay as
+      // they are. Cached on the markers, the mode, its parameters and the wall
+      // times, so a tempo change or a moved marker re-renders and nothing else does.
+      const mode = warpModeName
+      const wall = (b0: number, b1: number) => this._spanSeconds(clip.startBeat + b0, clip.startBeat + b1)
+      const beatsP = { ...DEFAULT_BEATS, ...(clip.warpBeats ?? {}) }
+      const tonesP = { ...DEFAULT_TONES, ...(clip.warpTones ?? {}) }
+      const textureP = { ...DEFAULT_TEXTURE, ...(clip.warpTexture ?? {}) }
+      // Beats cuts: the transients (detected once per buffer, plus any placed by hand), or grid divisions through the map.
+      let cutsSec: number[] = []
+      if (mode === 'beats') {
+        if (beatsP.preserve === 'transients') {
+          const cached = this._transientCache.get(clip.id)
+          const detected = cached && cached.len === buf.length ? cached.t : detectOnsets(monoOf(buf), buf.sampleRate, { minGapMs: 40 }).map(o => o.t)
+          if (!cached || cached.len !== buf.length) this._transientCache.set(clip.id, { len: buf.length, t: detected })
+          cutsSec = [...new Set([...detected, ...(clip.transients ?? [])])]
+        } else {
+          const g = beatsP.preserve
+          for (let b = g; b < clip.durationBeats - 1e-6; b += g) cutsSec.push(beatToSec(warpMarkers, b))
+        }
+      }
+      const paramsKey = mode === 'beats' ? `${String(beatsP.preserve)}:${beatsP.loop}:${beatsP.envelope}:${cutsSec.length}` : mode === 'tones' ? `${tonesP.grainMs}` : mode === 'texture' ? `${textureP.grainMs}:${textureP.flux}` : ''
+      const cacheKey = `${clip.id}:warp:${mode}:${paramsKey}:${markersKey(warpMarkers)}:${clip.durationBeats.toFixed(4)}:${clipDuration.toFixed(4)}`
+      let warped = this.stretchedBufferCache.get(cacheKey)
+      if (!warped) {
+        warped = renderWarped(buf, {
+          markers: warpMarkers, clipBeats: clip.durationBeats, wallSeconds: wall, mode,
+          makeBuffer: (ch, n, sr) => this.ctx.createBuffer(ch, n, sr),
+          // ⚠️ wsola's factor SCALES THE LENGTH (0.5 halves it); the renderer's
+          // factor is source over target (0.5 = twice as long). Invert.
+          stretch: (b, f) => wsola(b as AudioBuffer, 1 / f, mode === 'tones' ? tonesP.grainMs : 40),
+          beats: { cutsSec, params: beatsP },
+          texture: { params: textureP, seed: clip.id },
+        }) as AudioBuffer
+        this.stretchedBufferCache.set(cacheKey, warped)
+      }
+      playBuf        = warped
+      playTrimStart  = 0
+      playTrimEnd    = 0
+      const seekOff  = Math.min(alreadyPlayed, warped.duration)
+      effectiveDuration = Math.max(0, warped.duration - seekOff)
+      source.buffer = playBuf
+      source.start(startAt, seekOff, effectiveDuration)
+    } else if (clip.warpEnabled && !clip.reverse) {
       const nativeDur = buf.duration - clip.trimStart - clip.trimEnd
       const stretchFactor = nativeDur > 0 && clipDuration > 0 ? nativeDur / clipDuration : 1
 
@@ -3218,7 +3576,11 @@ export class DawEngine extends EventTarget {
         let stretched = this.stretchedBufferCache.get(cacheKey)
         if (!stretched) {
           const trimmed = extractTrimmed(buf, clip.trimStart, clip.trimEnd)
-          stretched = wsola(trimmed, stretchFactor)
+          // ⚠️ wsola's factor scales the LENGTH: a 2 s sample in a 4 s clip
+          // (stretchFactor 0.5, the playback rate) needs the output twice as
+          // long — factor 2. This passed the rate and made every Complex clip
+          // the wrong length in the other direction.
+          stretched = wsola(trimmed, 1 / stretchFactor)
           this.stretchedBufferCache.set(cacheKey, stretched)
         }
         playBuf        = stretched
@@ -3351,19 +3713,26 @@ export class DawEngine extends EventTarget {
     // there too, or the first samples play into a partially-raised gain and the
     // transient loses a random few dB (audible on one-shots at the playhead).
     const rampAt = Math.max(startAt, fadeGain.context.currentTime)
+    // Live's clip Fade switch (lib/sample-editor.ts): 4 ms at each edge so a
+    // cut never clicks — longer than the anti-click ramp, shorter than any
+    // fade a person would draw.
+    const edgeFade = clip.clipFade ? 0.004 : 0
     if (clip.fadeIn > 0) {
       const fs = this._spanSeconds(clip.startBeat, clip.startBeat + clip.fadeIn)
       fadeGain.gain.setValueAtTime(0, rampAt)
-      fadeGain.gain.linearRampToValueAtTime(clip.gain, rampAt + Math.max(fs, ANTI_CLICK_S))
+      fadeGain.gain.linearRampToValueAtTime(clip.gain, rampAt + Math.max(fs, ANTI_CLICK_S, edgeFade))
     } else {
       fadeGain.gain.setValueAtTime(0, rampAt)
-      fadeGain.gain.linearRampToValueAtTime(clip.gain, rampAt + ANTI_CLICK_S)
+      fadeGain.gain.linearRampToValueAtTime(clip.gain, rampAt + Math.max(ANTI_CLICK_S, edgeFade))
     }
     if (clip.fadeOut > 0 && effectiveDuration > 0) {
       const clipEndB  = clip.startBeat + clip.durationBeats
       const fs        = this._spanSeconds(clipEndB - clip.fadeOut, clipEndB)
       const fadeStart = Math.max(startAt, startAt + effectiveDuration - fs)
       fadeGain.gain.setValueAtTime(clip.gain, fadeStart)
+      fadeGain.gain.linearRampToValueAtTime(0, startAt + effectiveDuration)
+    } else if (edgeFade > 0 && effectiveDuration > edgeFade * 2) {
+      fadeGain.gain.setValueAtTime(clip.gain, startAt + effectiveDuration - edgeFade)
       fadeGain.gain.linearRampToValueAtTime(0, startAt + effectiveDuration)
     }
 
@@ -4653,9 +5022,10 @@ export class DawEngine extends EventTarget {
 
   // ── Recording ─────────────────────────────────────────────────────────────
 
-  private _mediaRecorder: MediaRecorder | null = null
-  private _recChunks:   Blob[]                 = []
-  private _captureNode: MediaStreamAudioDestinationNode | null = null
+  // The take: float32 straight off the master bus, written as a 32-bit
+  // float WAV (lib/pcm-recorder.ts). MediaRecorder / Opus is kept for the jam
+  // buffer only — a take has to be sample-exact and lossless.
+  private _take: PcmRecorder | null = null
   private _recStartBeat = 0
   private _micStreams = new Map<string, { stream: MediaStream; source: MediaStreamAudioSourceNode }>()
 
@@ -4793,20 +5163,13 @@ export class DawEngine extends EventTarget {
   }
 
   async startRecording(): Promise<void> {
-    if (this._mediaRecorder || this.isRecording) return
+    if (this._take || this.isRecording) return
     if (this.ctx.state === 'suspended') await this.ctx.resume()
     // Tap the master bus — captures everything the engine plays,
     // including any mic inputs already routed through track effects chains.
-    this._captureNode  = this.ctx.createMediaStreamDestination()
-    this.masterBusOut.connect(this._captureNode)
-    this._recChunks    = []
     this._recStartBeat = this.currentBeat
-    const preferredMimes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4']
-    const mime = preferredMimes.find(m => MediaRecorder.isTypeSupported(m)) ?? ''
-    this._mediaRecorder = new MediaRecorder(this._captureNode.stream, mime ? { mimeType: mime } : undefined)
-    this._mediaRecorder.ondataavailable = e => { if (e.data.size > 0) this._recChunks.push(e.data) }
-    this._mediaRecorder.onerror = e => console.error('[rec] MediaRecorder error:', e)
-    this._mediaRecorder.start(100)
+    this._take = new PcmRecorder(this.ctx, this.masterBusOut, { channels: 2 })
+    this._take.start()
     this.isRecording = true
     // live waveform trail
     this.recordingPeaks = []
@@ -4821,7 +5184,7 @@ export class DawEngine extends EventTarget {
       for (let i = 0; i < peakBuf.length; i += 4) m = Math.max(m, Math.abs(peakBuf[i]))
       this.recordingPeaks.push(m)
     }, 45)
-    console.log('[rec] startRecording — beat:', this._recStartBeat, 'mime:', mime || '(default)', 'stream tracks:', this._captureNode.stream.getTracks().length)
+    console.log('[rec] startRecording — beat:', this._recStartBeat, 'pcm float32 @', this.ctx.sampleRate)
     this.dispatchEvent(new CustomEvent('recording', { detail: { recording: true } }))
   }
 
@@ -4832,31 +5195,19 @@ export class DawEngine extends EventTarget {
 
   async stopRecording(): Promise<Blob | null> {
     this._stopRecPeaks()
-    if (!this._mediaRecorder) return null
+    if (!this._take) return null
     const endBeat = this.currentBeat  // capture before scheduler stops
     this.stopAllMicInputs()
-    return new Promise(resolve => {
-      this._mediaRecorder!.onstop = () => {
-        const mime = this._mediaRecorder?.mimeType || 'audio/webm'
-        const blob = new Blob(this._recChunks, { type: mime })
-        const durationBeats = Math.max(0.25, endBeat - this._recStartBeat)
-        console.log('[rec] stopRecording onstop — chunks:', this._recChunks.length, 'blobSize:', blob.size, 'startBeat:', this._recStartBeat, 'endBeat:', endBeat, 'duration:', durationBeats)
-        this._recChunks = []
-        if (this._captureNode) {
-          try { this.masterBusOut.disconnect(this._captureNode) } catch { /* ok */ }
-          this._captureNode = null
-        }
-        this._mediaRecorder?.stream.getTracks().forEach(t => t.stop())
-        this._mediaRecorder = null
-        this.isRecording = false
-        this.dispatchEvent(new CustomEvent('recording', { detail: { recording: false } }))
-        this.dispatchEvent(new CustomEvent('recording-complete', {
-          detail: { blob, startBeat: this._recStartBeat, durationBeats },
-        }))
-        resolve(blob)
-      }
-      this._mediaRecorder!.stop()
-    })
+    const take = await this._take.stop()
+    this._take = null
+    const durationBeats = Math.max(0.25, endBeat - this._recStartBeat)
+    console.log('[rec] stopRecording — frames:', take.frames, 'blobSize:', take.blob.size, 'startBeat:', this._recStartBeat, 'endBeat:', endBeat, 'duration:', durationBeats)
+    this.isRecording = false
+    this.dispatchEvent(new CustomEvent('recording', { detail: { recording: false } }))
+    this.dispatchEvent(new CustomEvent('recording-complete', {
+      detail: { blob: take.blob, startBeat: this._recStartBeat, durationBeats, sampleRate: take.sampleRate, frames: take.frames },
+    }))
+    return take.blob
   }
 
   /** Await every sample / preset / poly buffer this project needs, so an offline

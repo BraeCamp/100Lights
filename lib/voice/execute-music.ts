@@ -21,7 +21,7 @@
 //   Never invent an id. Everything referenced is resolved from the project or
 //   freshly minted here.
 
-import type { DawProject, DawTrack, MidiClip, DawClip, EffectType, TrackEffect } from '../daw-types'
+import type { DawProject, DawTrack, MidiClip, MidiNote, DawClip, AudioClip, EffectType, TrackEffect } from '../daw-types'
 import { defaultDrumInstrument } from '../daw-types'
 import { parseSpokenBeat, beatToNotes, describeBeat as describeSpokenBeat } from './beatbox'
 import { parseDefinitions, applyDefinitions, clearVocab, definitions, laneFromName } from './vocab'
@@ -49,8 +49,17 @@ import {
   type MusicMaps, type MusicPosition, type MusicDuration,
 } from './position'
 import { beatToSeconds } from '../tempo-map'
+import { parseModRate, describeModRate } from '../daw-modulation'
 import { addressClips, parseClipAddress, clipLabel, colourOf, type ClipAddress } from '../clip-address'
-import { parseNoteAddress, addressNotes, chordsOf, type NoteAddress, type Chord } from '../note-address'
+import { parseNoteAddress, addressNotes, chordsOf, pitchOf, type NoteAddress, type Chord } from '../note-address'
+import { splitAt, chopNotes, joinNotes, fitToRange, setActive } from '../note-ops'
+import { parseFilter, findNotes, describeFilter } from '../find-notes'
+import { quantizeNotes as quantizeWithSettings, parseGridSaid } from '../quantize'
+import { loopRange, workingRange, notesInRange, duplicateLoop, cropToRange, insertTime, deleteTime, duplicateTime } from '../clip-time'
+import { setSegBpm, slipByDrag, cropSample } from '../sample-editor'
+import { warpAsLoop, warpAtBpm, warpStraight } from '../warp'
+import { SHORT_SAMPLE_LABEL, type ShortSampleMode } from '../import-settings'
+import { LAUNCH_MODE_LABEL, LAUNCH_MODE_HELP } from '../launch'
 import { addressTracks, parseTrackAddress, describeTracks, TRACK_WORDS, type TrackAddress } from '../track-address'
 import { viewOf, snapOf, snapLabel, overlayOf, OVERLAY_LABEL } from './workspace'
 import { isSampleRef, sampleRefId } from '../sample-preset'
@@ -58,6 +67,7 @@ import { LOWPASS_HZ, HIGHPASS_HZ, automatableParams, shortNameOf, type Automatab
 import { ADD_OPTIONS, APOLLO_ADD_OPTIONS, makeDefaultParams } from '../daw-effect-catalog'
 import { nameChord, groupIntoChords } from '../chord-analysis'
 import { rngFor } from '../seeded-random'
+import { transposeNotes, transposeDegrees, invertNotes, addInterval, stretchNotes, setLength, humanizeNotes, reverseNotes, parseDuration, durationLabel, type Scale } from '../pitch-time'
 
 import {
   defineMacro, findMacro, macroNames, toPoints, describeMacro, useMacro, type MacroShape,
@@ -191,6 +201,32 @@ const fmtHz = (v: number): string =>
   (v >= 1000 ? `${(v / 1000).toFixed(1).replace(/\.0$/, '')} kHz` : `${Math.round(v)} Hz`)
 
 const newId = () => (globalThis.crypto?.randomUUID?.() ?? `v${Math.random().toString(36).slice(2)}`)
+
+/** Does a modulator route's key mean the parameter somebody named? */
+function routeIsParam(routeParam: string, param: string, track: DawTrack): boolean {
+  if (param === 'volume' || param === 'pan') return routeParam === param
+  if (!routeParam.startsWith('fx:')) return false
+  const [, effectId, key] = routeParam.split(':')
+  const fx = (track.effects ?? []).find(e => e.id === effectId)
+  if (!fx) return false
+  if (FX_AUTOMATABLE[param]) {
+    const spec = FX_AUTOMATABLE[param]
+    return fx.type === spec.type || (fx.type === 'helios' && (fx.params as { unit?: { type?: string } })?.unit?.type === spec.type)
+  }
+  const kind = param === 'highpass' ? 'highpass' : 'lowpass'
+  return fx.type === 'filter' && (fx.params as { type?: string })?.type === kind && key === 'frequency'
+}
+
+/** "low-pass cutoff", "volume", "reverb" — for a sentence about a route. */
+function labelOfParam(routeParam: string | undefined, track: DawTrack): string {
+  if (!routeParam) return 'parameter'
+  if (routeParam === 'volume' || routeParam === 'pan') return routeParam
+  const [, effectId, key] = routeParam.split(':')
+  const fx = (track.effects ?? []).find(e => e.id === effectId)
+  if (!fx) return key ?? 'parameter'
+  if (fx.type === 'filter') return `${(fx.params as { type?: string })?.type === 'highpass' ? 'high' : 'low'}-pass cutoff`
+  return fx.type
+}
 const str = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const fail = (problem: string): VoicePlan => ({ actions: [], say: '', problem })
 
@@ -1297,6 +1333,23 @@ function editorTarget(
 // slightly different ideas of what "the pad" means.
 
 /** The MIDI clip a compound edit should act on, or a reason it cannot. */
+/** A lib/pitch-time.ts patch set as one UPDATE_MIDI_NOTE per note — the shape the older tools have always emitted. */
+const perNote = (clipId: string, patches: { id: string; patch: Partial<MidiNote> }[]) =>
+  patches.map(p => ({ type: 'UPDATE_MIDI_NOTE', clipId, noteId: p.id, patch: p.patch }))
+
+/**
+ * The song's key as a scale for lib/pitch-time.ts — null when it is chromatic
+ * (every note is in it, so degrees mean nothing). An unset key reads as C
+ * major, the same fallback the roll's key highlighting uses.
+ */
+function projectScale(project: DawProject, strict = false): Scale | null {
+  if (strict && project.scale == null) return null
+  const scale = (project.scale ?? 'major') as ScaleType
+  if (scale === 'chromatic') return null
+  const intervals = SCALE_INTERVALS[scale] ?? SCALE_INTERVALS.major
+  return { root: project.key ?? 0, intervals }
+}
+
 function midiClipFor(target: string, project: DawProject, verb: string):
 { clip: MidiClip; how: string } | { problem: string } {
   const found = resolveClip(target, project)
@@ -1386,6 +1439,20 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
 
   switch (call.name) {
     // DUPLICATE — "loop bass 2 three more times"
+    // ── Live's Clip Activator: park a clip, bring it back ─────────────────
+    case 'set_clip_active': {
+      const active = i.active === true || i.active === 'true'
+      const chosen = resolveClipOrAsk(target, project, maps, 'set_clip_active', { active })
+      if (chosen.ask) return { actions: [], say: '', ask: chosen.ask }
+      if (!chosen.clip) return fail(`I couldn't find "${target || 'that'}" — say the track or clip name.`)
+      const how = chosen.how ?? `"${chosen.clip.name}"`
+      if ((chosen.clip.active !== false) === active) return { actions: [], say: `${how} is already ${active ? 'active' : 'parked'}.` }
+      return {
+        actions: [{ type: 'SET_CLIPS_ACTIVE', clipIds: [chosen.clip.id], active }],
+        say: active ? `${how} is back on.` : `Parked ${how} — it stays put, silent, until you activate it again.`,
+      }
+    }
+
     case 'duplicate_clip': {
       const count = spokenNumber(i.count as string) ?? 1
       if (count < 1) return fail('Say how many more times to repeat it.')
@@ -1761,6 +1828,103 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
     }
 
     // MOVE — "move everything over by one bar"
+    case 'set_delay_compensation': {
+      const on = i.on === true || i.on === 'true'
+      const isOn = project.delayCompensation !== false
+      if (on === isOn) return { actions: [], say: `Delay compensation is already ${on ? 'on' : 'off'}.` }
+      return {
+        actions: [{ type: 'SET_DELAY_COMPENSATION', on }],
+        say: on ? 'Delay compensation on — every track is delayed to match the slowest one, so they all arrive together.'
+          : 'Delay compensation off — each track plays as its devices deliver it.',
+      }
+    }
+
+    case 'modulate_parameter': {
+      const found = resolveClip(target, project)
+      const trackByName = !found ? project.tracks.find(t => foldName(t.name) === foldName(target)) : null
+      const track = found ? project.tracks.find(x => x.id === found.clip.trackId) : trackByName
+      if (!track) return fail(`I couldn't find "${target || 'that'}" to modulate.`)
+      const mods = (project.modulators ?? []).filter(m => m.trackId === track.id)
+      const param = str(i.parameter) ? automatableName(str(i.parameter)) : null
+      if (str(i.parameter) && !param) {
+        return fail(`I don't know how to modulate "${str(i.parameter)}". I can wobble a low-pass or high-pass filter, tremolo the volume, auto-pan, or move reverb, delay, drive or chorus.`)
+      }
+
+      // ── OFF ──────────────────────────────────────────────────────────────
+      if (i.off === true || i.off === 'true') {
+        const gone = param
+          ? mods.filter(m => m.routes.some(r => routeIsParam(r.parameter, param, track)))
+          : mods
+        // Nothing to take off is an answer, not a failure — the track is
+        // already still.
+        if (!gone.length) return { actions: [], say: param ? `Nothing is modulating the ${param} on "${track.name}" — it sits still already.` : `"${track.name}" has no LFOs on it — nothing to take off.` }
+        return {
+          actions: gone.map(m => ({ type: 'REMOVE_MODULATOR', modulatorId: m.id })),
+          say: gone.length === 1 ? `Took the LFO off "${track.name}" — the ${labelOfParam(gone[0].routes[0]?.parameter, track)} sits still now.` : `Took ${gone.length} LFOs off "${track.name}".`,
+        }
+      }
+
+      if (!param) return fail('Say what should move — the filter, the volume, the pan, or an effect like reverb.')
+      const rate = i.rate != null ? parseModRate(str(i.rate)) : { kind: 'sync' as const, division: '1/4' }
+      if (!rate) return fail(`I couldn't read "${str(i.rate)}" as a rate — say "1/8", "every beat", "once a bar" or "2 Hz".`)
+      const depthPct = i.depth != null ? Number(i.depth) : 50
+      if (!Number.isFinite(depthPct) || depthPct <= 0 || depthPct > 100) return fail('Depth is a percentage from 1 to 100.')
+      const shape = ['sine', 'triangle', 'saw', 'square', 'random'].includes(str(i.shape)) ? str(i.shape) as 'sine' : 'sine'
+
+      // The parameter key, adding the effect when the track has none — the
+      // same mapping automate_parameter uses, so the two never disagree.
+      const actions: unknown[] = []
+      let parameter: string
+      let label: string
+      let unipolar = false
+      if (param === 'volume' || param === 'pan') {
+        parameter = param
+        label = param === 'volume' ? 'volume' : 'pan'
+        // A tremolo dips below the fader; it never pushes above it.
+        unipolar = param === 'volume'
+      } else if (FX_AUTOMATABLE[param]) {
+        const spec = FX_AUTOMATABLE[param]
+        const isThis = (e: { type: string; params?: unknown }) =>
+          e.type === spec.type || (e.type === 'helios' && (e.params as { unit?: { type?: string } })?.unit?.type === spec.type)
+        const existing = (track.effects ?? []).find(isThis)
+        const key = existing?.type === 'helios' ? 'mix' : spec.key
+        let effectId = existing?.id
+        if (!effectId) {
+          effectId = newId()
+          actions.push({ type: 'ADD_EFFECT', trackId: track.id, effect: { id: effectId, type: spec.type, params: makeDefaultParams(spec.type) } })
+        }
+        parameter = `fx:${effectId}:${key}`
+        label = spec.label.toLowerCase()
+      } else {
+        const kind = param === 'highpass' ? 'highpass' : 'lowpass'
+        const have = (track.effects ?? []).find(e => e.type === 'filter' && (e.params as { type?: string } | undefined)?.type === kind)
+        const effectId = have?.id ?? newId()
+        if (!have) {
+          // A wobble wants room on both sides: the new filter sits in the
+          // middle of its range (by ratio), not fully open.
+          const hz = FILTER_HZ[kind]
+          const middle = Math.round(Math.sqrt(hz.min * hz.max))
+          actions.push({ type: 'ADD_EFFECT', trackId: track.id, effect: { id: effectId, type: 'filter', params: { enabled: true, type: kind, frequency: middle, q: 1 } } })
+        }
+        parameter = `fx:${effectId}:frequency`
+        label = kind === 'lowpass' ? 'low-pass cutoff' : 'high-pass cutoff'
+      }
+
+      // One LFO per parameter per track: asking again re-tunes it.
+      const already = mods.find(m => m.routes.some(r => r.parameter === parameter))
+      const route = { id: already?.routes.find(r => r.parameter === parameter)?.id ?? newId(), parameter, amount: (unipolar ? -1 : 1) * depthPct / 100, unipolar }
+      if (already) {
+        actions.push({ type: 'UPDATE_MODULATOR', modulatorId: already.id, patch: { shape, rate, depth: 1, enabled: true, routes: already.routes.map(r => r.parameter === parameter ? route : r) } })
+      } else {
+        actions.push({ type: 'ADD_MODULATOR', modulator: { id: newId(), trackId: track.id, name: `LFO ${mods.length + 1}`, shape, rate, depth: 1, phase: 0, enabled: true, routes: [route] } })
+      }
+      const verb = param === 'volume' ? 'Tremolo on' : param === 'pan' ? 'Auto-panning' : 'Wobbling'
+      return {
+        actions,
+        say: `${verb} the ${label} on "${track.name}" — ${shape === 'sine' ? '' : shape + ' wave, '}${describeModRate(rate)}, ${Math.round(depthPct)}% deep.${already ? ' (Re-tuned the one that was there.)' : ''}`,
+      }
+    }
+
     case 'move_clips': {
       // A set — "all the pad intro parts", "the pad clips after bar 9" — moves
       // together; a track name means everything on it; a plain clip name, one.
@@ -2037,13 +2201,26 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
     }
 
     case 'transpose': {
-      const semis = spokenNumber(i.semitones as string)
-      if (semis == null || semis === 0) return fail('Say how many semitones to move it.')
-      const got = clipsForEdit(i, target, maps, project, heard, 'transpose', { semitones: semis })
+      // By scale degree when asked (lib/pitch-time.ts) — the notes stay in key.
+      const degrees = i.degrees != null ? spokenNumber(i.degrees as string) : null
+      const scale = degrees ? projectScale(project) : null
+      const semis = degrees ? null : spokenNumber(i.semitones as string)
+      if (degrees && !scale) return fail('The song\'s scale is chromatic — every note is in it, so a degree is a semitone. Say how many semitones.')
+      if (!degrees && (semis == null || semis === 0)) return fail('Say how many semitones to move it.')
+      const step = (degrees ?? semis)!
+      const got = clipsForEdit(i, target, maps, project, heard, 'transpose', degrees ? { degrees } : { semitones: semis })
       if (got.ask) return { actions: [], say: '', ask: got.ask }
       if (!got.clips.length) return fail(`I couldn't find "${target || 'that'}" to transpose.`)
       const midi = got.clips.filter((c): c is MidiClip => 'notes' in c)
-      if (!midi.length) return fail('That is an audio clip — transposing audio is not supported yet.')
+      if (!midi.length) {
+        // An AUDIO clip transposes by its pitch shift (the Sample Editor's Pitch, lib/sample-editor.ts) — in semitones only.
+        const audio = got.clips.filter((c): c is AudioClip => c.kind === 'audio')
+        if (!audio.length || scale) return fail(scale ? 'An audio clip moves in semitones, not scale degrees — say how many semitones.' : `I couldn't find "${target || 'that'}" to transpose.`)
+        return {
+          actions: audio.map(c => ({ type: 'UPDATE_CLIP', clipId: c.id, patch: { pitchSemitones: clamp(Math.round((c.pitchSemitones ?? 0) + step), -24, 24) } })),
+          say: `Pitched ${got.how} ${Math.abs(step)} semitone${Math.abs(step) === 1 ? '' : 's'} ${step > 0 ? 'up' : 'down'}.`,
+        }
+      }
       const actions: unknown[] = []
       let label = ''
       for (const clip of midi) {
@@ -2051,15 +2228,158 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         if ('problem' in pick) return fail(pick.problem)
         if (!pick.whole && !pick.notes.length) return fail(`I couldn't find ${pick.label} in "${clip.name}".`)
         if (!pick.whole) label = pick.label
-        for (const n of pick.notes) {
-          actions.push({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id, patch: { pitch: Math.max(0, Math.min(127, n.pitch + semis)) } })
+        actions.push(...perNote(clip.id, scale ? transposeDegrees(pick.notes, step, scale) : transposeNotes(pick.notes, step)))
+      }
+      if (!actions.length) return fail('That clip has no notes.')
+      const unit = scale ? `scale degree${Math.abs(step) === 1 ? '' : 's'}` : `semitone${Math.abs(step) === 1 ? '' : 's'}`
+      return {
+        actions,
+        say: `Transposed ${label ? `${label} of ` : ''}${got.how} ${Math.abs(step)} ${unit} ${step > 0 ? 'up' : 'down'}.`,
+      }
+    }
+
+    case 'set_chance': {
+      const pct = spokenNumber(i.chance as string)
+      if (pct == null) return fail('Say how often — a percentage, "half the time", "always".')
+      const chance = Math.max(0, Math.min(100, pct))
+      const got = clipsForEdit(i, target, maps, project, heard, 'set_chance', { chance })
+      if (got.ask) return { actions: [], say: '', ask: got.ask }
+      if (!got.clips.length) return fail(`I couldn't find "${target || 'that'}".`)
+      const midi = got.clips.filter((c): c is MidiClip => 'notes' in c)
+      if (!midi.length) return fail('That is an audio clip — chance is for notes.')
+      const actions: unknown[] = []
+      let label = ''
+      let count = 0
+      for (const clip of midi) {
+        const pick = pickNotes(clip, i, maps, project)
+        if ('problem' in pick) return fail(pick.problem)
+        if (!pick.whole && !pick.notes.length) return fail(`I couldn't find ${pick.label} in "${clip.name}".`)
+        if (!pick.whole) label = pick.label
+        if (!pick.notes.length) continue
+        count += pick.notes.length
+        actions.push({ type: 'UPDATE_MIDI_NOTES', clipId: clip.id, notes: pick.notes.map(n => ({ id: n.id, patch: { chance: chance >= 100 ? undefined : chance / 100 } })) })
+      }
+      if (!actions.length) return fail('That clip has no notes.')
+      const how = chance >= 100 ? 'always' : chance <= 0 ? 'never' : chance === 50 ? 'half the time' : `${Math.round(chance)}% of the time`
+      return { actions, say: `${label ? `${label[0].toUpperCase()}${label.slice(1)} of ` : ''}${got.how} play${count === 1 ? 's' : ''} ${how} now — ${count} note${count === 1 ? '' : 's'}.` }
+    }
+
+    // ── INVERT — upside down, by degree when the song has a key (lib/pitch-time.ts)
+    case 'invert_notes': {
+      const got = clipsForEdit(i, target, maps, project, heard, 'invert', {})
+      if (got.ask) return { actions: [], say: '', ask: got.ask }
+      if (!got.clips.length) return fail(`I couldn't find "${target || 'that'}" to invert.`)
+      const midi = got.clips.filter((c): c is MidiClip => 'notes' in c)
+      if (!midi.length) return fail('That is an audio clip — there are no notes to invert.')
+      const scale = projectScale(project)
+      const actions: unknown[] = []
+      let label = ''
+      for (const clip of midi) {
+        const pick = pickNotes(clip, i, maps, project)
+        if ('problem' in pick) return fail(pick.problem)
+        if (!pick.whole && !pick.notes.length) return fail(`I couldn't find ${pick.label} in "${clip.name}".`)
+        if (!pick.whole) label = pick.label
+        if (pick.notes.length < 2) continue
+        actions.push({ type: 'UPDATE_MIDI_NOTES', clipId: clip.id, notes: invertNotes(pick.notes, scale) })
+      }
+      if (!actions.length) return fail('That needs at least two notes to flip around.')
+      return { actions, say: `${label ? `${label[0].toUpperCase()}${label.slice(1)} of ` : ''}${got.how} ${label ? 'is' : 'is'} upside down now${scale ? ', in key' : ''}.` }
+    }
+
+    // ── STRETCH — positions and lengths by a factor, from the first note
+    case 'stretch_notes': {
+      const factor = spokenNumber(i.factor as string)
+      if (factor == null || !(factor > 0)) return fail('Say the factor — "twice as long", "half", "by 1.5".')
+      if (Math.abs(factor - 1) < 1e-9) return fail('A factor of one changes nothing.')
+      const got = clipsForEdit(i, target, maps, project, heard, 'stretch', { factor })
+      if (got.ask) return { actions: [], say: '', ask: got.ask }
+      if (!got.clips.length) return fail(`I couldn't find "${target || 'that'}" to stretch.`)
+      const midi = got.clips.filter((c): c is MidiClip => 'notes' in c)
+      if (!midi.length) return fail('That is an audio clip — stretching audio is warping, which is not here yet.')
+      const actions: unknown[] = []
+      let label = ''
+      for (const clip of midi) {
+        const pick = pickNotes(clip, i, maps, project)
+        if ('problem' in pick) return fail(pick.problem)
+        if (!pick.whole && !pick.notes.length) return fail(`I couldn't find ${pick.label} in "${clip.name}".`)
+        if (!pick.whole) label = pick.label
+        const patches = stretchNotes(pick.notes, factor)
+        if (!patches.length) continue
+        actions.push({ type: 'UPDATE_MIDI_NOTES', clipId: clip.id, notes: patches })
+        // The whole clip stretched grows (or shrinks) with its notes, so half
+        // speed is not silently cut in two — the reducer only ever grows.
+        if (pick.whole && factor > 1) {
+          const end = Math.max(...pick.notes.map(n => n.startBeat + n.durationBeats))
+          const lo = Math.min(...pick.notes.map(n => n.startBeat))
+          const need = lo + (end - lo) * factor
+          if (need > clip.durationBeats) actions.push({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { durationBeats: Math.ceil(need / 4) * 4 } })
         }
       }
       if (!actions.length) return fail('That clip has no notes.')
-      return {
-        actions,
-        say: `Transposed ${label ? `${label} of ` : ''}${got.how} ${Math.abs(semis)} semitone${Math.abs(semis) === 1 ? '' : 's'} ${semis > 0 ? 'up' : 'down'}.`,
+      const how = factor === 2 ? 'twice as long' : factor === 0.5 ? 'half as long' : `stretched by ${+factor.toFixed(2)}`
+      return { actions, say: `${label ? `${label[0].toUpperCase()}${label.slice(1)} of ` : ''}${got.how} is ${how} now.` }
+    }
+
+    // ── NOTE SURGERY — split, chop, join, fit, deactivate (lib/note-ops.ts)
+    case 'edit_notes': {
+      const op = str(i.op).toLowerCase()
+      if (!['split', 'chop', 'join', 'fit', 'deactivate', 'activate'].includes(op)) return fail('Say what to do with the notes — split, chop, join, fit, deactivate or activate.')
+      const got = clipsForEdit(i, target, maps, project, heard, op, {})
+      if (got.ask) return { actions: [], say: '', ask: got.ask }
+      if (!got.clips.length) return fail(`I couldn't find "${target || 'that'}".`)
+      const midi = got.clips.filter((c): c is MidiClip => 'notes' in c)
+      if (!midi.length) return fail(op === 'split' ? 'That is an audio clip — splitting a clip is its own command; say "split the clip at bar 2".' : 'That is an audio clip — these are note edits.')
+      const parts = i.parts != null ? spokenNumber(i.parts as string) : null
+      const place = i.splitAt != null ? placeOf(i.splitAt, maps, project) : null
+      if (place?.problem) return fail(place.problem)
+      const actions: unknown[] = []
+      let label = ''
+      let touched = 0, made = 0
+      for (const clip of midi) {
+        const pick = pickNotes(clip, i, maps, project)
+        if ('problem' in pick) return fail(pick.problem)
+        if (!pick.whole && !pick.notes.length) return fail(`I couldn't find ${pick.label} in "${clip.name}".`)
+        if (!pick.whole) label = pick.label
+        const notes = pick.notes
+        if (!notes.length) continue
+        if (op === 'split' || op === 'chop') {
+          const s = place?.beat != null ? splitAt(notes, place.beat - clip.startBeat, newId) : chopNotes(notes, parts ?? 2, newId)
+          if (!s.add.length) continue
+          actions.push({ type: 'SPLICE_MIDI_NOTES', clipId: clip.id, remove: s.remove, add: s.add })
+          touched += s.remove.length; made += s.add.length
+        } else if (op === 'join') {
+          const s = joinNotes(notes)
+          if (!s.add.length) continue
+          actions.push({ type: 'SPLICE_MIDI_NOTES', clipId: clip.id, remove: s.remove, add: s.add })
+          touched += s.remove.length; made += s.add.length
+        } else if (op === 'fit') {
+          const end = str(i.range) === 'loop' && clip.loopEnabled && clip.loopLengthBeats ? clip.loopLengthBeats : clip.durationBeats
+          const patches = fitToRange(notes, 0, end)
+          if (!patches.length) continue
+          actions.push({ type: 'UPDATE_MIDI_NOTES', clipId: clip.id, notes: patches })
+          touched += patches.length
+        } else {
+          const patches = setActive(notes, op === 'activate')
+          if (!patches.length) continue
+          actions.push({ type: 'UPDATE_MIDI_NOTES', clipId: clip.id, notes: patches })
+          touched += patches.length
+        }
       }
+      if (!actions.length) {
+        return fail(op === 'join' ? 'Nothing to join — each key has one note.'
+          : op === 'activate' ? 'Those notes are already active.'
+            : op === 'deactivate' ? 'Those notes are already deactivated.'
+              : op === 'fit' ? 'Those notes already fill it.' : 'Nothing there to cut.')
+      }
+      const of = `${label ? `${label} of ` : ''}${got.how}`
+      const n = (k: number) => `${k} note${k === 1 ? '' : 's'}`
+      const say = op === 'join' ? `Joined ${n(touched)} into ${made} in ${of}.`
+        : op === 'fit' ? `Fitted ${of} to ${str(i.range) === 'loop' ? 'the loop' : 'the clip'}.`
+          : op === 'deactivate' ? `Deactivated ${n(touched)} in ${of} — kept, silent.`
+            : op === 'activate' ? `${n(touched)} in ${of} back on.`
+              : place?.beat != null ? `Split ${n(touched)} in ${of} at ${describeBeat(place.beat, maps)}.`
+                : `${op === 'chop' ? 'Chopped' : 'Split'} ${n(touched)} in ${of} into ${made}.`
+      return { actions, say }
     }
 
     // ── The studio around the song ───────────────────────────────────────
@@ -2562,43 +2882,42 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       const found = resolveClip(target, project)
       if (!found) return fail(`I couldn't find "${target || 'that'}" to quantize.`)
       const clip = found.clip
-      if (!('notes' in clip)) return fail('That is an audio clip — there are no notes to move.')
+      if (!('notes' in clip)) {
+        // An AUDIO clip quantizes its transients onto the grid — warp markers
+        // (lib/warp.ts), found by the studio from the decoded audio.
+        const said = `${str(i.division)} ${str(i.feel)}`.toLowerCase()
+        const g = parseGridSaid(said)?.grid ?? spokenNumber(i.division as string) ?? 0.25
+        return { actions: [{ type: 'WARP_QUANTIZE', clipId: clip.id, grid: g }], say: `Quantizing ${found.how}'s transients to ${g === 0.25 ? 'sixteenths' : g === 0.5 ? 'eighths' : g === 1 ? 'the beat' : `${g} beats`}.` }
+      }
       const notes = (clip as MidiClip).notes
       if (!notes.length) return fail('That clip has no notes.')
 
       // A quarter note by default: the grid people mean when they do not say.
       //
       // ⚠️ Triplets and dotted values are a MULTIPLIER on the division, not a
-      // division of their own — a triplet eighth is two thirds of an eighth,
-      // and a dotted eighth is one and a half of one. Treating "triplet" as a
-      // separate grid is how a swung part gets quantised onto straight
-      // sixteenths and loses the thing that made it swing.
-      const said = str(i.division).toLowerCase() + ' ' + str(i.feel).toLowerCase()
-      const triplet = /triplet|trip|third/.test(said)
-      const dotted = /dotted|dot/.test(said)
-      const base = spokenNumber(i.division as string) ?? 1
-      const division = triplet ? base * (3 / 2) : dotted ? base / 1.5 : base
-      if (!(division > 0)) return fail('That is not a grid I can quantize to.')
+      // division of their own — a triplet eighth is TWO THIRDS of an eighth
+      // (lib/quantize.ts does the arithmetic; this used to multiply by 3/2 and
+      // put swung parts onto a grid that does not exist), and a dotted eighth
+      // is one and a half of one.
+      const said = `${str(i.division)} ${str(i.feel)}`.toLowerCase()
+      const parsed = parseGridSaid(said)
+      const triplet = !!parsed?.triplet || /triplet|trip/.test(said)
+      const dotted = /dotted|dot\b/.test(said)
+      const base = parsed?.grid ?? spokenNumber(i.division as string) ?? 1
+      const grid = dotted ? base * 1.5 : base
+      if (!(grid > 0)) return fail('That is not a grid I can quantize to.')
       const pct = spokenNumber(i.strength as string)
-      const strength = pct == null ? 1 : Math.max(0, Math.min(1, pct / 100))
+      const adjustSaid = str(i.adjust).toLowerCase()
+      const adjust = /end/.test(adjustSaid) ? 'end' as const : /both/.test(adjustSaid) ? 'both' as const : 'start' as const
 
       // Partial strength moves notes PART of the way, which is the difference
       // between tightening a performance and flattening it. At 100 it is a
       // snap; below, the feel survives.
-      const moved = notes
-        .map(n => {
-          const grid = Math.round(n.startBeat / division) * division
-          const to = n.startBeat + (grid - n.startBeat) * strength
-          return { n, to }
-        })
-        .filter(({ n, to }) => Math.abs(to - n.startBeat) > 1e-6)
-      if (!moved.length) return { actions: [], say: `${found.how} is already on the grid.` }
+      const patches = quantizeWithSettings(notes, { grid, triplet, target: adjust, amount: pct == null ? 100 : clamp(pct, 0, 100) }, 1)
+      if (!patches.length) return { actions: [], say: `${found.how} is already on the grid.` }
       return {
-        actions: moved.map(({ n, to }) => ({
-          type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id,
-          patch: { startBeat: Math.max(0, +to.toFixed(4)) },
-        })),
-        say: `Quantized ${moved.length} note${moved.length === 1 ? '' : 's'} on ${found.how}${strength < 1 ? ` ${Math.round(strength * 100)}% of the way` : ''}.`,
+        actions: perNote(clip.id, patches),
+        say: `Quantized ${patches.length} note${patches.length === 1 ? '' : 's'}${adjust === 'end' ? "' ends" : adjust === 'both' ? "' starts and ends" : ''} on ${found.how}${triplet ? ' to triplets' : ''}${pct != null && pct < 100 ? ` ${Math.round(pct)}% of the way` : ''}.`,
       }
     }
 
@@ -4093,6 +4412,36 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       const what = str(i.what).toLowerCase() || 'all'
       const clips = allClips(project)
       if (what === 'none') return { actions: [{ type: 'SELECT', clipIds: [] }], say: 'Nothing selected.' }
+      // ── Notes inside a clip — Find & Select by voice (lib/find-notes.ts) ──
+      // "select every C in the pad", "select the quiet notes in the lead".
+      // The clip is selected too, so the roll opens on it and takes the notes.
+      if (what === 'notes' || what === 'note') {
+        const found = resolveClip(target, project)
+        if (!found || !('notes' in found.clip)) return fail(`I couldn't find a MIDI clip called "${target || 'that'}".`)
+        const clip = found.clip as MidiClip
+        let pool = clip.notes
+        let label = ''
+        if (i.notes != null) {
+          const pick = pickNotes(clip, i, maps, project)
+          if ('problem' in pick) return fail(pick.problem)
+          pool = pick.notes
+          label = pick.label
+        }
+        const filterSaid = str(i.filter)
+        const f = filterSaid ? parseFilter(filterSaid, s => pitchOf(s)?.pitch ?? null) : null
+        if (filterSaid && !f && i.notes == null && !/\bnotes?\b|\ball\b|\beverything\b/.test(filterSaid)) {
+          return fail(`I don't know how to pick "${filterSaid}" — try "every C", "the quiet notes", "the short notes", "every other note", "the notes off the scale".`)
+        }
+        const notes = f ? findNotes(pool, f, { scale: projectScale(project) }) : pool
+        if (!notes.length) return fail(`No notes in "${clip.name}" match${f ? ` — ${describeFilter(f)}` : ''}.`)
+        return {
+          actions: [
+            { type: 'SELECT', clipIds: [clip.id], trackId: clip.trackId },
+            { type: 'SELECT_NOTES', clipId: clip.id, noteIds: notes.map(n => n.id) },
+          ],
+          say: `Selected ${notes.length} note${notes.length === 1 ? '' : 's'} in ${clipLabel(project, clip)}${f ? ` — ${describeFilter(f)}` : label ? ` — ${label}` : ''}.`,
+        }
+      }
       // ── Clips by address: one, several, or all with a name ────────────
       //
       // Brae: "give the voice control control over the multiselect function…
@@ -4181,13 +4530,281 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (i.gain != null) { const g = spokenFraction(i.gain as string); if (g == null) return fail('Say the clip level as a percentage.'); patch.gain = Math.max(0, Math.min(2, g)); said.push(`level ${Math.round(g * 100)}%`) }
       if (typeof i.reverse === 'boolean') { patch.reverse = i.reverse; said.push(i.reverse ? 'reversed' : 'playing forwards') }
       if (typeof i.loop === 'boolean') { patch.loopEnabled = i.loop; said.push(i.loop ? 'looping' : 'not looping') }
-      if (!said.length) return fail('Say what to change — a fade in, a fade out, the level, reverse, or loop.')
+      // Tempo leader (lib/tempo-leader.ts): its own reducer action, not a clip patch — only one clip leads.
+      const leader = typeof i.tempoLeader === 'boolean' ? i.tempoLeader : null
+      if (leader != null) said.push(leader ? 'the tempo leader — the song follows its tempo' : 'no longer the tempo leader')
+      // The Sample Editor's settings (lib/sample-editor.ts): warp, its mode, pitch, Seg BPM, the edge fade.
+      if (typeof i.warp === 'boolean') { patch.warpEnabled = i.warp; said.push(i.warp ? 'warped to the song tempo' : 'playing at its own tempo') }
+      if (i.warpMode != null) {
+        const w = str(i.warpMode).toLowerCase()
+        const m = /complex|stretch/.test(w) ? 'stretch' : /beat/.test(w) ? 'beats' : /tone/.test(w) ? 'tones' : /texture|grain/.test(w) ? 'texture' : 'repitch'
+        patch.warpMode = m; patch.warpEnabled = true
+        said.push(`${m === 'stretch' ? 'Complex' : m === 'repitch' ? 'Re-Pitch' : m[0].toUpperCase() + m.slice(1)} mode`)
+      }
+      if (i.transpose != null) { const st = spokenNumber(i.transpose as string); if (st == null) return fail('Say how many semitones.'); patch.pitchSemitones = clamp(Math.round(st), -24, 24); said.push(`pitch ${st > 0 ? '+' : ''}${Math.round(st)} st`) }
+      if (i.detune != null) { const ct = spokenNumber(i.detune as string); if (ct == null) return fail('Say how many cents.'); patch.pitchCents = clamp(Math.round(ct), -100, 100); said.push(`detune ${ct > 0 ? '+' : ''}${Math.round(ct)} ct`) }
+      if (typeof i.fade === 'boolean') { patch.clipFade = i.fade; said.push(i.fade ? 'edge fades on' : 'edge fades off') }
+      // Slip: the audio slides under the clip, which keeps its place and its
+      // length. Per clip, since the room depends on that clip's own trims.
+      let slip: { seconds: number; said: string } | null = null
+      if (i.slip != null) {
+        const s = spanOf(i.slip, set[0].startBeat, maps)
+        if (s.problem || s.beats == null) return fail('Say how far to slip it — "20 milliseconds", "half a beat".')
+        const back = /\bback|\bearlier|\bleft/.test(str(i.slipDirection).toLowerCase() || 'later')
+        const seconds = (s.beats * 60) / (project.tempo || 120) * (back ? -1 : 1)
+        slip = { seconds, said: `slipped ${s.said ? describeDuration(s.said, s.beats) : `${s.beats} beats`} ${back ? 'earlier' : 'later'}` }
+        said.push(slip.said)
+      }
+      const segBpm = i.segBpm != null ? spokenNumber(i.segBpm as string) : null
+      if (i.segBpm != null && (segBpm == null || segBpm < 20 || segBpm > 999)) return fail('Say the sample\'s tempo in BPM, between 20 and 999.')
+      if (segBpm != null) said.push(`Seg BPM ${segBpm}`)
+      if (!said.length) return fail('Say what to change — a fade in, a fade out, the level, reverse, loop, warp, pitch, or the sample\'s tempo.')
       const audioOnly = 'fadeIn' in patch || 'fadeOut' in patch || 'gain' in patch || 'reverse' in patch
+        || 'warpEnabled' in patch || 'warpMode' in patch || 'pitchSemitones' in patch || 'pitchCents' in patch || 'clipFade' in patch || segBpm != null || leader != null || slip != null
       const targets = audioOnly ? set.filter(c => c.kind === 'audio') : set
-      if (!targets.length) return fail(`${clipLabel(project, set[0])} is a MIDI clip — fades, level and reverse are for audio clips. Its notes have a Sound panel instead.`)
+      if (!targets.length) return fail(`${clipLabel(project, set[0])} is a MIDI clip — fades, level, reverse, warp, pitch and the tempo leader are for audio clips. Its notes have a Sound panel instead.`)
+      // A MIDI clip loops every loopLengthBeats; switching the loop on without
+      // one did nothing audible. A bar, or the clip if shorter (lib/clip-time.ts).
+      const bar = project.timeSignatureNum || 4
+      const patchFor = (c: DawClip) => {
+        if (c.kind === 'midi') {
+          if (patch.loopEnabled === true && !(c as MidiClip).loopLengthBeats) return { ...patch, loopLengthBeats: Math.max(1, Math.min(c.durationBeats, bar)) }
+          if (patch.loopEnabled === false) return { ...patch, loopLengthBeats: undefined }
+          return patch
+        }
+        // Seg BPM: the clip's length follows the sample at that tempo (lib/sample-editor.ts).
+        if (segBpm != null) return { ...patch, ...(setSegBpm(c as AudioClip, segBpm) ?? { segBpm }) }
+        if (slip) return { ...patch, ...(slipByDrag(c as AudioClip, slip.seconds) ?? {}) }
+        return patch
+      }
+      // ⚠️ An empty patch is not an update. Slip and Seg BPM write nothing into
+      // `patch` — they are worked out per clip below — so a sentence that only
+      // slipped used to report success and dispatch nothing at all.
+      const updates = targets
+        .map(c => ({ type: 'UPDATE_CLIP', clipId: c.id, patch: patchFor(c) as Record<string, unknown> }))
+        .filter(u => Object.keys(u.patch).length > 0)
+      if (slip && !updates.length) {
+        const one = clipLabel(project, targets[0])
+        return fail(targets[0].kind === 'audio' && (targets[0] as AudioClip).bufferDuration == null
+          ? `${one} is still loading — try again in a moment.`
+          : `${one} has no room to slip: nothing is trimmed off either end, so there is no audio to slide in from.`)
+      }
+      // The leader is one clip: the first of the set. Releasing needs no clip.
+      const lead = leader == null ? [] : [{ type: 'SET_TEMPO_LEADER', clipId: leader ? targets[0].id : null }]
       return {
-        actions: targets.map(c => ({ type: 'UPDATE_CLIP', clipId: c.id, patch })),
+        actions: [...updates, ...lead],
         say: `${targets.length === 1 ? clipLabel(project, targets[0]) : `${targets.length} clips`}: ${said.join(', ')}.`,
+      }
+    }
+
+    // ── A SESSION SLOT'S LAUNCH SETTINGS (lib/launch.ts) ────────────────
+    // ⚠️ Session slots live in project.sessionGrid, not arrangementClips, so
+    // the ordinary clip lookup cannot see them and UPDATE_CLIP cannot change
+    // them. This resolves against the grid and writes with SET_SESSION_SLOT.
+    case 'set_launch': {
+      const want = foldName(target)
+      let found: { trackId: string; sceneIndex: number; clip: DawClip } | null = null
+      for (const [trackId, row] of Object.entries(project.sessionGrid ?? {})) {
+        ;(row ?? []).forEach((c, sceneIndex) => {
+          if (!c || found) return
+          const name = foldName(c.name ?? '')
+          if (want && (name === want || name.includes(want))) found = { trackId, sceneIndex, clip: c }
+        })
+      }
+      if (!found) return fail(`I couldn't find a session slot called "${target || 'that'}".`)
+      const slot = found as { trackId: string; sceneIndex: number; clip: DawClip }
+      const patch: Record<string, unknown> = {}
+      const said: string[] = []
+      const mode = str(i.mode).toLowerCase()
+      if (mode) {
+        const m = /gate|hold/.test(mode) ? 'gate' : /repeat|stutter/.test(mode) ? 'repeat' : /trigger|fire/.test(mode) ? 'trigger' : /toggle/.test(mode) ? 'toggle' : null
+        if (!m) return fail('Say trigger, gate, toggle or repeat.')
+        patch.launchMode = m
+        said.push(`${LAUNCH_MODE_LABEL[m]} — ${LAUNCH_MODE_HELP[m].replace(/\.$/, '').toLowerCase()}`)
+      }
+      if (typeof i.legato === 'boolean') { patch.legatoLaunch = i.legato; said.push(i.legato ? 'launching legato' : 'starting from the top') }
+      if (i.velocity != null) {
+        const v = spokenFraction(str(i.velocity))
+        if (v == null) return fail('Say the velocity amount as a percentage.')
+        patch.velocityAmount = clamp(v, 0, 1)
+        said.push(`velocity amount ${Math.round(clamp(v, 0, 1) * 100)}%`)
+      }
+      const q = str(i.quantize).toLowerCase()
+      if (q) {
+        const lq = /none|off|instant/.test(q) ? 'none' : /4/.test(q) ? '4bar' : /2/.test(q) ? '2bar' : /bar/.test(q) ? 'bar' : /beat/.test(q) ? 'beat' : null
+        if (!lq) return fail('Say none, a beat, a bar, two bars or four bars.')
+        patch.launchQuantization = lq
+        said.push(`launching on ${lq === 'none' ? 'the press' : lq === 'beat' ? 'the beat' : lq === 'bar' ? 'the bar' : `${lq[0]} bars`}`)
+      }
+      if (!said.length) return fail('Say what to change — the launch mode, legato, the velocity amount, or when it launches.')
+      return {
+        actions: [{ type: 'SET_SESSION_SLOT', trackId: slot.trackId, sceneIndex: slot.sceneIndex, clip: { ...slot.clip, ...patch } }],
+        say: `${slot.clip.name ?? 'That slot'}: ${said.join(', ')}.`,
+      }
+    }
+
+    // ── AUDIO → MIDI on a new track (lib/audio-to-track.ts) ─────────────
+    // The decoded audio is the studio's: the planner names the clip and the
+    // way, VoiceControl slices or hears it (AUDIO_TO_MIDI).
+    case 'audio_to_midi': {
+      const op = str(i.op).toLowerCase()
+      const found = resolveClip(target, project)
+      if (!found || found.clip.kind !== 'audio') return fail(`I couldn't find an audio clip called "${target || 'that'}" — only audio converts to MIDI.`)
+      const how = clipLabel(project, found.clip)
+      const bar = project.timeSignatureNum || 4
+      if (op === 'slice') {
+        const per = str(i.per).toLowerCase()
+        const by = /marker/.test(per) ? 'markers' : /bar/.test(per) ? bar : /32/.test(per) ? 0.125 : /16|sixteen/.test(per) ? 0.25 : /8|eigh/.test(per) ? 0.5
+          : /quarter|beat|1\/4/.test(per) ? 1 : /half|1\/2/.test(per) ? 2 : 'transients'
+        const max = i.max != null ? spokenNumber(i.max as string) : null
+        const perSaid = by === 'transients' ? 'transient' : by === 'markers' ? 'warp marker' : by === bar ? 'bar' : `${by} beats`
+        return { actions: [{ type: 'AUDIO_TO_MIDI', clipId: found.clip.id, op: 'slice', per: by, ...(max ? { max: clamp(Math.round(max), 1, 64) } : {}) }], say: `Slicing ${how} to a new MIDI track, one slice per ${perSaid}.` }
+      }
+      const kind = /harm|chord/.test(op) ? 'harmony' : /drum|beat/.test(op) ? 'drums' : /mel|line|tune|note/.test(op) ? 'melody' : null
+      if (!kind) return fail('Say what to convert — the harmony, the melody, or the drums.')
+      return { actions: [{ type: 'AUDIO_TO_MIDI', clipId: found.clip.id, op: kind }], say: `Converting ${how}'s ${kind} to MIDI on a new track.` }
+    }
+
+    // ── HOW SAMPLES LAND when dropped (lib/import-settings.ts) — a studio setting ──
+    case 'import_settings': {
+      const out: Record<string, unknown> = { type: 'IMPORT_SETTINGS' }
+      const said: string[] = []
+      const short = str(i.shortSamples).toLowerCase()
+      if (short) {
+        const m: ShortSampleMode | null = /one|shot|unwarp/.test(short) ? 'oneshot' : /loop|warp/.test(short) ? 'loop' : /auto|decide/.test(short) ? 'auto' : null
+        if (!m) return fail('Say how short samples should land — as one-shots, as loops, or auto.')
+        out.shortSamples = m
+        said.push(`short samples land as ${SHORT_SAMPLE_LABEL[m].toLowerCase()}${m === 'auto' ? ' (a loop when the length says so, else a one-shot)' : ''}`)
+      }
+      if (typeof i.autoWarpLong === 'boolean') { out.autoWarpLong = i.autoWarpLong; said.push(i.autoWarpLong ? 'long samples are auto-warped to the song tempo' : 'long samples are left as they are') }
+      if (!said.length) return fail('Say what to change — how short samples land (one-shot, loop, auto), or whether long samples are auto-warped.')
+      return { actions: [out], say: `From now on, ${said.join('; ')}. Clips already in the song are unchanged.` }
+    }
+
+    // ── WARP MARKERS on an audio clip (lib/warp.ts) ──────────────────────
+    case 'warp_markers': {
+      const op = str(i.op).toLowerCase()
+      const found = resolveClip(target, project)
+      if (!found || found.clip.kind !== 'audio') return fail(`I couldn't find an audio clip called "${target || 'that'}" — MIDI clips have no warp markers.`)
+      const clip = found.clip as AudioClip
+      const how = clipLabel(project, clip)
+      const bar = project.timeSignatureNum || 4
+      const start = clip.trimStart ?? 0
+      // The sample's length once it has loaded; until then the clip's own
+      // seconds at the song's tempo — what an unwarped clip spans.
+      const end = clip.bufferDuration != null
+        ? clip.bufferDuration - (clip.trimEnd ?? 0)
+        : start + clip.durationBeats * (60 / (project.tempo || 120))
+      if (op === 'clear') {
+        const had = clip.warpMarkers?.length ?? 0
+        return { actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: { warpMarkers: undefined } }], say: had ? `Cleared ${how}'s warp markers.` : `${how} had no warp markers — it plays straight.` }
+      }
+      if (op === 'quantize_transients') {
+        // The attacks live in the decoded audio, which the planner cannot see:
+        // the studio finds them and writes the markers (VoiceControl).
+        const grid = spokenNumber(i.grid as string) ?? 0.25
+        return { actions: [{ type: 'WARP_QUANTIZE', clipId: clip.id, grid }], say: `Quantizing ${how}'s transients to ${grid === 0.25 ? 'sixteenths' : grid === 0.5 ? 'eighths' : grid === 1 ? 'the beat' : `${grid} beats`}.` }
+      }
+      if (!(end > start)) return fail(`${how} has no length to warp yet.`)
+      if (op === 'as_loop') {
+        const bars = spokenNumber(i.bars as string)
+        if (bars == null || !(bars > 0)) return fail('Say how many bars the sample is — "as a 2 bar loop".')
+        const ms = warpAsLoop(start, end, bars, bar)
+        return { actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: { warpMarkers: ms, warpEnabled: true, durationBeats: bars * bar, segBpm: Math.round(((bars * bar) / (end - start)) * 60 * 100) / 100 } }], say: `Warped ${how} as a ${bars}-bar loop.` }
+      }
+      if (op === 'at_bpm') {
+        const bpm = spokenNumber(i.bpm as string)
+        if (bpm == null || bpm < 20 || bpm > 999) return fail('Say the sample\'s tempo — "at 90 bpm".')
+        const ms = warpAtBpm(start, end, bpm)
+        return { actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: { warpMarkers: ms, warpEnabled: true, segBpm: bpm, durationBeats: ms[1].beat } }], say: `Warped ${how} straight at ${bpm} BPM.` }
+      }
+      if (op === 'straight') {
+        const ms = warpStraight(start, end, clip.durationBeats)
+        return { actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: { warpMarkers: ms, warpEnabled: true } }], say: `Warped ${how} straight across its ${+(clip.durationBeats / bar).toFixed(2)} bars.` }
+      }
+      return fail('Say how to warp it — as a loop of so many bars, straight, at a tempo, quantize its transients, or clear the markers.')
+    }
+
+    // ── A MIDI CLIP'S LOOP AND TIME (lib/clip-time.ts) ───────────────────
+    case 'clip_time': {
+      const op = str(i.op).toLowerCase()
+      const found = resolveClip(target, project)
+      // Crop is the one of these an AUDIO clip understands: the sample loses
+      // the audio the clip never plays (lib/sample-editor.ts).
+      if (found && found.clip.kind === 'audio' && op === 'crop') {
+        const a = found.clip as AudioClip
+        const how = clipLabel(project, a)
+        const p = cropSample(a, project.tempo)
+        if (!p) return fail(a.bufferDuration == null ? `${how} is still loading.` : `${how} has nothing outside the clip to crop — it plays all of its sample.`)
+        return { actions: [{ type: 'UPDATE_CLIP', clipId: a.id, patch: p }], say: `Cropped ${how} to what it plays.` }
+      }
+      if (!found || !('notes' in found.clip)) return fail(`I couldn't find a MIDI clip called "${target || 'that'}".`)
+      const clip = found.clip as MidiClip
+      const bar = project.timeSignatureNum || 4
+      const range = workingRange(clip)
+      const how = clipLabel(project, clip)
+      const span = range.end - range.start
+      const lengthBeats = (): { beats: number; said: string } | { problem: string } => {
+        if (i.length == null) return { problem: 'Say how long — "two bars", "eight beats".' }
+        const s = spanOf(i.length, clip.startBeat, maps)
+        if (s.problem || s.beats == null || !(s.beats > 0)) return { problem: s.problem ?? 'Say how long — "two bars".' }
+        return { beats: s.beats, said: s.said ? describeDuration(s.said, s.beats) : `${s.beats} beats` }
+      }
+      switch (op) {
+        case 'set_loop_length': {
+          const l = lengthBeats()
+          if ('problem' in l) return fail(l.problem)
+          return { actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: { loopEnabled: true, loopLengthBeats: l.beats } }], say: `${how} loops every ${l.said}.` }
+        }
+        case 'duplicate_loop': {
+          // A clip that is not looping yet: the whole clip is its loop, so the
+          // request still means something — the clip doubles.
+          const looping = !!loopRange(clip)
+          const src = looping ? clip : { ...clip, loopEnabled: true, loopLengthBeats: clip.durationBeats }
+          const r = duplicateLoop(src, newId, bar)
+          if (!r) return fail(`${how} has nothing to duplicate.`)
+          return {
+            actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: looping ? r : { ...r, loopEnabled: true } }],
+            say: looping ? `Doubled ${how}'s loop to ${+(r.loopLengthBeats / bar).toFixed(2)} bars and copied its notes.` : `${how} was not looping, so the whole clip is the loop now — doubled to ${+(r.loopLengthBeats / bar).toFixed(2)} bars with its notes copied.`,
+          }
+        }
+        case 'crop': {
+          if (!loopRange(clip)) return fail(`${how} has no loop to crop to.`)
+          if (range.end >= clip.durationBeats - 1e-6) return fail(`${how} is already exactly its loop.`)
+          const r = cropToRange(clip, range.start, range.end)
+          if (!r) return fail('Nothing to crop.')
+          return { actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: r }], say: `Cropped ${how} to its loop — ${+(r.durationBeats / bar).toFixed(2)} bars.` }
+        }
+        case 'select_in_loop': {
+          const ns = notesInRange(clip.notes, range.start, range.end)
+          if (!ns.length) return fail(`No notes inside ${how}'s loop.`)
+          return {
+            actions: [{ type: 'SELECT', clipIds: [clip.id], trackId: clip.trackId }, { type: 'SELECT_NOTES', clipId: clip.id, noteIds: ns.map(n => n.id) }],
+            say: `Selected the ${ns.length} note${ns.length === 1 ? '' : 's'} inside ${how}'s loop.`,
+          }
+        }
+        case 'insert_time': {
+          const l = i.length != null ? lengthBeats() : { beats: span, said: `${+(span / bar).toFixed(2)} bars` }
+          if ('problem' in l) return fail(l.problem)
+          return {
+            actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes: insertTime(clip.notes, range.end, l.beats), durationBeats: clip.durationBeats + l.beats } }],
+            say: `Inserted ${l.said} of silence after ${loopRange(clip) ? `${how}'s loop` : how}.`,
+          }
+        }
+        case 'delete_time': {
+          const newDur = Math.max(bar, clip.durationBeats - span)
+          return {
+            actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes: deleteTime(clip.notes, range.start, range.end), durationBeats: newDur, ...(clip.loopLengthBeats ? { loopLengthBeats: Math.min(clip.loopLengthBeats, newDur) } : {}) } }],
+            say: `Deleted ${+(span / bar).toFixed(2)} bars from ${how}${loopRange(clip) ? ' — its loop\'s span' : ''}.`,
+          }
+        }
+        case 'duplicate_time': {
+          return {
+            actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes: duplicateTime(clip.notes, range.start, range.end, newId), durationBeats: clip.durationBeats + span } }],
+            say: `Duplicated ${+(span / bar).toFixed(2)} bars of ${how}.`,
+          }
+        }
+        default: return fail('Say what to do with the loop — set its length, duplicate it, crop to it, or select the notes in it.')
       }
     }
 
@@ -4629,20 +5246,22 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       // ⚠️ Humanize is seeded from the NOTE, not from Math.random. The same
       // clip humanized twice must give the same feel, or undo-and-redo quietly
       // becomes a different performance and nobody can tell what changed.
+      // The amount is the roll's (lib/pitch-time.ts): a share of half a
+      // sixteenth, 50 % by default — up to a 64th either way.
+      if (feel === 'humanize') {
+        const amount = pct == null ? 50 : clamp(pct, 0, 100)
+        const patches = humanizeNotes(notes, amount, 0.25, clip.id)
+        if (!patches.length) return fail('An amount of zero leaves it as it is.')
+        return { actions: perNote(clip.id, patches), say: `Humanized ${how}${pct == null ? '' : ` by ${amount}%`}.` }
+      }
       const depth = (pct == null ? 1 : clamp(pct / 50, 0, 3)) * 0.02
-      const shift = feel === 'ahead' ? -depth * 1.5 : feel === 'behind' ? depth * 1.5 : 0
+      const shift = feel === 'ahead' ? -depth * 1.5 : depth * 1.5
       return {
-        actions: notes.map((n, idx) => {
-          const jitter = feel === 'humanize'
-            ? (rngFor(`humanize:${clip.id}:${n.id ?? idx}`)() - 0.5) * depth * 2
-            : 0
-          return {
-            type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id,
-            patch: { startBeat: Math.max(0, n.startBeat + shift + jitter) },
-          }
-        }),
-        say: feel === 'humanize' ? `Humanized ${how}.`
-          : `${how} now sits ${feel === 'ahead' ? 'ahead of' : 'behind'} the beat.`,
+        actions: notes.map(n => ({
+          type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id,
+          patch: { startBeat: Math.max(0, n.startBeat + shift) },
+        })),
+        say: `${how} now sits ${feel === 'ahead' ? 'ahead of' : 'behind'} the beat.`,
       }
     }
 
@@ -4667,6 +5286,16 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
             patch: { rollFx: { ...((clip as { rollFx?: object }).rollFx ?? {}), slide: amount } },
           }],
           say: amount === 0 ? `${how} no longer slides.` : `${how} slides between notes.`,
+        }
+      }
+
+      // One length for every note — Set Length (lib/pitch-time.ts).
+      if (style === 'set' || i.length != null) {
+        const beats = parseDuration(str(i.length))
+        if (beats == null) return fail('Say the length — "eighth notes", "sixteenths", "a quarter note", "two beats".')
+        return {
+          actions: perNote(clip.id, setLength(notes, beats)),
+          say: `Every note in ${how} is ${durationLabel(beats)} long now.`,
         }
       }
 
@@ -4732,26 +5361,25 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       const semis = name ? SEMIS[name] : spokenNumber(words)
       if (semis == null || !semis) return fail('Say an interval — a third, a fifth, an octave.')
       const below = /below|down|under/i.test(str(i.direction) || words)
-      const step = below ? -Math.abs(semis) : Math.abs(semis)
       const got = midiClipFor(target, project, 'harmonize')
       if ('problem' in got) return fail(got.problem)
       const { clip, how } = got
+      // In a song with a key a NAMED interval is diatonic — "a third above" is
+      // the third the scale has at each note, major or minor, so the harmony
+      // stays in key. A count of semitones stays chromatic, and so does a song
+      // that carries no scale at all. lib/pitch-time.ts.
+      const scale = name ? projectScale(project, true) : null
+      const DEGREES: Record<string, number> = { second: 1, third: 2, fourth: 3, fifth: 4, sixth: 5, seventh: 6, octave: 7 }
+      const size = scale ? DEGREES[name!] : Math.abs(semis)
+      const step = below ? -size : size
+      // ADDED, not replaced: harmonising is a second voice, and a command
+      // that silently removed the first would be a transpose wearing the
+      // wrong name.
+      const added = addInterval(clip.notes, step, scale, newId)
+      if (!added.length) return fail('Every one of those notes already has that harmony.')
       return {
-        actions: [{
-          type: 'UPDATE_CLIP', clipId: clip.id,
-          patch: {
-            notes: [
-              ...clip.notes,
-              // ADDED, not replaced: harmonising is a second voice, and a
-              // command that silently removed the first would be a transpose
-              // wearing the wrong name.
-              ...clip.notes
-                .map(n => ({ ...n, id: newId(), pitch: n.pitch + step }))
-                .filter(n => n.pitch >= 0 && n.pitch <= 127),
-            ],
-          },
-        }],
-        say: `Harmonized ${how} a ${name ?? `${Math.abs(step)} semitone`} ${below ? 'below' : 'above'}.`,
+        actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes: [...clip.notes, ...added] } }],
+        say: `Harmonized ${how} a ${name ?? `${Math.abs(step)} semitone`} ${below ? 'below' : 'above'}${scale ? ', in key' : ''}.`,
       }
     }
 
@@ -4761,14 +5389,11 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if ('problem' in got) return fail(got.problem)
       const { clip, how } = got
       const notes = clip.notes
-      // Mirror around the clip, using each note's END so a long note reversed
-      // still finishes where it used to start.
+      // Mirror within the clip, using each note's END so a long note reversed
+      // still finishes where it used to start (lib/pitch-time.ts).
       const end = Math.max(clip.durationBeats, ...notes.map(n => n.startBeat + n.durationBeats))
       return {
-        actions: notes.map(n => ({
-          type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id,
-          patch: { startBeat: Math.max(0, end - (n.startBeat + n.durationBeats)) },
-        })),
+        actions: perNote(clip.id, reverseNotes(notes, { start: 0, end })),
         say: `${how} plays backwards.`,
       }
     }

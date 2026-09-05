@@ -144,6 +144,19 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'set_clip_active',
+    description:
+      'DEACTIVATE / ACTIVATE A CLIP — Live\'s clip activator. The clip stays exactly where it is, drawn dimmed, and is not played or rendered until it is activated again. This is what "deactivate the pad intro", "turn the stab clip off", "disable that clip", "bring the drums clip back" mean: parking an idea while auditioning others. It is NOT deleting (delete_clip) and NOT silencing the whole track (mute).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        active: { type: 'boolean', description: 'false parks the clip, true brings it back.' },
+      },
+      required: ['target', 'active'],
+    },
+  },
+  {
     name: 'copy_notes',
     description:
       'COPY A PART OF A CLIP — "take the first chord in pad intro and put it at bar 1", "recreate the opening chord of the pad at the first bar and repeat it 4 times", "copy the first two bars of the bass to bar 17". Makes a NEW clip on the same track holding only that part; `times` copies land back to back. ⚠️ This is the tool for a PART of a clip. move_clips moves the whole clip, duplicate_clip repeats the whole clip after itself, and name_notes only reads the notes out — none of them is what "take the first chord and put it at bar 1" asks for.',
@@ -179,6 +192,37 @@ export const MUSIC_TOOLS = [
         end: { ...POSITION, description: 'Where the ramp ends, when they said an endpoint ("until bar 6", "up to the chorus"). Use this OR length.' },
       },
       required: ['target', 'parameter', 'from', 'to'],
+    },
+  },
+  {
+    name: 'modulate_parameter',
+    description:
+      'MODULATION — an LFO that keeps moving a parameter, in time or at a rate: "put an LFO on the pad\'s filter", "wobble the bass cutoff every eighth", "tremolo the keys at 4 Hz", "make the reverb breathe once a bar", "auto-pan the hats". ⚠️ automate_parameter is a ramp drawn ONCE along the song; this repeats for as long as the track plays. "stop the wobble", "take the LFO off the pad" is `off: true`.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: { ...TARGET, description: 'The track (or a clip on it) whose parameter moves.' },
+        parameter: {
+          type: 'string',
+          enum: ['lowpass', 'highpass', 'volume', 'pan', 'reverb', 'delay', 'drive', 'chorus'],
+          description: 'What moves. volume is a tremolo, pan an auto-pan, lowpass a wobble on the filter (added if the track has none), the rest that effect\'s amount.',
+        },
+        rate: { type: 'string', description: 'How fast: "1/8", "1/4", "1 bar", "2 Hz", "slow", "fast". Omit for a quarter note.' },
+        depth: { type: 'number', description: 'How far it swings, as a percentage of the parameter\'s range, 0-100. Omit for 50.' },
+        shape: { type: 'string', enum: ['sine', 'triangle', 'saw', 'square', 'random'], description: 'The wave. Omit for sine; "random" is sample-and-hold.' },
+        off: { type: 'boolean', description: 'Remove the modulation on that parameter — or every LFO on the track when no parameter is named.' },
+      },
+      required: ['target'],
+    },
+  },
+  {
+    name: 'set_delay_compensation',
+    description:
+      'DELAY COMPENSATION — whether every track is delayed to match the slowest one\'s devices so they all arrive together. "turn delay compensation off", "turn latency compensation on", "compensate for plug-in latency". Off is what somebody wants while recording live through a slow device.',
+    input_schema: {
+      type: 'object',
+      properties: { on: { type: 'boolean', description: 'true to compensate (the default), false to play each track as its devices deliver it.' } },
+      required: ['on'],
     },
   },
   {
@@ -275,16 +319,111 @@ export const MUSIC_TOOLS = [
   {
     name: 'transpose',
     description:
-      'TRANSPOSE — move the notes of a clip up or down in semitones. "take the bass up an octave" is 12, "down a fifth" is -7. Part of a clip with `notes`: "transpose the third chord of the pad up an octave", "take the notes above C5 down an octave". Several clips by address: "all the pad parts", "them".',
+      'TRANSPOSE — move the notes of a clip up or down in semitones. "take the bass up an octave" is 12, "down a fifth" is -7. Part of a clip with `notes`: "transpose the third chord of the pad up an octave", "take the notes above C5 down an octave". Several clips by address: "all the pad parts", "them". By SCALE DEGREE with `degrees` instead: "up two scale degrees", "a step up in the scale" — the notes stay in the song\'s key.',
     input_schema: {
       type: 'object',
       properties: {
         target: TARGET,
-        semitones: { type: 'number', description: 'Positive is up. An octave is 12.' },
+        semitones: { type: 'number', description: 'Positive is up. An octave is 12. Omit when moving by degrees.' },
+        degrees: { type: 'number', description: 'Move by this many steps of the song\'s scale instead of semitones — "up two scale degrees" is 2, "down a degree" is -1.' },
         ...NOTE_ADDRESS,
         ...ADDRESS,
       },
-      required: ['target', 'semitones'],
+      required: ['target'],
+    },
+  },
+  {
+    name: 'set_chance',
+    description:
+      'CHANCE — how often a note plays. "make the hats 50 percent", "play the ghost notes half the time", "the last hat only sometimes", "always play the kick". 100 is always (the default), 0 is never. Part of a clip with `notes`, as in transpose. Use this, not delete, when they want a part to come and go.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        chance: { type: 'number', description: 'Percent of passes the notes play, 0-100. "half the time" is 50, "sometimes" about 30, "rarely" about 15, "always" 100.' },
+        ...NOTE_ADDRESS,
+        ...ADDRESS,
+      },
+      required: ['target', 'chance'],
+    },
+  },
+  {
+    name: 'invert_notes',
+    description:
+      'INVERT — flip a part upside down: the highest note becomes the lowest and the lowest the highest, the rhythm untouched. "invert the melody", "flip the lead upside down", "turn the riff upside down". In a song with a key it inverts by scale degree, so the result stays in key. NOT for chords — "invert the chords" is chord_inversion, a voicing change. Part of a clip with `notes`, as in transpose.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        ...NOTE_ADDRESS,
+        ...ADDRESS,
+      },
+      required: ['target'],
+    },
+  },
+  {
+    name: 'stretch_notes',
+    description:
+      'STRETCH — a part stretched in time by a factor, from its first note: positions and lengths together. "stretch the lead to twice as long" is 2, "squash the melody to half" is 0.5, "stretch the pad by one and a half" is 1.5. The clip grows to fit. For plain half time / double time on a whole clip, time_feel does the same thing. Part of a clip with `notes`, as in transpose.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        factor: { type: 'number', description: 'Greater than 1 is longer and slower, less than 1 shorter and faster. 2 is twice as long.' },
+        ...NOTE_ADDRESS,
+        ...ADDRESS,
+      },
+      required: ['target', 'factor'],
+    },
+  },
+  {
+    name: 'edit_notes',
+    description:
+      'NOTE SURGERY — split, chop, join, fit or deactivate the notes of a clip. "split the pad notes in half" (op split, parts 2), "chop the lead into four" (chop, parts 4), "split the bass notes at bar 2" (split, at), "join the pad notes" (join — the notes on each key become one), "fit the pad notes to the loop" (fit), "deactivate the last chord of the pad" (deactivate — kept in place, silent; activate brings them back). Part of a clip with `notes`, as in transpose. NOT for clips: splitting a clip is split_clip, deactivating a clip is set_clip_active.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        op: { type: 'string', enum: ['split', 'chop', 'join', 'fit', 'deactivate', 'activate'] },
+        parts: { type: 'number', description: 'For split / chop: how many equal pieces each note becomes. 2 for "in half". Omit with `splitAt`.' },
+        splitAt: { ...POSITION, description: 'For split: cut every note sounding at this place — "split the bass notes at bar 2".' },
+        range: { type: 'string', enum: ['loop', 'clip'], description: 'For fit: fill the clip\'s loop, or the whole clip (the default).' },
+        ...NOTE_ADDRESS,
+        ...ADDRESS,
+      },
+      required: ['target', 'op'],
+    },
+  },
+  {
+    name: 'warp_markers',
+    description:
+      'WARP an audio clip — its warp markers (lib/warp.ts). "warp the drum clip as a 2 bar loop" (as_loop, bars), "warp the vocal clip straight" (straight — one steady speed, spanning its clip), "warp the vox clip at 90 bpm" (at_bpm), "quantize the drum clip" on an AUDIO clip is quantize_transients (its attacks onto the grid), "clear the warp markers on the drums" (clear). Turning Warp on or off is set_clip_audio\'s `warp`. MIDI clips have no warp markers.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        op: { type: 'string', enum: ['as_loop', 'straight', 'at_bpm', 'quantize_transients', 'clear'] },
+        bars: { type: 'number', description: 'For as_loop: how many bars the sample is.' },
+        bpm: { type: 'number', description: 'For at_bpm: the sample\'s own tempo.' },
+        grid: { type: 'number', description: 'For quantize_transients: the grid in beats (0.25 = sixteenths, the default).' },
+        ...ADDRESS,
+      },
+      required: ['target', 'op'],
+    },
+  },
+  {
+    name: 'clip_time',
+    description:
+      'A MIDI CLIP\'S LOOP AND TIME — "set the pad clip\'s loop to two bars" (set_loop_length), "duplicate the pad\'s loop" (duplicate_loop: the loop doubles and its notes are copied, what came after moves along), "crop the pad clip to its loop" (crop), "select the notes in the pad\'s loop" (select_in_loop), and the time commands on the loop\'s span — or the whole clip when it does not loop: "insert a bar of silence after the pad\'s loop" (insert_time, with `length`), "delete the pad\'s loop time" (delete_time), "duplicate the time of the pad" (duplicate_time). Looping on or off is set_clip_audio\'s `loop`; the SONG loop is set_loop_region.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        op: { type: 'string', enum: ['set_loop_length', 'duplicate_loop', 'crop', 'select_in_loop', 'insert_time', 'delete_time', 'duplicate_time'] },
+        length: { ...LENGTH, description: 'For set_loop_length: the loop\'s length. For insert_time: how much silence (the loop\'s length when omitted).' },
+        ...ADDRESS,
+      },
+      required: ['target', 'op'],
     },
   },
   {
@@ -627,8 +766,10 @@ export const MUSIC_TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        what: { type: 'string', enum: ['all', 'none', 'track', 'loop', 'clips'] },
-        target: { ...TARGET, description: 'For "track" — which one. For "clips" — the clip name (or track) to address.' },
+        what: { type: 'string', enum: ['all', 'none', 'track', 'loop', 'clips', 'notes'] },
+        target: { ...TARGET, description: 'For "track" — which one. For "clips" — the clip name (or track) to address. For "notes" — the clip whose notes to pick.' },
+        filter: { type: 'string', description: 'For "notes": Find & Select in words — "every C", "the quiet notes", "the notes louder than 100", "the short notes", "every other note", "the notes off the scale", "the deactivated notes", "the notes above C5". Combine freely. Or name a part with `notes` ("the last chord").' },
+        ...NOTE_ADDRESS,
         ...ADDRESS,
       },
       required: ['what'],
@@ -653,7 +794,7 @@ export const MUSIC_TOOLS = [
   {
     name: 'set_clip_audio',
     description:
-      'AN AUDIO CLIP\'S OWN SETTINGS — "fade in the vocal over a bar", "fade out the last drums clip over two beats", "turn the guitar clip down to 60%", "reverse the crash", "loop the drum clip", "stop looping it". Fades, level, reverse and loop are per clip; the track\'s volume is set_track, and a MIDI clip\'s sound is set_sound.',
+      'AN AUDIO CLIP\'S OWN SETTINGS — "fade in the vocal over a bar", "fade out the last drums clip over two beats", "turn the guitar clip down to 60%", "reverse the crash", "loop the drum clip", "stop looping it", "make the drum loop clip the tempo leader" (tempoLeader). Fades, level, reverse and loop are per clip; the track\'s volume is set_track, and a MIDI clip\'s sound is set_sound.',
     input_schema: {
       type: 'object',
       properties: {
@@ -663,9 +804,61 @@ export const MUSIC_TOOLS = [
         gain: { type: 'string', description: 'The clip\'s own level as a percentage, "60%" — 100% is unity, up to 200%.' },
         reverse: { type: 'boolean', description: 'Play the audio backwards (true) or forwards (false).' },
         loop: { type: 'boolean', description: 'Repeat the clip\'s content across its length.' },
+        warp: { type: 'boolean', description: 'Audio only: Warp on makes the clip follow the song\'s tempo; off plays it at its own.' },
+        warpMode: { type: 'string', enum: ['repitch', 'complex', 'beats', 'tones', 'texture'], description: 'Audio only: beats slices at the transients and plays each hit as recorded (drums); tones stretches with a long grain (vocals, bass); texture is granular (pads, noise); repitch changes speed and pitch together (turntable); complex keeps the pitch while stretching (full mixes).' },
+        transpose: { type: 'number', description: 'Audio only: pitch shift in semitones — "pitch the vocal clip up 3".' },
+        detune: { type: 'number', description: 'Audio only: fine pitch in cents.' },
+        segBpm: { type: 'number', description: 'Audio only: the sample\'s own tempo (Seg. BPM) — "the vocal clip is 120 bpm"; the clip\'s length follows the sample at that tempo.' },
+        fade: { type: 'boolean', description: 'Audio only: 4 ms fades at the clip\'s edges so cuts never click.' },
+        slip: { ...LENGTH, description: 'Audio only: SLIP the audio under the clip by this much — the clip keeps its place and its length, the sample slides inside it. "slip the vocal clip 20 milliseconds", "slide the audio in the drums clip back half a beat".' },
+        slipDirection: { type: 'string', enum: ['later', 'earlier'], description: 'Which way to slip. "back", "earlier" and "left" are earlier; the default is later.' },
+        tempoLeader: { type: 'boolean', description: 'Audio only: true makes this clip the TEMPO LEADER — the song\'s tempo map is rewritten from its warp markers (or its Seg BPM) so it plays as recorded and everything else follows; "make the drum loop the tempo leader", "the song follows the drums clip\'s tempo". false releases it. Only one clip leads.' },
         ...ADDRESS,
       },
       required: ['target'],
+    },
+  },
+  {
+    name: 'set_launch',
+    description:
+      'HOW A SESSION SLOT ANSWERS A PRESS (Live\'s Launch box) — "put the drum loop slot in gate mode" (mode gate: it plays while held), "trigger" (press starts it from the top), "toggle" (press again to stop — the default), "repeat" (it starts again every step while held). Also "make the pad slot legato" (legato: a clip launched over a playing one picks up where that one had got to), "set the bass slot\'s velocity amount to 50%" (velocity), and "launch the drums slot on the bar" (quantize). These are the SESSION grid\'s clips, not the arrangement\'s.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: { ...TARGET, description: 'The session slot, by its clip\'s name.' },
+        mode: { type: 'string', enum: ['trigger', 'gate', 'toggle', 'repeat'] },
+        legato: { type: 'boolean', description: 'Launch legato — inherit the playing clip\'s position instead of starting over.' },
+        velocity: { type: 'string', description: 'Velocity Amount as a percentage, "50%" — how much the press\'s velocity reaches the level. 0% ignores it.' },
+        quantize: { type: 'string', enum: ['none', 'beat', 'bar', '2bar', '4bar'], description: 'When the launch lands.' },
+      },
+      required: ['target'],
+    },
+  },
+  {
+    name: 'audio_to_midi',
+    description:
+      'AN AUDIO CLIP TO MIDI, on a NEW track beside it — the audio stays. "Slice the drum loop clip to a new midi track" (op slice: every transient — or warp marker, or grid step, `per` — becomes a pad of a new drum track, and a MIDI clip plays the pads where the slices sit). "Convert the piano clip to midi" / "…the piano clip\'s harmony to midi" (harmony: every voice heard), "convert the vocal clip\'s melody to midi" (melody: one line), "convert the drums clip to midi drums" (drums: the attacks as kick, snare and hat). Local and instant.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: { ...TARGET, description: 'The audio clip.' },
+        op: { type: 'string', enum: ['slice', 'harmony', 'melody', 'drums'] },
+        per: { type: 'string', description: 'Slicing only: "transients" (default), "markers", or a grid — "bar", "1/8", "1/16".' },
+        max: { type: 'number', description: 'Slicing only: at most this many slices (up to 64).' },
+      },
+      required: ['target', 'op'],
+    },
+  },
+  {
+    name: 'import_settings',
+    description:
+      'HOW SAMPLES LAND when dropped or imported (Live\'s Loop/Warp Short Samples and Auto-Warp Long Samples) — a studio setting, not the song. "Import short samples as one-shots" (shortSamples oneshot: play once at their own speed, warp and loop off), "loop short samples when they land" (loop: warped to whole bars and looping), "let Beacon decide" (auto: a length near whole bars at a plausible tempo is a loop, else a one-shot). "Stop auto-warping long samples" / "auto-warp long samples" (autoWarpLong: 30 s and longer warped straight at the song tempo). Changes what future drops become; clips already in the song are untouched.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        shortSamples: { type: 'string', enum: ['oneshot', 'auto', 'loop'], description: 'What a short sample (under 30 s) becomes when it lands.' },
+        autoWarpLong: { type: 'boolean', description: 'Warp long samples (30 s and over) straight at the song tempo when they land.' },
+      },
     },
   },
   {
@@ -866,13 +1059,14 @@ export const MUSIC_TOOLS = [
   {
     name: 'note_length',
     description:
-      'ARTICULATION — how long the notes are held. "make the pad legato", "staccato the bass", "shorter notes on the keys", "let the chords ring". Legato joins notes up to the next one; staccato clips them short.',
+      'ARTICULATION — how long the notes are held. "make the pad legato", "staccato the bass", "shorter notes on the keys", "let the chords ring". Legato joins notes up to the next one; staccato clips them short. ONE LENGTH for every note is style "set" with `length`: "make the hats sixteenth notes", "set every note in the lead to a quarter note".',
     input_schema: {
       type: 'object',
       properties: {
         target: TARGET,
-        style: { type: 'string', enum: ['legato', 'staccato', 'longer', 'shorter', 'slide'] },
+        style: { type: 'string', enum: ['legato', 'staccato', 'longer', 'shorter', 'slide', 'set'] },
         amount: { type: 'number', description: 'Percent, 0-100.' },
+        length: { type: 'string', description: 'For style "set": the length every note gets — "eighth", "sixteenth", "1/16", "a quarter note", "two beats", "a bar".' },
       },
       required: ['style'],
     },
@@ -893,7 +1087,7 @@ export const MUSIC_TOOLS = [
   {
     name: 'harmonize',
     description:
-      'HARMONISE — add a second voice to a part. "harmonise the lead a third above", "add a fifth to the bass", "double it an octave down". Adds notes; it does not replace what is there.',
+      'HARMONISE — add a second voice to a part. "harmonise the lead a third above", "add a fifth to the bass", "double it an octave down". Adds notes; it does not replace what is there. When the song has a key the interval is taken in the scale (a diatonic third), so the harmony stays in key.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1179,12 +1373,14 @@ export const MUSIC_TOOLS = [
   {
     name: 'quantize',
     description:
-      'QUANTIZE — pull the notes onto the grid. "quantize the drums", "quantize the bass to eighth notes". Strength 100 snaps exactly; less moves them part of the way, which keeps the feel.',
+      'QUANTIZE — pull the notes onto the grid. "quantize the drums", "quantize the bass to eighth notes", "quantize the hats to eighth-note triplets", "quantize the ends of the pad notes", "quantize the keys 50 percent". Strength 100 snaps exactly; less moves them part of the way, which keeps the feel.',
     input_schema: {
       type: 'object',
       properties: {
         target: TARGET,
-        division: { type: 'number', description: 'Grid in beats: 1 is a quarter note, 0.5 an eighth, 0.25 a sixteenth.' },
+        division: { type: 'number', description: 'Grid in beats: 1 is a quarter note, 0.5 an eighth, 0.25 a sixteenth. Omit for a quarter.' },
+        feel: { type: 'string', enum: ['straight', 'triplet', 'dotted'], description: 'Triplet makes the grid two thirds of the division; dotted one and a half.' },
+        adjust: { type: 'string', enum: ['start', 'end', 'both'], description: 'What moves: note starts (the default), ends, or both.' },
         strength: { type: 'number', description: 'Percentage, 0-100. Omit for 100.' },
       },
       required: ['target'],

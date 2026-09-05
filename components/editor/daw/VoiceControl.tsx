@@ -111,7 +111,7 @@ function studioCommandsLine(): string {
 }
 import { musicStateSummary } from '@/lib/voice/music-tools'
 import { drumTake, chordTake, takeToNotes, describeTake } from '@/lib/voice/pass'
-import { detectOnsets, monoOf } from '@/lib/voice/onsets'
+import { detectOnsets, monoOf } from '@/lib/onsets'
 import { combinePresets } from '@/lib/midi-presets'
 import { hearBetter } from '@/lib/voice/hear-better'
 import { resolveLocally, resolveHeard, confidentEnough, runsLocally, needsNoProject } from '@/lib/voice/local-resolve'
@@ -153,6 +153,11 @@ import VoiceCaption, { readVoiceCaption, writeVoiceCaption } from './VoiceCaptio
 import { recordExchange, describeAction } from '@/lib/voice/transcript'
 import { publishLevel, subscribeLevel } from '@/lib/voice/level-bus'
 import { LUMENS_NAME } from '@/lib/credit-tiers'
+import { requestNoteSelection } from '@/lib/note-selection'
+import { validMarkers, warpStraight, quantizeTransients } from '@/lib/warp'
+import { landClip, setImportSettings, describeImportSettings, type ImportSettings } from '@/lib/import-settings'
+import { sliceToNewTrack, convertToNewTrack } from '@/lib/audio-to-track'
+import type { AudioClip as VoiceAudioClip } from '@/lib/daw-types'
 import {
   speak, stopSpeaking, speechEnabled, setSpeechEnabled, speechAvailable,
   studioVoice, setStudioVoice,
@@ -1066,8 +1071,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           dispatch({ type: 'ADD_CLIP', clip } as DawAction)
           const buf = await engine?.loadClipBuffer(clip)
           if (buf && engine) {
+            // Loop/Warp Short Samples decides how it lands (lib/import-settings.ts).
             dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: {
-              waveformPeaks: extractPeaks(buf), durationBeats: engine.secondsToBeats(buf.duration), bufferDuration: buf.duration,
+              waveformPeaks: extractPeaks(buf), bufferDuration: buf.duration,
+              ...landClip(clip, buf.duration, engine.tempo, projectRef.current?.timeSignatureNum || 4).patch,
             } } as DawAction)
           }
           setSelectedClipId?.(clip.id)
@@ -1467,6 +1474,60 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // clip. One selected clip is that clip; several is not a single anything.
       setSelectedClipId?.(ids.length === 1 ? ids[0] : null)
       if (a.trackId) setSelectedTrackId?.(a.trackId)
+      return
+    }
+    // Notes inside a clip — "select every C in the pad". The roll owns its
+    // selection; the request is parked for it (lib/note-selection.ts) so it
+    // arrives even when the same sentence just opened the clip.
+    if (act.type === 'SELECT_NOTES') {
+      const a = act as unknown as { clipId: string; noteIds: string[] }
+      requestNoteSelection(a.clipId, a.noteIds ?? [])
+      return
+    }
+    // Quantize an audio clip's transients onto the grid (lib/warp.ts). The
+    // attacks live in the decoded buffer, which only the studio has.
+    if (act.type === 'WARP_QUANTIZE') {
+      const a = act as unknown as { clipId: string; grid: number }
+      const clip = projectRef.current?.arrangementClips.find(c => c.id === a.clipId)
+      const buf = engine?.bufferCache.get(a.clipId)
+      if (!clip || clip.kind !== 'audio' || !buf) { setProblem('That clip is still loading — try again in a moment.'); return }
+      const start = clip.trimStart ?? 0, end = buf.duration - (clip.trimEnd ?? 0)
+      const onsets = detectOnsets(monoOf(buf), buf.sampleRate).map(o => o.t).filter(t => t >= start && t <= end)
+      const base = validMarkers(clip.warpMarkers) ?? warpStraight(start, end, clip.durationBeats)
+      const ms = quantizeTransients(base, onsets, a.grid > 0 ? a.grid : 0.25)
+      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { warpMarkers: ms, warpEnabled: true } })
+      engine?.clearStretchedCache(clip.id)
+      return
+    }
+
+    // Audio → MIDI on a new track (lib/audio-to-track.ts). The decoded buffer
+    // is the studio's; the planner named the clip and the way.
+    if (act.type === 'AUDIO_TO_MIDI') {
+      const a = act as unknown as { clipId: string; op: 'slice' | 'harmony' | 'melody' | 'drums'; per?: 'transients' | 'markers' | number; max?: number }
+      const p = projectRef.current
+      const clip = p?.arrangementClips.find(c => c.id === a.clipId)
+      const buf = engine?.bufferCache.get(a.clipId)
+      if (!p || !clip || clip.kind !== 'audio' || !buf) { setProblem('That clip is still loading — try again in a moment.'); return }
+      void (async () => {
+        try {
+          const r = a.op === 'slice'
+            ? await sliceToNewTrack(clip as VoiceAudioClip, buf, { tempo: p.tempo, barBeats: p.timeSignatureNum || 4, by: a.per ?? 'transients', max: a.max }, dispatch)
+            : await convertToNewTrack(clip as VoiceAudioClip, buf, { tempo: p.tempo, kind: a.op }, dispatch)
+          respond(`${clip.name}: ${r.said}.`)
+        } catch {
+          setProblem(`I could not read ${clip.name}'s audio.`)
+        }
+      })()
+      return
+    }
+
+    // How samples land when dropped (lib/import-settings.ts) — a studio
+    // setting in the workspace, not the song, so the reducer never sees it.
+    if (act.type === 'IMPORT_SETTINGS') {
+      const { type: _t, ...patch } = act as unknown as { type: string } & Partial<ImportSettings>
+      void _t
+      setImportSettings(patch)
+      void describeImportSettings
       return
     }
 

@@ -20,6 +20,23 @@ import { playInstrumentNote } from '@/lib/daw-instruments'
 import { libraryGetAll, type LibraryEntry } from '@/lib/sound-library'
 import { guessRootNote, samplePresetFor, isPickableSample, rootLabel, collapseNoteVariants, type PickableSound } from '@/lib/sample-preset'
 import { resampleBySemitones } from '@/lib/audio-resample'
+import { resolveKey } from '@/lib/keymap'
+import Knob from './Knob'
+import { useDrawMode, toggleDrawMode } from '@/lib/draw-mode'
+import { beginStroke, strokeTo, velocityFromDrag, noteUnder, type Stroke } from '@/lib/draw-notes'
+import { laneValue, lanePatch, randomizeLane, rampLane, LANE_MAX, type LaneField } from '@/lib/note-chance'
+import { visibleRows, rowIndexOf, focusScrollTop, stepAdvance, stepMove } from '@/lib/roll-rows'
+import { transposeNotes, transposeDegrees, invertNotes, addInterval, stretchNotes, setLength, humanizeNotes, reverseNotes, durationLabel, describeInterval, type Scale } from '@/lib/pitch-time'
+import { PitchTimePanel } from './PitchTimePanel'
+import { splitAt, splitEach, chopNotes, chopOnGrid, joinNotes, fitToRange, setActive, anyInactive, type Splice } from '@/lib/note-ops'
+import { findNotes, filterIsEmpty, type NoteFilter } from '@/lib/find-notes'
+import { FindNotesBar } from './FindNotesBar'
+import { StretchMarkers } from './StretchMarkers'
+import { useNoteSelectionRequest, consumeNoteSelection } from '@/lib/note-selection'
+import { quantizeNotes as quantizePatches, useQuantizeSettings, setQuantizeSettings, describeQuantize } from '@/lib/quantize'
+import { QuantizeDialog } from './QuantizeDialog'
+import { loopRange, workingRange, notesInRange, duplicateLoop, cropToRange, insertTime, deleteTime, duplicateTime } from '@/lib/clip-time'
+import { moveCaret, nextBoundary, extendTimeSel, notesInTimeSel, timeOfNotes, resizeByGrid, type TimeSel } from '@/lib/caret'
 
 /** Roots a sample can be declared at: C1 to C7, every semitone. */
 const ROOT_CHOICES = Array.from({ length: 73 }, (_, i) => 24 + i)
@@ -50,7 +67,7 @@ const NUM_NOTES   = 128
 // Edit unifies the old Draw and Select tools: click empty draws, click a note
 // selects + drags it, shift+drag marquee-selects. Erase deletes on click or
 // marquee-drag.
-type Tool = 'edit' | 'erase'
+type Tool = 'edit' | 'erase' | 'draw'
 type Quant = 0.25 | 0.5 | 1 | 2
 
 // Copied notes survive closing/reopening the roll and work across MIDI clips
@@ -165,33 +182,42 @@ function DrumLaneKeys({
 }
 
 function PianoKeys({
-  scrollTop, hoverPitch, onPlayNote, trackColor, scaleLock, inScalePitches, noteH = NOTE_H,
+  scrollTop, hoverPitch, onPlayNote, trackColor, scaleLock, inScalePitches, noteH = NOTE_H, rows, root = 0,
 }: {
   scrollTop: number
   hoverPitch: number | null
   onPlayNote: (pitch: number) => void
   trackColor: string
+  /** Scale lock or Highlight Scale — either tints the keys. */
   scaleLock: boolean
   inScalePitches: Set<number>
   noteH?: number
+  /** The pitches shown, top to bottom (lib/roll-rows.ts) — folded or chromatic. */
+  rows: number[]
+  /** The scale's root pitch class, drawn stronger when highlighted. */
+  root?: number
 }) {
   return (
-    <div style={{ width: PIANO_W, flexShrink: 0, position: 'relative', overflow: 'hidden', background: 'var(--bg-surface)' }}>
+    <div data-help-id="piano-keys" style={{ width: PIANO_W, flexShrink: 0, position: 'relative', overflow: 'hidden', background: 'var(--bg-surface)' }}>
       <div style={{ position: 'absolute', top: -scrollTop, left: 0, right: 0 }}>
-        {Array.from({ length: NUM_NOTES }, (_, i) => {
-          const pitch = NUM_NOTES - 1 - i
+        {rows.map(pitch => {
           const black = isBlack(pitch)
           const isC   = pitch % 12 === 0
           const hover = hoverPitch === pitch
           const inScale = scaleLock && inScalePitches.has(pitch % 12)
+          const isRoot = inScale && pitch % 12 === root
           const bg = hover
             ? trackColor
-            : inScale
-              ? (black ? 'rgb(var(--accent-rgb) / 0.4)' : 'rgb(var(--accent-rgb) / 0.22)')
-              : (black ? '#1a1a1a' : '#2e2e2e')
+            : isRoot
+              ? 'rgb(var(--accent-rgb) / 0.6)'
+              : inScale
+                ? (black ? 'rgb(var(--accent-rgb) / 0.4)' : 'rgb(var(--accent-rgb) / 0.22)')
+                : (black ? '#1a1a1a' : '#2e2e2e')
           return (
             <div
               key={pitch}
+              data-pitch={pitch}
+              data-in-scale={inScale || undefined}
               onMouseDown={() => onPlayNote(pitch)}
               style={{
                 height: noteH, width: black ? '65%' : '100%',
@@ -220,15 +246,20 @@ function PianoKeys({
 // ── Velocity lane ─────────────────────────────────────────────────────────────
 
 function VelocityLane({
-  clip, beatW, scrollLeft, trackColor, selectedNotes, onVelocityChange,
+  clip, beatW, scrollLeft, trackColor, selectedNotes, onVelocityChange, field = 'velocity',
 }: {
   clip: MidiClip
   beatW: number
   scrollLeft: number
   trackColor: string
   selectedNotes: Set<string>
-  onVelocityChange: (noteId: string, velocity: number) => void
+  /** Receives the value in the lane's units: velocity 1..127, deviation 0..127, chance 0..100. */
+  onVelocityChange: (noteId: string, value: number) => void
+  /** Which expression the lane shows (lib/note-chance.ts). */
+  field?: LaneField
 }) {
+  const MAX = LANE_MAX[field]
+  const valueOf = (n: MidiNote) => laneValue(n, field)
   function noteAtX(clientX: number, rect: DOMRect): MidiNote | null {
     const absX = clientX - rect.left + scrollLeft
     return clip.notes.find(n => {
@@ -240,7 +271,7 @@ function VelocityLane({
 
   function velocityFromY(clientY: number, rect: DOMRect): number {
     const relY = Math.max(0, Math.min(VELOCITY_H - 4, clientY - rect.top))
-    return Math.max(1, Math.min(127, Math.round((1 - relY / (VELOCITY_H - 4)) * 127)))
+    return Math.max(field === 'velocity' ? 1 : 0, Math.min(MAX, Math.round((1 - relY / (VELOCITY_H - 4)) * MAX)))
   }
 
   function onMouseDown(e: React.MouseEvent<HTMLDivElement>) {
@@ -260,7 +291,7 @@ function VelocityLane({
           const endVel = velocityFromY(ev.clientY, rect)
           sorted.forEach((note, i) => {
             const t = sorted.length > 1 ? i / (sorted.length - 1) : 1
-            onVelocityChange(note.id, Math.max(1, Math.min(127, Math.round(startVel + (endVel - startVel) * t))))
+            onVelocityChange(note.id, Math.max(0, Math.min(MAX, Math.round(startVel + (endVel - startVel) * t))))
           })
         }
         function onRampUp() {
@@ -276,7 +307,7 @@ function VelocityLane({
 
     // Normal: detect paint mode (horizontal drag) vs vertical drag
     const initialNote = noteAtX(startX, rect)
-    const startV = initialNote?.velocity ?? 64
+    const startV = initialNote ? valueOf(initialNote) : Math.round(MAX / 2)
     let paintMode = false
     let vertMode  = false
 
@@ -292,7 +323,7 @@ function VelocityLane({
         if (n) onVelocityChange(n.id, velocityFromY(ev.clientY, rect))
       } else if (vertMode && initialNote) {
         const delta = (startY - ev.clientY) / 100
-        onVelocityChange(initialNote.id, Math.max(1, Math.min(127, Math.round(startV + delta * 127))))
+        onVelocityChange(initialNote.id, Math.max(0, Math.min(MAX, Math.round(startV + delta * MAX))))
       }
     }
     function onUp() {
@@ -306,6 +337,8 @@ function VelocityLane({
   return (
     <div
       onMouseDown={onMouseDown}
+      data-help-id="note-lane"
+      data-lane={field}
       style={{
         height: VELOCITY_H, background: 'var(--bg-base)',
         borderTop: '1px solid var(--border)',
@@ -314,7 +347,7 @@ function VelocityLane({
     >
       {clip.notes.map(note => {
         const x = note.startBeat * beatW - scrollLeft
-        const h = (note.velocity / 127) * (VELOCITY_H - 4)
+        const h = (valueOf(note) / MAX) * (VELOCITY_H - 4)
         return (
           <div
             key={note.id}
@@ -323,12 +356,12 @@ function VelocityLane({
               left: x, bottom: 2,
               width: Math.max(3, (note.durationBeats * beatW) - 2),
               height: h,
-              background: trackColor,
+              background: field === 'chance' ? '#f59e0b' : field === 'deviation' ? '#38bdf8' : trackColor,
               borderRadius: '1px 1px 0 0',
-              opacity: 0.8,
+              opacity: selectedNotes.has(note.id) ? 1 : 0.65,
               pointerEvents: 'none',
             }}
-            title={`Velocity: ${note.velocity}`}
+            title={field === 'chance' ? `Chance: ${valueOf(note)}%` : field === 'deviation' ? `Deviation: ±${valueOf(note)}` : `Velocity: ${valueOf(note)}`}
           />
         )
       })}
@@ -382,7 +415,14 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const track = project.tracks.find(t => t.id === clip.trackId)
   const color = track?.color ?? '#3d8fef'
 
-  const [tool, setTool]   = useState<Tool>('edit')
+  const [toolChoice, setToolChoice] = useState<Exclude<Tool, 'draw'>>('edit')
+  // Draw Mode is the studio's (lib/draw-mode.ts, `B`): while it is on, the
+  // pencil is the tool whatever the toolbar says; the last velocity drawn
+  // is what the next note gets.
+  const draw = useDrawMode()
+  const tool: Tool = draw.on ? 'draw' : toolChoice
+  const setTool = (t: Tool) => { if (t === 'draw') toggleDrawMode(); else { if (draw.on) toggleDrawMode(); setToolChoice(t) } }
+  const lastVelRef = useRef(100)
   const [quant, setQuant] = useState<Quant>(0.25)
   const isMobile = useIsMobile()
   const mobileRoll = typeof window !== 'undefined' && window.innerWidth < 760
@@ -395,6 +435,47 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const [scrollLeft, setScrollLeft] = useState(cached?.scrollLeft ?? 0)
   useEffect(() => { rollViewCache.set(clip.id, { beatW, noteH, scrollTop, scrollLeft }) }, [clip.id, beatW, noteH, scrollTop, scrollLeft])
   const [selectedNotes, setSelectedNotes] = useState<Set<string>>(new Set())
+  // Which expression lane shows under the grid, and the Randomize amount.
+  const [lane, setLane] = useState<LaneField>('velocity')
+  const [randAmount, setRandAmount] = useState(25)
+  const selectedList = () => clip.notes.filter(n => selectedNotes.has(n.id))
+  function nudgeLane(field: LaneField, delta: number) {
+    const sel = selectedList()
+    if (!sel.length) return
+    dispatch({ type: 'UPDATE_MIDI_NOTES', clipId: clip.id, notes: sel.map(n => ({ id: n.id, patch: lanePatch(field, laneValue(n, field) + delta) })) })
+  }
+  function randomizeSelected() {
+    const sel = selectedList()
+    if (!sel.length) return
+    // A new seed each press, so pressing again reshuffles; the seed rides in
+    // the ids so a render of the result is still deterministic.
+    dispatch({ type: 'UPDATE_MIDI_NOTES', clipId: clip.id, notes: randomizeLane(sel, lane, randAmount, `${clip.id}:${Date.now()}`) })
+  }
+  function rampSelected() {
+    const sel = selectedList()
+    if (sel.length < 2) return
+    const sorted = [...sel].sort((a, b) => a.startBeat - b.startBeat)
+    dispatch({ type: 'UPDATE_MIDI_NOTES', clipId: clip.id, notes: rampLane(sel, lane, laneValue(sorted[0], lane), laneValue(sorted[sorted.length - 1], lane)) })
+  }
+  // ⌘G: Play One → Play All → ungroup, for the selected notes.
+  const groupLabel = (() => {
+    const sel = selectedList()
+    if (!sel.length) return null
+    const g = sel[0].chanceGroup
+    if (!g || !sel.every(n => n.chanceGroup === g)) return null
+    return clip.chanceGroups?.[g] === 'all' ? 'Play All' : 'Play One'
+  })()
+  function cycleGroup() {
+    const sel = selectedList()
+    if (!sel.length) return
+    const g = sel[0].chanceGroup
+    const shared = !!g && sel.every(n => n.chanceGroup === g)
+    const ids = sel.map(n => n.id)
+    if (!shared) { dispatch({ type: 'SET_CHANCE_GROUP', clipId: clip.id, noteIds: ids, group: crypto.randomUUID().slice(0, 8), mode: 'one' }); return }
+    const mode = clip.chanceGroups?.[g!] ?? 'one'
+    if (mode === 'one') dispatch({ type: 'SET_CHANCE_GROUP', clipId: clip.id, noteIds: ids, group: g!, mode: 'all' })
+    else dispatch({ type: 'SET_CHANCE_GROUP', clipId: clip.id, noteIds: ids, group: null })
+  }
   const [hoverPitch, setHoverPitch] = useState<number | null>(null)
   const [hoverEdge, setHoverEdge]   = useState(false)
   const [ctxMenu, setCtxMenu] = useState<{ note: MidiNote; x: number; y: number } | null>(null)
@@ -463,6 +544,46 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const [scaleLock, setScaleLock] = useState(mobileRoll && !clip.isDrumClip)
   const inScalePitches = getInScalePitches(project.key, project.scale)
 
+  // Pitch & Time (lib/pitch-time.ts). With the scale on, pitch moves are in
+  // scale degrees — Live 12's rule — and the interval field means degrees.
+  const scaleOn = scaleLock && !clip.isDrumClip && project.scale !== 'chromatic'
+  const rollScale: Scale = { root: project.key, intervals: SCALE_INTERVALS[project.scale] ?? SCALE_INTERVALS['major'] }
+  const [intervalSemis, setIntervalSemis] = useState(7)
+  const [intervalDegrees, setIntervalDegrees] = useState(2)
+  const intervalSize = scaleOn ? intervalDegrees : intervalSemis
+  const setIntervalSize = scaleOn ? setIntervalDegrees : setIntervalSemis
+  const [stretchFactor, setStretchFactor] = useState(1)
+  const [lengthBeats, setLengthBeats] = useState(0.5)
+  const [humanizeAmount, setHumanizeAmount] = useState(50)
+  const [ptAnchor, setPtAnchor] = useState<{ x: number; y: number } | null>(null)
+  const ptBtnRef = useRef<HTMLButtonElement>(null)
+  const humanizeRuns = useRef(0)
+
+  // Note surgery (lib/note-ops.ts): E held = the split tool; Chop's part count;
+  // Find & Select (lib/find-notes.ts) with its bar open or closed.
+  const [splitting, setSplitting] = useState(false)
+  const [chopParts, setChopParts] = useState(2)
+  // Quantize Settings (lib/quantize.ts) — persisted; Q and ⌘U use them.
+  const qSettings = useQuantizeSettings()
+  const [qAnchor, setQAnchor] = useState<{ x: number; y: number } | null>(null)
+  const qBtnRef = useRef<HTMLButtonElement>(null)
+  // The loop brace (lib/clip-time.ts): selected, it takes the arrow chords.
+  const [braceSelected, setBraceSelected] = useState(false)
+  // Keyboard-only editing (lib/caret.ts): a time selection grown from the
+  // insert marker (stepBeat is the marker; step entry writes at it).
+  const [timeSel, setTimeSel] = useState<TimeSel | null>(null)
+  const [findOpen, setFindOpen] = useState(false)
+  const [filter, setFilter] = useState<NoteFilter>({})
+  // A selection asked for from outside — the voice, the palette — parked
+  // until this roll can take it (lib/note-selection.ts).
+  const selReq = useNoteSelectionRequest()
+  useEffect(() => {
+    if (!selReq || selReq.clipId !== clip.id) return
+    const have = new Set(clip.notes.map(n => n.id))
+    setSelectedNotes(new Set(selReq.noteIds.filter(id => have.has(id))))
+    consumeNoteSelection(selReq)
+  }, [selReq, clip.id, clip.notes])
+
   // Voice mapping: sung-pitch ribbon overlay + synced replay (pitched rolls only)
   const voiceMap = useVoiceMap(engine, clip, dispatch)
 
@@ -483,17 +604,35 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       return next
     })
   }
-  const rowCount = isDrum ? DRUM_LANES.length : NUM_NOTES
+  // Fold (F), Fold to Scale (G), Highlight Scale (K) — lib/roll-rows.ts. The
+  // rows are the pitches shown, top to bottom; everything that maps a row to
+  // a pitch or a pitch to a y goes through them, so a folded roll and the
+  // full one are the same code.
+  const [fold, setFold] = useState(false)
+  const [foldScale, setFoldScale] = useState(false)
+  const [highlightScale, setHighlightScale] = useState(true)
+  const rows = isDrum ? [] : visibleRows({ fold, foldScale, inScale: inScalePitches, notes: clip.notes })
+  const rowIndex = rowIndexOf(rows)
+  const rowCount = isDrum ? DRUM_LANES.length : rows.length
   const yToPitch = (y: number): number | null => {
     const row = Math.floor(y / rowH)
     if (row < 0 || row >= rowCount) return null
-    return isDrum ? DRUM_LANES[row].pitch : NUM_NOTES - 1 - row
+    return isDrum ? DRUM_LANES[row].pitch : rows[row]
   }
   const pitchToY = (pitch: number): number | null => {
-    if (!isDrum) return (NUM_NOTES - 1 - pitch) * rowH
+    if (!isDrum) { const r = rowIndex.get(pitch); return r === undefined ? null : r * rowH }
     const row = DRUM_PITCH_TO_ROW.get(pitch)
     return row === undefined ? null : row * rowH
   }
+  // Focus (N): scroll to where the notes are.
+  function focusNotes() {
+    const top = focusScrollTop(rows, clip.notes, rowH, gridRef.current?.clientHeight ?? 300)
+    if (top != null) setScrollTop(top)
+  }
+  // Step entry: with it on, playing a key writes a note at the insert marker
+  // and the marker advances by the grid; ← / → move the marker.
+  const [stepEntry, setStepEntry] = useState(false)
+  const [stepBeat, setStepBeat] = useState(0)
   const rootRef = useRef<HTMLDivElement>(null)
   useEffect(() => { rootRef.current?.focus() }, [])
 
@@ -661,7 +800,15 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   // Holding ⌥ (alt) bypasses grid snap for free positioning
   function snapUnless(free: boolean, b: number) { return free ? b : snapBeat(b) }
 
+  // Step entry: a played key becomes a note at the insert marker.
+  function stepWrite(pitch: number) {
+    const note: MidiNote = { id: crypto.randomUUID(), pitch, startBeat: stepBeat, durationBeats: quant, velocity: lastVelRef.current }
+    dispatch({ type: 'ADD_MIDI_NOTE', clipId: clip.id, note })
+    setSelectedNotes(new Set([note.id]))
+    setStepBeat(b => stepAdvance(b, quant, clip.durationBeats))
+  }
   async function playNote(pitch: number) {
+    if (stepEntry) stepWrite(pitch)
     if (!engine.ctx) return
     const preset = clip.presetId ? presets.find(p => p.id === clip.presetId) : null
     if (preset) {
@@ -836,7 +983,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       const swept = new Set(clip.notes
         .filter(n => {
           if (n.startBeat < x1 || n.startBeat >= x2) return false
-          const row = isDrum ? DRUM_PITCH_TO_ROW.get(n.pitch) : NUM_NOTES - 1 - n.pitch
+          const row = isDrum ? DRUM_PITCH_TO_ROW.get(n.pitch) : rowIndex.get(n.pitch)
           return row !== undefined && row >= rowTop && row <= rowBot
         })
         .map(n => n.id)
@@ -862,6 +1009,31 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
 
     const beat  = snapUnless(e.altKey, rawBeat)
     const pitch = rawPitch
+    if (braceSelected) setBraceSelected(false)
+
+    // E held: the split tool (lib/note-ops.ts). A click splits the note under
+    // the pointer where it was clicked; a drag splits every note the pointer
+    // crosses, each at the x it was crossed. ⌥ leaves the cut off the grid.
+    if (splitting) {
+      const done = new Set<string>()
+      const cutOne = (n: MidiNote | undefined, at: number) => {
+        if (!n || done.has(n.id)) return
+        done.add(n.id)
+        const s = splitAt([n], at, newNoteId)
+        if (s.add.length) dispatch({ type: 'SPLICE_MIDI_NOTES', clipId: clip.id, remove: s.remove, add: s.add })
+      }
+      cutOne(noteAt(rawBeat, pitch), beat)
+      const onSplitMove = (ev: MouseEvent) => {
+        const rb = (ev.clientX - rect.left + scrollLeft) / beatW
+        const p = yToPitch(ev.clientY - rect.top + scrollTop)
+        if (p === null) return
+        cutOne(noteAt(rb, p), snapUnless(ev.altKey, rb))
+      }
+      const onSplitUp = () => { document.removeEventListener('mousemove', onSplitMove); document.removeEventListener('mouseup', onSplitUp) }
+      document.addEventListener('mousemove', onSplitMove)
+      document.addEventListener('mouseup', onSplitUp)
+      return
+    }
 
     if (tool === 'edit') {
       const existing = noteAt(rawBeat, pitch)
@@ -895,6 +1067,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           function onResizeUp() {
             document.removeEventListener('mousemove', onResizeMove)
             document.removeEventListener('mouseup', onResizeUp)
+            settleOverlaps(targets.map(t => t.id))
           }
           document.addEventListener('mousemove', onResizeMove)
           document.addEventListener('mouseup', onResizeUp)
@@ -920,6 +1093,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           function onLeftUp() {
             document.removeEventListener('mousemove', onLeftMove)
             document.removeEventListener('mouseup', onLeftUp)
+            settleOverlaps(targets.map(t => t.id))
           }
           document.addEventListener('mousemove', onLeftMove)
           document.addEventListener('mouseup', onLeftUp)
@@ -948,6 +1122,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           function onUpSel() {
             document.removeEventListener('mousemove', onDragSel)
             document.removeEventListener('mouseup', onUpSel)
+            settleOverlaps(origins.map(o => o.id))
           }
           document.addEventListener('mousemove', onDragSel)
           document.addEventListener('mouseup', onUpSel)
@@ -974,6 +1149,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
         function onUpExisting() {
           document.removeEventListener('mousemove', onMoveExisting)
           document.removeEventListener('mouseup', onUpExisting)
+          settleOverlaps([existingId])
         }
         document.addEventListener('mousemove', onMoveExisting)
         document.addEventListener('mouseup', onUpExisting)
@@ -1045,6 +1221,53 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       document.addEventListener('mouseup', onUp)
     }
 
+    if (tool === 'draw') {
+      // ── The pencil (lib/draw-notes.ts) ──────────────────────────────
+      // A click on a note erases it; on empty grid it places a grid-length
+      // note, and dragging across places one per step (on one pitch with
+      // Pitch Lock, ⌥ flips it for this stroke), dragging up or down first
+      // sets the velocity, dragging back erases.
+      const under = noteUnder(clip.notes, rawBeat, pitch)
+      if (under) { dispatch({ type: 'REMOVE_MIDI_NOTE', clipId: clip.id, noteId: under.id }); return }
+      if (clip.loopEnabled && clip.loopLengthBeats && beat >= clip.loopLengthBeats) return
+      const lockPitch = e.altKey ? !draw.pitchLock : draw.pitchLock
+      const startPitch = scaleLock && !isDrum ? snapToScale(pitch, project.key, project.scale) : pitch
+      const stroke: Stroke = beginStroke(rawBeat, startPitch, quant, lastVelRef.current, lockPitch, clip.loopEnabled && clip.loopLengthBeats ? clip.loopLengthBeats : undefined)
+      const first = strokeTo(stroke, rawBeat, startPitch, () => crypto.randomUUID())
+      for (const n of first.add) dispatch({ type: 'ADD_MIDI_NOTE', clipId: clip.id, note: n })
+      if (first.add.length) playNote(first.add[0].pitch)
+      const startX = e.clientX, startY = e.clientY
+      let mode: 'none' | 'across' | 'velocity' = 'none'
+      function onMove(ev: MouseEvent) {
+        const dx = ev.clientX - startX, dy = ev.clientY - startY
+        if (mode === 'none') {
+          if (Math.abs(dx) >= 4 || Math.abs(dy) >= 4) mode = Math.abs(dx) >= Math.abs(dy) ? 'across' : 'velocity'
+          else return
+        }
+        if (mode === 'velocity') {
+          const v = velocityFromDrag(stroke.velocity, dy)
+          lastVelRef.current = v
+          for (const n of stroke.placed.values()) dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id, patch: { velocity: v } })
+          return
+        }
+        const b = (ev.clientX - rect.left + scrollLeft) / beatW
+        const p = yToPitch(ev.clientY - rect.top + scrollTop) ?? stroke.startPitch
+        const pp = scaleLock && !isDrum ? snapToScale(p, project.key, project.scale) : p
+        const { add, remove } = strokeTo(stroke, b, pp, () => crypto.randomUUID())
+        for (const id of remove) dispatch({ type: 'REMOVE_MIDI_NOTE', clipId: clip.id, noteId: id })
+        for (const n of add) { n.velocity = lastVelRef.current; dispatch({ type: 'ADD_MIDI_NOTE', clipId: clip.id, note: n }) }
+        if (add.length) playNote(add[add.length - 1].pitch)
+      }
+      function onUp() {
+        document.removeEventListener('mousemove', onMove)
+        document.removeEventListener('mouseup', onUp)
+        setSelectedNotes(new Set([...stroke.placed.values()].map(n => n.id)))
+      }
+      document.addEventListener('mousemove', onMove)
+      document.addEventListener('mouseup', onUp)
+      return
+    }
+
     if (tool === 'erase') {
       // Click a note to erase it; drag sweeps a marquee that erases everything inside
       const target = noteAt(rawBeat, pitch)
@@ -1109,7 +1332,12 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   // usually just typed a word, not made a selection, and "Quantise" doing
   // nothing because you had not first dragged a marquee is the kind of silence
   // that reads as a bug.
-  const targetNotes = () => (selectedNotes.size ? clip.notes.filter(n => selectedNotes.has(n.id)) : clip.notes)
+  // A selection whose notes are gone (the clip was replaced under the roll,
+  // or Add Interval's copies were undone) is no selection — every note, not none.
+  const targetNotes = () => {
+    const sel = selectedNotes.size ? clip.notes.filter(n => selectedNotes.has(n.id)) : []
+    return sel.length ? sel : clip.notes
+  }
 
   function patchNotes(fn: (n: MidiNote, i: number) => Partial<MidiNote> | null) {
     const notes = targetNotes()
@@ -1119,32 +1347,148 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     })
   }
 
-  /** Quantise start times to the current grid — and lengths too, so a run of
-   *  notes lands flush instead of snapping to the grid while keeping ragged
-   *  ends. Drum clips keep their lengths; a snare's length is meaningless. */
-  function quantizeNotes(strength = 1) {
-    patchNotes(n => {
-      const snapped = snapBeat(n.startBeat)
-      const startBeat = n.startBeat + (snapped - n.startBeat) * strength
-      const patch: Partial<MidiNote> = { startBeat: Math.max(0, startBeat) }
-      if (!isDrum && strength === 1) patch.durationBeats = Math.max(quant, snapBeat(n.durationBeats) || quant)
-      return patch
-    })
+  /** Quantise with the settings (lib/quantize.ts): the grid — the editor's
+   *  unless one is set — starts, ends or both, and the Amount. One undo step.
+   *  `amount` overrides for the half-quantise command. */
+  function quantizeNotes(amount?: number) {
+    const s = amount == null ? qSettings : { ...qSettings, amount }
+    const patches = quantizePatches(targetNotes(), s, quant)
+    if (patches.length) dispatch({ type: 'UPDATE_MIDI_NOTES', clipId: clip.id, notes: patches })
+  }
+  function openQuantizeSettings() {
+    if (qAnchor) { setQAnchor(null); return }
+    const r = qBtnRef.current?.getBoundingClientRect()
+    setQAnchor(r ? { x: r.left, y: r.bottom + 6 } : { x: 240, y: 240 })
   }
 
-  /** Push notes off the grid by a small random amount, in both time and
-   *  velocity. A perfectly quantised part is the single clearest tell that
-   *  music was typed rather than played. Deliberately subtle: ±18ms is about
-   *  the spread of a competent player, and it scales with tempo so it stays
-   *  ±18ms rather than ±a fixed fraction of a beat. */
-  function humanize() {
-    const msToBeats = (ms: number) => (ms / 1000) * (project.tempo / 60)
-    const spread = msToBeats(18)
-    patchNotes(n => ({
-      startBeat: Math.max(0, n.startBeat + (Math.random() * 2 - 1) * spread),
-      velocity: Math.max(0.15, Math.min(1, (n.velocity ?? 0.8) + (Math.random() * 2 - 1) * 0.09)),
-    }))
+  // The loop brace and the time commands (lib/clip-time.ts). The clip's own
+  // time signature draws the bar lines; the song's stands in without one.
+  const barBeats = project.timeSignatureNum || 4
+  const clipBarBeats = clip.timeSignatureNum ? (clip.timeSignatureNum * 4) / (clip.timeSignatureDen || 4) : barBeats
+  const brace = loopRange(clip)
+  /** What a region command works on: the time selection, else the loop, else the clip. */
+  const region = () => timeSel ?? workingRange(clip)
+  const regionName = timeSel ? 'the time selection' : brace ? 'the loop' : 'the clip'
+  function setLoopLength(beats: number) {
+    const L = Math.max(quant, Math.round(beats / quant) * quant)
+    dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { loopEnabled: true, loopLengthBeats: L } })
   }
+  function toggleLoop() {
+    const on = !clip.loopEnabled
+    dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: on
+      ? { loopEnabled: true, loopLengthBeats: Math.max(quant, clip.loopLengthBeats ?? Math.min(clip.durationBeats, barBeats)) }
+      : { loopEnabled: false, loopLengthBeats: undefined } })
+    if (!on) setBraceSelected(false)
+  }
+  /** Set Loop End: the brace ends where the playhead is, snapped to the grid — a loop captured on the fly. */
+  function setLoopEndHere() {
+    const rel = engine.currentBeat - clip.startBeat
+    if (rel > quant / 2) setLoopLength(rel)
+  }
+  function dupLoop() {
+    const r = duplicateLoop(clip, newNoteId, barBeats)
+    if (r) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: r })
+  }
+  function cropClip() {
+    const { start, end } = region()
+    if (start === 0 && end >= clip.durationBeats - 1e-6) return
+    const r = cropToRange(clip, start, end)
+    if (r) { dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: r }); setTimeSel(null); setStepBeat(0) }
+  }
+  function selectInLoop() {
+    const { start, end } = region()
+    setSelectedNotes(new Set(notesInRange(clip.notes, start, end).map(n => n.id)))
+    setBraceSelected(false)
+  }
+  function timeCommand(op: 'insert' | 'delete' | 'duplicate') {
+    const { start, end } = region()
+    const span = end - start
+    if (op !== 'insert') setTimeSel(null)
+    if (op === 'insert') dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes: insertTime(clip.notes, end, span), durationBeats: clip.durationBeats + span } })
+    else if (op === 'delete') {
+      const newDur = Math.max(barBeats, clip.durationBeats - span)
+      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes: deleteTime(clip.notes, start, end), durationBeats: newDur, ...(clip.loopLengthBeats ? { loopLengthBeats: Math.min(clip.loopLengthBeats, newDur) } : {}) } })
+    } else dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes: duplicateTime(clip.notes, start, end, newNoteId), durationBeats: clip.durationBeats + span } })
+  }
+  const rangeWord = regionName
+
+  // The Pitch & Time utilities (lib/pitch-time.ts), on the selection or the
+  // whole clip. Each is ONE UPDATE_MIDI_NOTES — one undo step — and the same
+  // arithmetic the voice path runs, so "invert the lead" and the Invert button
+  // cannot disagree.
+  const patchMany = (patches: { id: string; patch: Partial<MidiNote> }[]) => {
+    if (patches.length) dispatch({ type: 'UPDATE_MIDI_NOTES', clipId: clip.id, notes: patches })
+  }
+  /** Humanise: each start moved up to `humanizeAmount` % of half a grid step,
+   *  earlier or later. A perfectly quantised part is the single clearest tell
+   *  that music was typed rather than played. Seeded per run, so undo → redo
+   *  gives the same performance back. Timing only — velocity's randomness is
+   *  the deviation lane's, per pass. */
+  function humanize() {
+    humanizeRuns.current++
+    patchMany(humanizeNotes(targetNotes(), humanizeAmount, quant, `${clip.id}:${humanizeRuns.current}`))
+  }
+  /** Up or down by scale degree when the scale is on (Live 12); a semitone otherwise. */
+  function transposeStep(dir: 1 | -1) {
+    if (isDrum) return
+    patchMany(scaleOn ? transposeDegrees(targetNotes(), dir, rollScale) : transposeNotes(targetNotes(), dir))
+  }
+  function invert() { if (!isDrum) patchMany(invertNotes(targetNotes(), scaleOn ? rollScale : null)) }
+  /** Backwards within the selection — or the whole clip when nothing is selected. */
+  function reverse() {
+    patchMany(reverseNotes(targetNotes(), selectedNotes.size ? undefined : { start: 0, end: clip.durationBeats }))
+  }
+  /** Add Interval: the copies are new notes, and they become the selection (Live). */
+  function addIntervalNow() {
+    if (isDrum) return
+    const added = addInterval(targetNotes(), intervalSize, scaleOn ? rollScale : null, () => crypto.randomUUID())
+    if (!added.length) return
+    dispatch({ type: 'ADD_MIDI_NOTES', clipId: clip.id, notes: added })
+    setSelectedNotes(new Set(added.map(n => n.id)))
+  }
+  function stretch(factor: number) { patchMany(stretchNotes(targetNotes(), factor)) }
+  function applyLength(beats = lengthBeats) { patchMany(setLength(targetNotes(), beats)) }
+  function openPitchTime() {
+    if (ptAnchor) { setPtAnchor(null); return }
+    const r = ptBtnRef.current?.getBoundingClientRect()
+    setPtAnchor(r ? { x: r.left, y: r.bottom + 6 } : { x: 240, y: 240 })
+  }
+
+  // Note surgery (lib/note-ops.ts). A splice is one undo step; the pieces of
+  // a split keep the first piece's id so the selection stays on it.
+  const newNoteId = () => crypto.randomUUID()
+  function splice(s: Splice, select?: 'added') {
+    if (!s.remove.length && !s.add.length) return
+    dispatch({ type: 'SPLICE_MIDI_NOTES', clipId: clip.id, remove: s.remove, add: s.add })
+    if (select === 'added') setSelectedNotes(new Set(s.add.map(n => n.id)))
+  }
+  /** ⌘E: chop the selection on the grid; with nothing selected, split at the
+   *  time selection's edges, else at the insert marker (or the playhead while playing). */
+  function splitOrChop() {
+    if (selectedNotes.size) { splice(chopOnGrid(targetNotes(), quant, newNoteId), 'added'); return }
+    if (timeSel) { splice(splitEach(clip.notes, () => [timeSel.start, timeSel.end], newNoteId), 'added'); return }
+    const rel = engine.currentBeat - clip.startBeat
+    const at = engine.isPlaying && rel > 0 && rel < clip.durationBeats ? rel : stepBeat
+    if (!(at > 0)) return
+    splice(splitAt(clip.notes, at, newNoteId), 'added')
+  }
+  function chopSelected(parts = chopParts) { splice(chopNotes(targetNotes(), parts, newNoteId), 'added') }
+  function joinSelected() { splice(joinNotes(targetNotes()), 'added') }
+  /** ⌘⌥J: the selection scaled into the time selection, else the clip's loop, else the whole clip. */
+  function fitSelectedToRange() {
+    const { start, end } = region()
+    patchMany(fitToRange(targetNotes(), start, end))
+  }
+  /** 0: deactivate the selection — or bring it back when any of it is off. */
+  function toggleActive() {
+    const t = targetNotes()
+    patchMany(setActive(t, anyInactive(t)))
+  }
+  const findScale: Scale | null = project.scale !== 'chromatic' ? rollScale : null
+  const found = useMemo(() => (filterIsEmpty(filter) ? [] : findNotes(clip.notes, filter, { scale: findScale })), [clip.notes, filter, findScale])
+  function selectFound() { if (!filterIsEmpty(filter)) setSelectedNotes(new Set(found.map(n => n.id))) }
+  /** Live's overlap rule, once a drag has ended (lib/note-ops.ts). */
+  const settleOverlaps = (ids: string[]) => { if (ids.length) dispatch({ type: 'RESOLVE_NOTE_OVERLAPS', clipId: clip.id, noteIds: ids }) }
 
   /** Stretch every note to touch the next one that starts after it, so a line
    *  is joined rather than a row of separate blips. Notes with nothing after
@@ -1163,11 +1507,13 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
 
   function transpose(semitones: number) {
     if (isDrum) return
-    patchNotes(n => ({ pitch: Math.max(0, Math.min(127, n.pitch + semitones)) }))
+    patchMany(transposeNotes(targetNotes(), semitones))
   }
 
   function scaleVelocity(mult: number) {
-    patchNotes(n => ({ velocity: Math.max(0.05, Math.min(1, (n.velocity ?? 0.8) * mult)) }))
+    // ⚠️ Velocity is 0–127. This clamped to 1.0 for a while, so "play harder"
+    // quietly turned the notes it touched down to nothing.
+    patchNotes(n => ({ velocity: Math.max(1, Math.min(127, Math.round((n.velocity ?? 100) * mult))) }))
   }
 
   function scaleLength(mult: number) {
@@ -1191,14 +1537,17 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
 
   const rollScope = selectedNotes.size ? `${selectedNotes.size} selected notes` : 'every note in this clip'
   useRegisterCommands([
-    { id: 'roll.quantize', group: 'Notes', label: `Quantise ${rollScope} to the grid`,
+    { id: 'roll.quantize', group: 'Notes', label: `Quantise ${rollScope} — ${describeQuantize(qSettings, quant)}`,
       keywords: 'snap align tighten timing grid straighten on beat q', shortcut: 'Q',
-      run: () => quantizeNotes(1) },
+      run: () => quantizeNotes() },
     { id: 'roll.quantize.half', group: 'Notes', label: `Half-quantise ${rollScope} (keep some feel)`,
       keywords: 'snap partial strength loose groove timing halfway',
-      run: () => quantizeNotes(0.5) },
-    { id: 'roll.humanize', group: 'Notes', label: `Humanise ${rollScope}`,
-      keywords: 'loosen feel random natural played not typed timing velocity groove',
+      run: () => quantizeNotes(50) },
+    { id: 'roll.quantizeSettings', group: 'Notes', label: 'Quantize settings — grid, triplets, starts / ends, amount',
+      keywords: 'quantize settings quantise settings grid triplet amount start end both dialog', shortcut: '⇧⌘U',
+      run: openQuantizeSettings },
+    { id: 'roll.humanize', group: 'Notes', label: `Humanise ${rollScope} — timing by up to ${humanizeAmount}% of the grid`,
+      keywords: 'loosen feel random natural played not typed timing groove amount',
       run: humanize },
     { id: 'roll.legato', group: 'Notes', label: `Join ${rollScope} end to end (legato)`,
       keywords: 'legato connect smooth slur sustain fill gaps length',
@@ -1230,6 +1579,71 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     { id: 'roll.shorter', group: 'Notes', label: `Make ${rollScope} half as long`,
       keywords: 'length duration halve shorten staccato shorter tighter',
       run: () => scaleLength(0.5) },
+    // Pitch & Time (lib/pitch-time.ts) — the panel and each of its buttons.
+    { id: 'roll.pitchTime', group: 'Notes', label: 'Pitch & Time utilities — invert, reverse, add interval, stretch, set length, humanise',
+      keywords: 'pitch & time utilities panel notes box tools', when: () => !isDrum, run: openPitchTime },
+    { id: 'roll.invert', group: 'Notes', label: `Invert ${rollScope} — highest becomes lowest${scaleOn ? ', in key' : ''}`,
+      keywords: 'invert flip upside down mirror pitch contour', when: () => !isDrum, run: invert },
+    { id: 'roll.reverse', group: 'Notes', label: `Reverse ${rollScope} — play it backwards`,
+      keywords: 'reverse backwards retrograde mirror time', run: reverse },
+    { id: 'roll.addInterval', group: 'Notes', label: `Add interval to ${rollScope} — a copy ${describeInterval(intervalSize, scaleOn)} away`,
+      keywords: 'add interval harmonize harmonise stack copy third fifth octave chord voice', when: () => !isDrum, run: addIntervalNow },
+    { id: 'roll.degreeUp', group: 'Notes', label: `Move ${rollScope} up a scale degree`,
+      keywords: 'scale degree step in key up transpose diatonic', shortcut: '↑', when: () => scaleOn, run: () => transposeStep(1) },
+    { id: 'roll.degreeDown', group: 'Notes', label: `Move ${rollScope} down a scale degree`,
+      keywords: 'scale degree step in key down transpose diatonic', shortcut: '↓', when: () => scaleOn, run: () => transposeStep(-1) },
+    { id: 'roll.stretch2', group: 'Notes', label: `Stretch ${rollScope} ×2 — half speed, positions and lengths together`,
+      keywords: 'stretch double twice slower half speed time expand', run: () => stretch(2) },
+    { id: 'roll.stretchHalf', group: 'Notes', label: `Stretch ${rollScope} ÷2 — double speed`,
+      keywords: 'stretch halve squash faster double speed time compress', run: () => stretch(0.5) },
+    { id: 'roll.setLength', group: 'Notes', label: `Set length — make ${rollScope} ${durationLabel(lengthBeats)} long`,
+      keywords: 'set length duration same length every note fixed uniform', run: () => applyLength() },
+    // Note surgery (lib/note-ops.ts).
+    { id: 'roll.split', group: 'Notes', label: selectedNotes.size ? `Chop ${rollScope} on the grid` : 'Split the notes at the playhead',
+      keywords: 'split cut chop grid divide slice notes e', shortcut: '⌘E', run: splitOrChop },
+    { id: 'roll.chop', group: 'Notes', label: `Chop ${rollScope} into ${chopParts} parts`,
+      keywords: 'chop split parts pieces divide equal notes', run: () => chopSelected() },
+    { id: 'roll.chopMore', group: 'Notes', label: `Chop into more parts (${chopParts + 1})`,
+      keywords: 'chop parts more count up', run: () => setChopParts(p => Math.min(64, p + 1)) },
+    { id: 'roll.chopFewer', group: 'Notes', label: `Chop into fewer parts (${Math.max(2, chopParts - 1)})`,
+      keywords: 'chop parts fewer count down', when: () => chopParts > 2, run: () => setChopParts(p => Math.max(2, p - 1)) },
+    { id: 'roll.join', group: 'Notes', label: `Join ${rollScope} — one note per key`,
+      keywords: 'join merge combine glue notes tie', shortcut: '⌘J', run: joinSelected },
+    { id: 'roll.fitRange', group: 'Notes', label: `Fit ${rollScope} to ${clip.loopEnabled && clip.loopLengthBeats ? 'the loop' : 'the clip'}`,
+      keywords: 'fit to time range fill loop clip stretch notes', shortcut: '⌘⌥J', run: fitSelectedToRange },
+    { id: 'roll.deactivate', group: 'Notes', label: anyInactive(targetNotes()) ? `Activate ${rollScope} again` : `Deactivate ${rollScope} — keep them, silence them`,
+      keywords: 'deactivate activate mute notes silence disable enable off on 0', shortcut: '0', run: toggleActive },
+    // Find & Select (lib/find-notes.ts).
+    { id: 'roll.find', group: 'Notes', label: findOpen ? 'Close Find & Select notes' : 'Find & Select notes — filter by pitch, velocity, chance, length, time, scale',
+      keywords: 'find select notes filter search magnifier every nth quiet loud short long', run: () => setFindOpen(v => !v) },
+    { id: 'roll.findSelect', group: 'Notes', label: `Select the ${found.length} notes the Find filter matches`,
+      keywords: 'find select apply filter matches', when: () => !filterIsEmpty(filter), run: selectFound },
+    // The loop brace and time commands (lib/clip-time.ts).
+    { id: 'roll.loop', group: 'Notes', label: brace ? `Stop looping the clip (loops every ${+(brace.end / barBeats).toFixed(2)} bars)` : 'Loop the clip — repeat its pattern',
+      keywords: 'loop the clip clip loop repeat pattern brace on off', run: toggleLoop },
+    { id: 'roll.loopSetEnd', group: 'Notes', label: 'Set loop end at the playhead',
+      keywords: 'set loop end length playhead capture on the fly brace', when: () => !!brace, run: setLoopEndHere },
+    { id: 'roll.dupLoop', group: 'Notes', label: 'Duplicate loop — double it and copy its notes',
+      keywords: 'duplicate loop duplicate the loop double loop brace copy repeat', shortcut: '⌘D', when: () => !!brace, run: dupLoop },
+    { id: 'roll.crop', group: 'Notes', label: 'Crop the clip to its loop',
+      keywords: 'crop clip loop trim cut outside remove', shortcut: '⇧⌘J', when: () => !!brace && brace.end < clip.durationBeats - 1e-6, run: cropClip },
+    { id: 'roll.selectInLoop', group: 'Notes', label: 'Select the notes in the loop',
+      keywords: 'select notes in the loop inside the loop material brace', shortcut: '⇧⌘L', when: () => !!brace, run: selectInLoop },
+    { id: 'roll.insertTime', group: 'Notes', label: `Insert time — ${rangeWord}'s length of silence after it`,
+      keywords: 'insert time silence gap push later clip loop', run: () => timeCommand('insert') },
+    { id: 'roll.deleteTime', group: 'Notes', label: `Delete time — remove ${rangeWord}'s span and close the gap`,
+      keywords: 'delete time remove span close gap cut clip loop', run: () => timeCommand('delete') },
+    { id: 'roll.duplicateTime', group: 'Notes', label: `Duplicate time — copy ${rangeWord}'s span after itself`,
+      keywords: 'duplicate time copy span repeat clip loop', run: () => timeCommand('duplicate') },
+    // Keyboard-only editing (lib/caret.ts).
+    { id: 'roll.timeSelectNotes', group: 'Notes', label: `Select the notes in the time selection (${timeSel ? `${+timeSel.start.toFixed(2)}–${+timeSel.end.toFixed(2)} beats` : 'none'})`,
+      keywords: 'time selection select notes inside enter insert marker', shortcut: 'Enter', when: () => !!timeSel, run: () => { if (timeSel) { setSelectedNotes(new Set(notesInTimeSel(clip.notes, timeSel).map(n => n.id))); setTimeSel(null) } } },
+    { id: 'roll.timeOfNotes', group: 'Notes', label: `Time selection from ${rollScope} — the span they cover`,
+      keywords: 'time selection from notes span enter insert marker', when: () => selectedNotes.size > 0, run: () => { const t = timeOfNotes(targetNotes()); if (t) { setTimeSel(t); setStepBeat(t.start); setSelectedNotes(new Set()) } } },
+    { id: 'roll.caretHome', group: 'Notes', label: 'Insert marker to the clip start',
+      keywords: 'insert marker caret home start beginning cursor', shortcut: 'Home', run: () => { setStepBeat(0); setTimeSel(null) } },
+    { id: 'roll.clipSig', group: 'Notes', label: clip.timeSignatureNum ? `Clip time signature ${clip.timeSignatureNum}/${clip.timeSignatureDen || 4} — back to the song's` : 'Clip time signature — its own bar lines (choose in the Musical bar)',
+      keywords: 'clip time signature clip signature meter bar lines', when: () => !!clip.timeSignatureNum, run: () => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { timeSignatureNum: undefined, timeSignatureDen: undefined } }) },
     { id: 'roll.selectAll', group: 'Notes', label: 'Select every note in this clip',
       keywords: 'all everything notes select', shortcut: '⌘A',
       run: () => setSelectedNotes(new Set(clip.notes.map(n => n.id))) },
@@ -1252,45 +1666,69 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
         const span = Math.max(...sel.map(n => n.startBeat + n.durationBeats)) - Math.min(...sel.map(n => n.startBeat))
         pasteNotes(sel, Math.min(...sel.map(n => n.startBeat)) + span)
       } },
+    // The expression lanes and probability groups (lib/note-chance.ts).
+    { id: 'roll.lane.chance', group: 'Notes', label: 'Chance lane — how often each note plays',
+      keywords: 'chance probability lane expression dice random sometimes', run: () => setLane('chance') },
+    { id: 'roll.lane.deviation', group: 'Notes', label: 'Velocity deviation lane — random ± per pass',
+      keywords: 'velocity deviation lane humanize random expression', run: () => setLane('deviation') },
+    { id: 'roll.group', group: 'Notes', label: groupLabel ? `Probability group: ${groupLabel} → ${groupLabel === 'Play One' ? 'Play All' : 'ungroup'}` : 'Group the selected notes: Play One',
+      keywords: 'probability group play one play all chance notes', when: () => selectedNotes.size > 0, run: cycleGroup },
+    { id: 'roll.fold', group: 'Notes', label: fold ? 'Unfold the piano roll' : 'Fold the piano roll to the notes it uses', keywords: 'fold key tracks pitches used hide empty rows f', when: () => !isDrum, run: () => setFold(v => !v) },
+    { id: 'roll.foldScale', group: 'Notes', label: foldScale ? 'Show every pitch again' : 'Fold the piano roll to the scale', keywords: 'fold scale key tracks in key hide g', when: () => !isDrum, run: () => setFoldScale(v => !v) },
+    { id: 'roll.highlightScale', group: 'Notes', label: highlightScale ? 'Stop highlighting the scale' : 'Highlight the scale on the keys', keywords: 'highlight scale key tint root k', when: () => !isDrum, run: () => setHighlightScale(v => !v) },
+    { id: 'roll.focus', group: 'Notes', label: 'Focus the piano roll on its notes', keywords: 'focus scroll to notes n center', when: () => !isDrum, run: focusNotes },
+    { id: 'roll.stepEntry', group: 'Notes', label: stepEntry ? 'Step entry off' : 'Step entry — write notes one key at a time', keywords: 'step entry insert marker record keys one at a time', when: () => !isDrum, run: () => setStepEntry(v => !v) },
     { id: 'roll.close', group: 'Notes', label: 'Close the piano roll',
       keywords: 'hide dismiss done back arrangement',
       run: () => { setExpandedPianoRollClipId?.(null); setEditTarget?.(null) } },
-  ], [clip.id, clip.notes, selectedNotes, rollScope, isDrum, quant, project.tempo, project.key, project.scale])
+  ], [clip.id, clip.notes, selectedNotes, rollScope, isDrum, quant, project.tempo, project.key, project.scale, groupLabel, fold, foldScale, highlightScale, stepEntry, scaleOn, intervalSize, lengthBeats, humanizeAmount, ptAnchor, chopParts, findOpen, filter, found, clip.loopEnabled, clip.loopLengthBeats, qSettings, qAnchor, braceSelected, clip.durationBeats, clip.timeSignatureNum, clip.timeSignatureDen, barBeats, timeSel])
 
   function handleKeyDown(e: React.KeyboardEvent) {
-    const meta = e.metaKey || e.ctrlKey
     const selected = clip.notes.filter(n => selectedNotes.has(n.id))
+    // What this key means in the roll, from the one table (lib/keymap.ts).
+    const kb = resolveKey(e, ['roll'])?.id
 
-    if (e.key === 'Escape') {
+    // The loop brace, selected (lib/clip-time.ts): ⌘← / ⌘→ shorten / lengthen
+    // by the grid, ⌘↑ / ⌘↓ double / halve, ⌘D duplicates the loop, Esc lets go.
+    if (braceSelected && brace) {
+      if (kb === 'loop.shorter' || kb === 'loop.longer') { e.preventDefault(); e.stopPropagation(); setLoopLength(brace.end + (kb === 'loop.longer' ? quant : -quant)); return }
+      if (kb === 'notes.velUp' || kb === 'notes.velDown') { e.preventDefault(); e.stopPropagation(); setLoopLength(kb === 'notes.velUp' ? brace.end * 2 : brace.end / 2); return }
+      if (kb === 'notes.duplicate') { e.preventDefault(); e.stopPropagation(); dupLoop(); return }
+      if (kb === 'notes.deselect') { e.preventDefault(); e.stopPropagation(); setBraceSelected(false); return }
+    }
+    if (kb === 'notes.crop') { e.preventDefault(); e.stopPropagation(); cropClip(); return }
+    if (kb === 'notes.selectInLoop') { e.preventDefault(); e.stopPropagation(); selectInLoop(); return }
+    if (kb === 'notes.deselect') {
       setSelectedNotes(new Set())
+      setTimeSel(null)
       setChordType(null)
       e.preventDefault(); e.stopPropagation()
       return
     }
-    if (meta && e.key === 'a') {
+    if (kb === 'notes.selectAll') {
       setSelectedNotes(new Set(clip.notes.map(n => n.id)))
       e.preventDefault(); e.stopPropagation()
       return
     }
-    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNotes.size > 0) {
+    if (kb === 'notes.delete' && selectedNotes.size > 0) {
       for (const noteId of selectedNotes) dispatch({ type: 'REMOVE_MIDI_NOTE', clipId: clip.id, noteId })
       setSelectedNotes(new Set())
       e.preventDefault(); e.stopPropagation()
       return
     }
-    if (meta && e.key === 'c' && selected.length > 0) {
+    if (kb === 'notes.copy' && selected.length > 0) {
       _noteClipboard = selected.map(n => ({ ...n }))
       e.preventDefault(); e.stopPropagation()
       return
     }
-    if (meta && e.key === 'x' && selected.length > 0) {
+    if (kb === 'notes.cut' && selected.length > 0) {
       _noteClipboard = selected.map(n => ({ ...n }))
       for (const noteId of selectedNotes) dispatch({ type: 'REMOVE_MIDI_NOTE', clipId: clip.id, noteId })
       setSelectedNotes(new Set())
       e.preventDefault(); e.stopPropagation()
       return
     }
-    if (meta && e.key === 'v' && _noteClipboard && _noteClipboard.length > 0) {
+    if (kb === 'notes.paste' && _noteClipboard && _noteClipboard.length > 0) {
       // Paste at the playhead when it's inside this clip, else after existing notes
       const rel = engine.currentBeat - clip.startBeat
       const at = rel >= 0 && rel <= clip.durationBeats
@@ -1300,20 +1738,94 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       e.preventDefault(); e.stopPropagation()
       return
     }
-    if (meta && e.key === 'd' && selected.length > 0) {
+    if (kb === 'notes.duplicate' && selected.length > 0) {
       const start = Math.min(...selected.map(n => n.startBeat))
       const end   = Math.max(...selected.map(n => n.startBeat + n.durationBeats))
       pasteNotes(selected, start + Math.max(quant, end - start))
       e.preventDefault(); e.stopPropagation()
       return
     }
-    if (e.key === 'q' && !meta && selectedNotes.size > 0) {
-      quantizeNotes(1)
+    if (kb === 'notes.quantize' && selectedNotes.size > 0) {
+      quantizeNotes()
       e.preventDefault(); e.stopPropagation()
       return
     }
+    if (kb === 'notes.quantizeSettings') { e.preventDefault(); e.stopPropagation(); openQuantizeSettings(); return }
     // Arrows: nudge time / transpose pitch (⇧ = octave; drums move by lane)
-    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key) && selected.length > 0) {
+    // Fold (F), Fold to Scale (G), Highlight Scale (K), Focus (N) — lib/roll-rows.ts.
+    // Note surgery (lib/note-ops.ts): E held is the split tool; ⌘E chops or
+    // splits; ⌘J joins; ⌘⌥J fits; 0 deactivates.
+    if (kb === 'notes.splitTool') { e.preventDefault(); e.stopPropagation(); if (!splitting) setSplitting(true); return }
+    if (kb === 'notes.split') { e.preventDefault(); e.stopPropagation(); splitOrChop(); return }
+    if (kb === 'notes.join') { e.preventDefault(); e.stopPropagation(); if (selected.length) joinSelected(); return }
+    if (kb === 'notes.fitRange') { e.preventDefault(); e.stopPropagation(); if (selected.length) fitSelectedToRange(); return }
+    // 0 with notes selected deactivates the notes; with none, the CLIP — the
+    // arrangement's own 0 (Live's Clip Activator) cannot reach it while the
+    // roll has focus, so it is done from here.
+    if (kb === 'notes.deactivate') {
+      e.preventDefault(); e.stopPropagation()
+      if (selected.length) toggleActive()
+      else dispatch({ type: 'SET_CLIPS_ACTIVE', clipIds: [clip.id], active: clip.active === false })
+      return
+    }
+    if (kb === 'notes.fold') { e.preventDefault(); e.stopPropagation(); setFold(v => !v); return }
+    if (kb === 'notes.foldScale') { e.preventDefault(); e.stopPropagation(); setFoldScale(v => !v); return }
+    if (kb === 'notes.highlightScale') { e.preventDefault(); e.stopPropagation(); setHighlightScale(v => !v); return }
+    if (kb === 'notes.focus') { e.preventDefault(); e.stopPropagation(); focusNotes(); return }
+    // Keyboard-only editing (lib/caret.ts). With nothing selected, ← / →
+    // move the insert marker by the grid (step entry wraps at the clip end),
+    // ⌥← / ⌥→ jump it to a note boundary, Home / End to the clip's ends,
+    // ⇧ grows a time selection from it, Enter turns the time into the notes
+    // inside it. With notes selected, ⇧← / ⇧→ resize them by the grid and
+    // Enter turns them into the time they span.
+    if (selected.length === 0 && (kb === 'notes.earlier' || kb === 'notes.later')) {
+      e.preventDefault(); e.stopPropagation()
+      const dir = kb === 'notes.later' ? 1 : -1
+      setStepBeat(b => (stepEntry ? stepMove(b, dir, quant, clip.durationBeats) : moveCaret(b, dir, quant, clip.durationBeats)))
+      setTimeSel(null)
+      return
+    }
+    if (kb === 'notes.boundaryPrev' || kb === 'notes.boundaryNext') {
+      e.preventDefault(); e.stopPropagation()
+      setStepBeat(b => nextBoundary(clip.notes, b, kb === 'notes.boundaryNext' ? 1 : -1, clip.durationBeats))
+      setTimeSel(null)
+      return
+    }
+    if (kb === 'notes.home' || kb === 'notes.end') {
+      e.preventDefault(); e.stopPropagation()
+      setStepBeat(kb === 'notes.home' ? 0 : clip.durationBeats)
+      setTimeSel(null)
+      return
+    }
+    if (kb === 'notes.extendLeft' || kb === 'notes.extendRight' || kb === 'notes.extendBoundaryLeft' || kb === 'notes.extendBoundaryRight') {
+      e.preventDefault(); e.stopPropagation()
+      const dir: 1 | -1 = kb.endsWith('Right') ? 1 : -1
+      if (selected.length) { patchMany(resizeByGrid(selected, dir, quant)); return }
+      const byBoundary = kb.includes('Boundary')
+      setTimeSel(sel => extendTimeSel(sel, stepBeat, dir, (from, d) => (byBoundary ? nextBoundary(clip.notes, from, d, clip.durationBeats) : moveCaret(from, d, quant, clip.durationBeats)), clip.durationBeats))
+      return
+    }
+    if (kb === 'notes.enter') {
+      e.preventDefault(); e.stopPropagation()
+      if (selected.length) {
+        const t = timeOfNotes(selected)
+        if (t) { setTimeSel(t); setStepBeat(t.start); setSelectedNotes(new Set()) }
+      } else if (timeSel) {
+        setSelectedNotes(new Set(notesInTimeSel(clip.notes, timeSel).map(n => n.id)))
+        setTimeSel(null)
+      }
+      return
+    }
+    // The expression lanes by key (lib/keymap.ts): ⌘↑↓ velocity, ⇧⌘↑↓ deviation, ⌘⌥↑↓ chance, ⌘G group.
+    if (kb === 'notes.velUp' || kb === 'notes.velDown' || kb === 'notes.devUp' || kb === 'notes.devDown' || kb === 'notes.chanceUp' || kb === 'notes.chanceDown') {
+      e.preventDefault(); e.stopPropagation()
+      const field: LaneField = kb.startsWith('notes.vel') ? 'velocity' : kb.startsWith('notes.dev') ? 'deviation' : 'chance'
+      nudgeLane(field, kb.endsWith('Up') ? 5 : -5)
+      setLane(field)
+      return
+    }
+    if (kb === 'notes.group') { e.preventDefault(); e.stopPropagation(); cycleGroup(); return }
+    if ((kb === 'notes.earlier' || kb === 'notes.later' || kb === 'notes.up' || kb === 'notes.down' || kb === 'notes.upOctave' || kb === 'notes.downOctave' || kb === 'notes.upSemitone' || kb === 'notes.downSemitone') && selected.length > 0) {
       e.preventDefault(); e.stopPropagation()
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         const d = (e.key === 'ArrowLeft' ? -1 : 1) * quant
@@ -1322,16 +1834,16 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
         }
       } else {
         const dir = e.key === 'ArrowUp' ? 1 : -1
-        for (const n of selected) {
-          let newPitch: number
-          if (isDrum) {
+        if (isDrum) {
+          for (const n of selected) {
             const row = DRUM_PITCH_TO_ROW.get(n.pitch) ?? 0
-            newPitch = DRUM_LANES[Math.max(0, Math.min(DRUM_LANES.length - 1, row - dir))].pitch
-          } else {
-            newPitch = Math.max(0, Math.min(127, n.pitch + dir * (e.shiftKey ? 12 : 1)))
+            const newPitch = DRUM_LANES[Math.max(0, Math.min(DRUM_LANES.length - 1, row - dir))].pitch
+            dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id, patch: { pitch: newPitch } })
           }
-          dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id, patch: { pitch: newPitch } })
-        }
+        } else if (e.shiftKey) transpose(dir * 12)
+        // With the scale on, ↑ / ↓ climb the scale (Live 12); ⌥ is still a semitone.
+        else if (e.altKey || !scaleOn) transpose(dir)
+        else transposeStep(dir)
       }
       return
     }
@@ -1470,7 +1982,11 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       ref={rootRef}
       style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-surface)', outline: 'none' }}
       tabIndex={-1}
+      data-help-id="piano-roll"
+      data-clip-editor={clip.id}
       onKeyDown={handleKeyDown}
+      onKeyUp={e => { if (splitting && resolveKey(e, ['roll'])?.id === 'notes.splitTool') setSplitting(false) }}
+      onBlur={() => { if (splitting) setSplitting(false) }}
       // Scrolling inside the roll must not also pan the arrangement behind it
       // (ArrangementView has a handleWheel on the whole track area)
       onWheel={e => e.stopPropagation()}
@@ -1490,15 +2006,23 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           <span style={{ fontSize: 11, color: 'var(--text-secondary)', marginLeft: 2, marginRight: 4 }}>{clip.name}</span>
 
           <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
-          {(['edit', 'erase'] as Tool[]).map(t => (
-            <button key={t} onClick={() => setTool(t)}
+          {(['edit', 'draw', 'erase'] as Tool[]).map(t => (
+            <button key={t} onClick={() => setTool(t)} data-help-id={t === 'draw' ? 'draw-mode' : undefined} aria-pressed={tool === t}
               title={t === 'edit'
                 ? 'Edit — click empty: draw · drag note: move · shift+click: multi-select · shift+drag: box-select'
-                : 'Erase — click a note or drag a box to delete'}
+                : t === 'draw'
+                  ? `Draw Mode (B; hold B to draw and let go) — click: a grid-length note · drag across: one note per step${draw.pitchLock ? ', on one pitch (⌥ frees it)' : ', following the pointer (⌥ locks it)'} · drag up/down: velocity · drag back: erase · click a note: erase`
+                  : 'Erase — click a note or drag a box to delete'}
               style={{ ...prBtn, background: tool === t ? 'var(--bg-surface)' : 'transparent', color: tool === t ? 'var(--text-primary)' : 'var(--text-muted)', border: tool === t ? '1px solid var(--border)' : '1px solid transparent', fontSize: 9, padding: '2px 6px' }}>
               {t.charAt(0).toUpperCase() + t.slice(1)}
             </button>
           ))}
+
+          <button onClick={() => setFindOpen(v => !v)} aria-pressed={findOpen} data-help-id="roll-find"
+            title="Find & Select notes — a filter over the clip's notes (pitch, velocity, chance, length, time, every nth, condition, scale) that becomes the selection"
+            style={{ ...prBtn, background: findOpen ? 'var(--bg-surface)' : 'transparent', color: findOpen ? 'var(--text-primary)' : 'var(--text-muted)', border: findOpen ? '1px solid var(--border)' : '1px solid transparent', fontSize: 9, padding: '2px 6px' }}>
+            ⌕ Find
+          </button>
 
           <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
           {([2, 1, 0.5, 0.25] as Quant[]).map(q => { const label = QUANT_LABELS[q]; return (
@@ -1520,11 +2044,23 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
 
           <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
           <button
-            onClick={() => quantizeNotes(1)}
+            ref={qBtnRef}
+            data-help-id="roll-quantize"
+            onClick={() => quantizeNotes()}
+            onContextMenu={e => { e.preventDefault(); openQuantizeSettings() }}
             disabled={selectedNotes.size === 0}
-            title={selectedNotes.size ? `Snap ${selectedNotes.size} selected note${selectedNotes.size === 1 ? '' : 's'} to the ${QUANT_LABELS[quant]} grid (Q)` : 'Select notes to quantize (Q)'}
+            title={`${selectedNotes.size ? `Quantize ${selectedNotes.size} selected note${selectedNotes.size === 1 ? '' : 's'}` : 'Select notes to quantize'} — ${describeQuantize(qSettings, quant)} (Q or ⌘U; right-click or ⇧⌘U for settings)`}
             style={{ ...prBtn, fontSize: 9, padding: '2px 6px', opacity: selectedNotes.size ? 1 : 0.4, cursor: selectedNotes.size ? 'pointer' : 'default' }}
           >Quantize</button>
+          <button data-help-id="roll-quantize-settings" onClick={openQuantizeSettings} aria-pressed={!!qAnchor} title="Quantize Settings (⇧⌘U) — grid, triplets, starts / ends, amount"
+            style={{ ...prBtn, fontSize: 9, padding: '2px 4px', color: qAnchor ? 'var(--accent-light)' : 'var(--text-muted)' }}>⚙</button>
+          {qAnchor && (
+            <QuantizeDialog anchor={qAnchor} settings={qSettings} editorGrid={quant} scope={rollScope}
+              count={quantizePatches(targetNotes(), qSettings, quant).length}
+              onChange={patch => setQuantizeSettings(patch)}
+              onApply={() => { quantizeNotes(); setQAnchor(null) }}
+              onClose={() => setQAnchor(null)} />
+          )}
 
           <div style={{ flex: 1 }} />
 
@@ -1812,6 +2348,11 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
         )}
 
         {/* Row 2: MUSICAL — draw mode, melodic clips only */}
+        {findOpen && (
+          <FindNotesBar filter={filter} setFilter={setFilter} count={found.length} total={clip.notes.length}
+            onSelect={selectFound} onClose={() => setFindOpen(false)} scaleOn={!!findScale} />
+        )}
+
         {tool === 'edit' && !isDrum && (
           <div style={{
             height: CHORD_ROW_H, display: 'flex', alignItems: 'center', gap: 2, padding: '0 8px',
@@ -1834,6 +2375,58 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
               {scaleLock ? `♩ ${NOTE_NAMES[project.key]} ${project.scale}` : '♩ Scale'}
             </button>
 
+            {!isDrum && (
+              <>
+                <button onClick={() => setFold(v => !v)} aria-pressed={fold} data-help-id="roll-fold" title="Fold (F) — show only the pitches this clip uses"
+                  style={{ ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0, background: fold ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent', color: fold ? 'var(--accent-light)' : 'var(--text-muted)', border: fold ? '1px solid rgb(var(--accent-rgb) / 0.4)' : '1px solid transparent' }}>Fold</button>
+                <button onClick={() => setFoldScale(v => !v)} aria-pressed={foldScale} data-help-id="roll-fold-scale" title={`Fold to Scale (G) — show only the notes of ${NOTE_NAMES[project.key]} ${project.scale}, and any note outside it`}
+                  style={{ ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0, background: foldScale ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent', color: foldScale ? 'var(--accent-light)' : 'var(--text-muted)', border: foldScale ? '1px solid rgb(var(--accent-rgb) / 0.4)' : '1px solid transparent' }}>Scale fold</button>
+                <button onClick={() => setHighlightScale(v => !v)} aria-pressed={highlightScale} data-help-id="roll-highlight-scale" title="Highlight Scale (K) — tint the scale on the keys and the grid, the root more so"
+                  style={{ ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0, background: highlightScale ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent', color: highlightScale ? 'var(--accent-light)' : 'var(--text-muted)', border: highlightScale ? '1px solid rgb(var(--accent-rgb) / 0.4)' : '1px solid transparent' }}>Highlight</button>
+                <button onClick={focusNotes} data-help-id="roll-focus" title="Focus (N) — scroll to where the notes are"
+                  style={{ ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0 }}>Focus</button>
+                <button onClick={() => setStepEntry(v => !v)} aria-pressed={stepEntry} data-help-id="roll-step-entry" title="Step entry — play a key to write a note at the insert marker and step on by the grid; ← / → move the marker"
+                  style={{ ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0, background: stepEntry ? 'rgba(245,158,11,0.18)' : 'transparent', color: stepEntry ? '#f59e0b' : 'var(--text-muted)', border: stepEntry ? '1px solid rgba(245,158,11,0.5)' : '1px solid transparent' }}>Step</button>
+                <button ref={ptBtnRef} onClick={openPitchTime} aria-pressed={!!ptAnchor} data-help-id="pitch-time" title="Pitch & Time — transpose, invert, add interval, stretch, set length, humanise, reverse, legato"
+                  style={{ ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0, background: ptAnchor ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent', color: ptAnchor ? 'var(--accent-light)' : 'var(--text-muted)', border: ptAnchor ? '1px solid rgb(var(--accent-rgb) / 0.4)' : '1px solid transparent' }}>Pitch &amp; Time</button>
+                {/* The loop brace and time commands (lib/clip-time.ts) */}
+                <div style={{ width: 1, height: 12, background: 'var(--border)', flexShrink: 0, margin: '0 2px' }} />
+                <button onClick={toggleLoop} aria-pressed={!!brace} data-help-id="roll-loop" title={brace ? `Looping every ${+(brace.end / barBeats).toFixed(2)} bars — click to stop` : 'Loop the clip — repeat its pattern every loop length'}
+                  style={{ ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0, background: brace ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent', color: brace ? 'var(--accent-light)' : 'var(--text-muted)', border: brace ? '1px solid rgb(var(--accent-rgb) / 0.4)' : '1px solid transparent' }}>
+                  Loop{brace ? ` ${+(brace.end / barBeats).toFixed(2)}` : ''}
+                </button>
+                {brace && (
+                  <>
+                    <button onClick={setLoopEndHere} data-help-id="roll-loop-set-end" title="Set Loop End — the loop ends where the playhead is (snapped to the grid)"
+                      style={{ ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0 }}>Set End</button>
+                    <button onClick={dupLoop} data-help-id="roll-dup-loop" title="Duplicate Loop (⌘D with the brace selected) — the loop doubles and its notes are copied"
+                      style={{ ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0 }}>Dup Loop</button>
+                    <button onClick={cropClip} data-help-id="roll-crop" title="Crop (⇧⌘J) — notes outside the loop go, the loop becomes the clip"
+                      style={{ ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0 }}>Crop</button>
+                  </>
+                )}
+                <select data-help-id="roll-clip-sig" aria-label="Clip time signature" title="The clip's own time signature — draws its bar lines (the song's without one)"
+                  value={clip.timeSignatureNum ? `${clip.timeSignatureNum}/${clip.timeSignatureDen || 4}` : ''}
+                  onChange={e => { const [n, d] = e.target.value.split('/').map(Number); dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: e.target.value ? { timeSignatureNum: n, timeSignatureDen: d } : { timeSignatureNum: undefined, timeSignatureDen: undefined } }) }}
+                  style={{ fontSize: 9, padding: '0 2px', background: 'transparent', color: clip.timeSignatureNum ? 'var(--text-secondary)' : 'var(--text-muted)', border: '1px solid transparent', borderRadius: 3, flexShrink: 0 }}>
+                  <option value="">{project.timeSignatureNum || 4}/{project.timeSignatureDen || 4} (song)</option>
+                  {['2/4', '3/4', '4/4', '5/4', '6/8', '7/8', '9/8', '12/8'].map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                {ptAnchor && (
+                  <PitchTimePanel
+                    anchor={ptAnchor} onClose={() => setPtAnchor(null)} ignoreOutside={ptBtnRef}
+                    scope={rollScope} scaleOn={scaleOn} scaleName={`${NOTE_NAMES[project.key]} ${project.scale}`}
+                    intervalSize={intervalSize} setIntervalSize={setIntervalSize}
+                    stretchFactor={stretchFactor} setStretchFactor={setStretchFactor}
+                    lengthBeats={lengthBeats} setLengthBeats={setLengthBeats}
+                    humanizeAmount={humanizeAmount} setHumanizeAmount={setHumanizeAmount}
+                    onTranspose={steps => (Math.abs(steps) === 1 ? transposeStep(steps as 1 | -1) : scaleOn ? patchMany(transposeDegrees(targetNotes(), steps, rollScale)) : transpose(steps))}
+                    onInvert={invert} onAddInterval={addIntervalNow} onStretch={stretch} onSetLength={() => applyLength()}
+                    onHumanize={humanize} onReverse={reverse} onLegato={legato}
+                  />
+                )}
+              </>
+            )}
             <div style={{ width: 1, height: 12, background: 'var(--border)', flexShrink: 0, margin: '0 2px' }} />
 
             {/* Chord stamp buttons */}
@@ -1878,11 +2471,13 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           />
         ) : (
           <PianoKeys
+            rows={rows}
+            root={project.key}
             scrollTop={scrollTop}
             hoverPitch={hoverPitch}
             onPlayNote={playNote}
             trackColor={color}
-            scaleLock={scaleLock}
+            scaleLock={scaleLock || highlightScale}
             inScalePitches={inScalePitches}
             noteH={noteH}
           />
@@ -1893,7 +2488,9 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           {/* Note grid */}
           <div
             ref={gridRef}
-            style={{ flex: 1, overflow: 'hidden', position: 'relative', cursor: tool === 'edit' ? (hoverEdge ? 'ew-resize' : 'crosshair') : 'cell', touchAction: isMobile ? 'none' : undefined }}
+            data-help-id="roll-grid"
+            data-splitting={splitting || undefined}
+            style={{ flex: 1, overflow: 'hidden', position: 'relative', cursor: splitting ? 'col-resize' : tool === 'edit' ? (hoverEdge ? 'ew-resize' : 'crosshair') : tool === 'draw' ? 'copy' : 'cell', touchAction: isMobile ? 'none' : undefined }}
             onMouseDown={handleGridMouseDown}
             onMouseMove={handleGridMouseMove}
             onMouseLeave={() => setHoverPitch(null)}
@@ -1908,15 +2505,18 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                 same tint on the piano keys to the left. */}
             <div style={{ position: 'absolute', top: -scrollTop, left: 0, width: totalW }}>
               {Array.from({ length: rowCount }, (_, i) => {
-                const pitch = isDrum ? DRUM_LANES[i].pitch : NUM_NOTES - 1 - i
+                const pitch = isDrum ? DRUM_LANES[i].pitch : rows[i]
                 const black = !isDrum && isBlack(pitch)
                 const hover = hoverPitch === pitch
-                const inScale = scaleLock && !isDrum && inScalePitches.has(pitch % 12)
+                const inScale = (scaleLock || highlightScale) && !isDrum && inScalePitches.has(pitch % 12)
+                const isRoot = inScale && pitch % 12 === project.key
                 const bg = hover
                   ? `${color}20`
-                  : inScale
-                    ? (black ? 'rgb(var(--accent-rgb) / 0.2)' : 'rgb(var(--accent-rgb) / 0.14)')
-                    : black ? '#1a1a1a' : isDrum && i % 2 === 0 ? '#1c1c1c' : '#1e1e1e'
+                  : isRoot
+                    ? 'rgb(var(--accent-rgb) / 0.26)'
+                    : inScale
+                      ? (black ? 'rgb(var(--accent-rgb) / 0.2)' : 'rgb(var(--accent-rgb) / 0.14)')
+                      : black ? '#1a1a1a' : isDrum && i % 2 === 0 ? '#1c1c1c' : '#1e1e1e'
                 return (
                   <div key={pitch} style={{
                     height: rowH, background: bg,
@@ -1932,7 +2532,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
               {Array.from({ length: Math.ceil(totalW / beatW) + 1 }, (_, i) => (
                 <div key={i} style={{
                   position: 'absolute', left: i * beatW, top: 0, bottom: 0, width: 1,
-                  background: i % 4 === 0 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.04)',
+                  background: i % clipBarBeats === 0 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.04)',
                 }} />
               ))}
             </div>
@@ -1946,9 +2546,13 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                 const w = Math.max(4, note.durationBeats * beatW - 1)
                 const sel = selectedNotes.has(note.id)
                 const hasPreset = !!note.presetId
+                // A deactivated note (0) is kept in place, drawn hollow and dim.
+                const off = note.active === false
                 return (
                   <div
                     key={note.id}
+                    data-note-id={note.id}
+                    data-note-active={off ? 'false' : undefined}
                     onContextMenu={e => {
                       e.preventDefault()
                       e.stopPropagation()
@@ -1957,12 +2561,12 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                     style={{
                       position: 'absolute', left: x, top: y + 1,
                       width: w, height: rowH - 2,
-                      background: color,
-                      border: sel ? '1px solid #fff' : hasPreset ? `1px solid var(--accent-light)` : `1px solid ${color}cc`,
+                      background: off ? 'transparent' : color,
+                      border: sel ? '1px solid #fff' : off ? `1px dashed ${color}` : hasPreset ? `1px solid var(--accent-light)` : `1px solid ${color}cc`,
                       boxShadow: sel ? '0 0 0 1px #fff, 0 0 6px rgba(255,255,255,0.55)' : undefined,
                       filter: sel ? 'brightness(1.3)' : undefined,
                       borderRadius: 2, boxSizing: 'border-box',
-                      opacity: sel ? 1 : 0.9, cursor: 'context-menu',
+                      opacity: off ? (sel ? 0.7 : 0.45) : sel ? 1 : 0.9, cursor: 'context-menu',
                     }}
                   />
                 )
@@ -1979,6 +2583,46 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
 
             {/* Playhead */}
             <PlayheadLine clipStart={clip.startBeat} clipDuration={clip.durationBeats} beatW={beatW} scrollLeft={scrollLeft} />
+            {/* The insert marker (lib/caret.ts) — amber and bright in step entry, a thin line otherwise */}
+            <div data-help-id={stepEntry ? 'step-marker' : 'insert-marker'} data-step-beat={stepBeat} data-beat={stepBeat}
+              style={{ position: 'absolute', top: 0, bottom: 0, left: stepBeat * beatW - scrollLeft, width: stepEntry ? 2 : 1, pointerEvents: 'none', zIndex: 6,
+                background: stepEntry ? '#f59e0b' : 'rgba(255,255,255,0.45)', boxShadow: stepEntry ? '0 0 4px rgba(245,158,11,0.7)' : undefined }} />
+            {/* The time selection grown from it with ⇧← / ⇧→ */}
+            {timeSel && (
+              <div data-help-id="time-selection" data-start={timeSel.start} data-end={timeSel.end}
+                style={{ position: 'absolute', top: 0, bottom: 0, left: timeSel.start * beatW - scrollLeft, width: (timeSel.end - timeSel.start) * beatW, pointerEvents: 'none', zIndex: 5,
+                  background: 'rgb(var(--accent-rgb) / 0.16)', borderLeft: '1px solid rgb(var(--accent-rgb) / 0.6)', borderRight: '1px solid rgb(var(--accent-rgb) / 0.6)' }} />
+            )}
+
+            {/* The loop brace (lib/clip-time.ts): click to select, drag the end to resize */}
+            {brace && (
+              <div data-help-id="loop-brace" data-loop-end={brace.end} aria-pressed={braceSelected}
+                onMouseDown={e => { e.stopPropagation(); setBraceSelected(true); setSelectedNotes(new Set()) }}
+                title="Loop brace — click to select it; ⌘← / ⌘→ shorten / lengthen by the grid, ⌘↑ / ⌘↓ double / halve, ⌘D duplicates the loop; drag the end to resize"
+                style={{ position: 'absolute', top: 0, left: -scrollLeft, width: Math.max(4, brace.end * beatW), height: 6, zIndex: 9, cursor: 'pointer',
+                  background: braceSelected ? 'var(--accent-light)' : 'rgb(var(--accent-rgb) / 0.55)', borderRadius: '0 0 3px 0' }}>
+                <div data-help-id="loop-brace-end"
+                  onMouseDown={e => {
+                    e.stopPropagation(); e.preventDefault()
+                    const startX = e.clientX, L0 = brace.end
+                    const onMove = (ev: MouseEvent) => setLoopLength(L0 + (ev.clientX - startX) / beatW)
+                    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp) }
+                    document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp)
+                  }}
+                  style={{ position: 'absolute', right: -4, top: -1, width: 8, height: 8, background: 'var(--accent-light)', cursor: 'ew-resize', borderRadius: 2 }} />
+              </div>
+            )}
+
+            {/* Stretch markers over a selection of two or more notes (lib/pitch-time.ts) */}
+            {selectedNotes.size >= 2 && tool === 'edit' && (
+              <StretchMarkers
+                notes={clip.notes.filter(n => selectedNotes.has(n.id))}
+                beatW={beatW} scrollLeft={scrollLeft} top={brace ? 7 : 0}
+                snap={(b, free) => snapUnless(free, b)}
+                apply={patchMany}
+                onDone={() => settleOverlaps([...selectedNotes])}
+              />
+            )}
 
             {/* Selection rectangle */}
             {selRect && (
@@ -1992,14 +2636,31 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
             )}
           </div>
 
-          {/* Velocity lane */}
+          {/* Expression lanes — Velocity, Deviation, Chance — one at a time, with
+              Randomize / Amount / Ramp for the selection (lib/note-chance.ts). */}
+          <div data-help-id="note-lanes" style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 6px', borderTop: '1px solid var(--border)', background: 'var(--bg-surface)', fontSize: 9 }}>
+            {(['velocity', 'deviation', 'chance'] as LaneField[]).map(f => (
+              <button key={f} onClick={() => setLane(f)} aria-pressed={lane === f} data-help-id={`lane-${f}`}
+                style={{ ...prBtn, fontSize: 9, padding: '1px 6px', background: lane === f ? 'var(--bg-card)' : 'transparent', color: lane === f ? 'var(--text-primary)' : 'var(--text-muted)', border: lane === f ? '1px solid var(--border)' : '1px solid transparent', textTransform: 'capitalize' }}>{f}</button>
+            ))}
+            <div style={{ width: 1, height: 12, background: 'var(--border)', margin: '0 2px' }} />
+            <button onClick={randomizeSelected} disabled={!selectedNotes.size} data-help-id="lane-randomize" title={`Randomize the selected notes' ${lane} by up to ±${randAmount}% (repeatable — the same seed each time)`}
+              style={{ ...prBtn, fontSize: 9, padding: '1px 6px', opacity: selectedNotes.size ? 1 : 0.4 }}>Randomize</button>
+            <Knob value={randAmount} min={0} max={100} defaultValue={25} size={16} spec={{ label: 'Randomize amount', min: 0, max: 100, unit: '%' }} onChange={v => setRandAmount(Math.round(v))} />
+            <button onClick={rampSelected} disabled={selectedNotes.size < 2} data-help-id="lane-ramp" title={`Ramp the selected notes' ${lane} from the first to the last`}
+              style={{ ...prBtn, fontSize: 9, padding: '1px 6px', opacity: selectedNotes.size >= 2 ? 1 : 0.4 }}>Ramp</button>
+            <div style={{ width: 1, height: 12, background: 'var(--border)', margin: '0 2px' }} />
+            <button onClick={cycleGroup} disabled={!selectedNotes.size} data-help-id="lane-group" title="Probability group for the selected notes (⌘G): Play One → Play All → ungroup"
+              style={{ ...prBtn, fontSize: 9, padding: '1px 6px', opacity: selectedNotes.size ? 1 : 0.4, color: groupLabel ? '#f59e0b' : undefined }}>{groupLabel ?? 'Group'}</button>
+          </div>
           <VelocityLane
             clip={clip}
             beatW={beatW}
             scrollLeft={scrollLeft}
             trackColor={color}
             selectedNotes={selectedNotes}
-            onVelocityChange={(noteId, velocity) => dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId, patch: { velocity } })}
+            field={lane}
+            onVelocityChange={(noteId, value) => dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId, patch: lanePatch(lane, value) })}
           />
         </div>
       </div>

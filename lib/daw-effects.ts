@@ -13,6 +13,13 @@ export interface EffectHandle {
   /** The song's bpm where the playhead is — only a tempo-synced effect cares.
    *  Called live as the playhead crosses a tempo change, so it must not rebuild. */
   setTempo?(bpm: number): void
+  /**
+   * Frames this device holds the signal for — a lookahead, a ring buffer, an
+   * FFT block. Absent means none. The engine sums a chain's and delays the
+   * other tracks to match (lib/latency.ts), so a slow device does not put
+   * its track behind the rest of the song.
+   */
+  latencySamples?: number
   dispose(): void
 }
 
@@ -907,6 +914,8 @@ export function buildEffectsChain(ctx: AudioContext, effects: TrackEffect[], tem
   handles: Map<string, EffectHandle>
   /** Retime every tempo-synced effect to the section the playhead is in. */
   setTempo(bpm: number): void
+  /** Frames the whole chain holds the signal for — the sum of its devices'. */
+  latencySamples(): number
   dispose(): void
 } {
   const input  = ctx.createGain()
@@ -950,6 +959,7 @@ export function buildEffectsChain(ctx: AudioContext, effects: TrackEffect[], tem
     output,
     handles,
     setTempo(bpm) { for (const h of handles.values()) h.setTempo?.(bpm) },
+    latencySamples() { let n = 0; for (const h of handles.values()) n += h.latencySamples ?? 0; return n },
     dispose() {
       for (const h of handles.values()) h.dispose()
       input.disconnect()

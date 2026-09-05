@@ -80,6 +80,9 @@ function describeStep(a: any): { icon: string; text: string; where: string } {
     case 'ADD_MIDI_NOTE': return { icon: '♪', text: `Note · ${pitchName(a.note.pitch)}`, where: 'Piano roll / step seq' }
     case 'UPDATE_MIDI_NOTE': return { icon: '✎', text: `Edited note${a.patch?.pitch != null ? ` → ${pitchName(a.patch.pitch)}` : a.patch?.startBeat != null ? ' (moved)' : ''}`, where: 'Piano roll' }
     case 'REMOVE_MIDI_NOTE': return { icon: '✕', text: 'Removed a note', where: 'Piano roll / step seq' }
+    case 'UPDATE_MIDI_NOTES': return { icon: '✎', text: `Edited ${a.notes?.length ?? ''} notes`, where: 'Piano roll' }
+    case 'ADD_MIDI_NOTES': return { icon: '♪', text: `Added ${a.notes?.length ?? ''} notes`, where: 'Piano roll' }
+    case 'SPLICE_MIDI_NOTES': return { icon: '✂', text: (a.add?.length ?? 0) > (a.remove?.length ?? 0) ? `Split into ${a.add?.length} notes` : `Joined ${a.remove?.length} notes`, where: 'Piano roll' }
     case 'UPDATE_TRACK': return { icon: '🎚', text: `Adjusted ${Object.keys(a.patch ?? {}).join(', ') || 'track'}`, where: 'Mixer / track header' }
     case 'ADD_EFFECT': case 'ADD_CLIP_EFFECT': return { icon: '🌫', text: 'Added an effect', where: 'FX chain' }
     case 'UPDATE_EFFECT': case 'UPDATE_CLIP_EFFECT': return { icon: '🎚', text: 'Tuned an effect', where: 'FX chain' }

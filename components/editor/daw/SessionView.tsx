@@ -9,6 +9,7 @@ import { useDaw, extractPeaks, makeAudioClip } from '@/lib/daw-state'
 import type { DawTrack, DawClip, LaunchQuantization, FollowAction, CrossfaderSide, Scene } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip } from '@/lib/daw-types'
 import { sessionCaptureToClips } from '@/lib/daw-session'
+import { LAUNCH_MODES, LAUNCH_MODE_LABEL, LAUNCH_MODE_HELP, modeOf } from '@/lib/launch'
 import { apHeader, apTitle, apControl, apSelect, apDivider, apReadout } from './apollo-chrome'
 import { libraryGetAll } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
@@ -208,9 +209,11 @@ interface ClipSlotProps {
   onDragStart: (e: React.DragEvent, trackId: string, sceneIndex: number) => void
   onDrop: (e: React.DragEvent, destTrackId: string, destSceneIndex: number) => void
   onFollowAction: (trackId: string, action: FollowAction, fromSceneIndex: number) => void
+  /** The slot last pressed or right-clicked — what the ⌘K launch commands act on. */
+  onTouch: (trackId: string, sceneIndex: number) => void
 }
 
-function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, onDragStart, onDrop, onFollowAction }: ClipSlotProps) {
+function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, onDragStart, onDrop, onFollowAction, onTouch }: ClipSlotProps) {
   const { dispatch, engine, project } = useDaw()
   const [displayState, setDisplayState] = useState<SlotDisplayState>('idle')
   const [progress, setProgress]         = useState(0)
@@ -327,12 +330,19 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
-  async function handleTrigger() {
+  // A press and a release, not a click: Gate plays only while the button is
+  // held and Repeat retriggers until it is let go (lib/launch.ts). Trigger and
+  // Toggle ignore the release, so every slot can use the same two handlers.
+  async function handleTrigger(velocity?: number) {
+    onTouch(track.id, sceneIndex)
     if (audioClip) {
-      await engine.queueSession(track.id, audioClip, audioClip.launchQuantization)
+      await engine.queueSession(track.id, audioClip, audioClip.launchQuantization, velocity != null ? { velocity } : undefined)
     } else if (midiClip) {
       await engine.queueSessionMidi(track.id, midiClip, midiClip.launchQuantization)
     }
+  }
+  function handleRelease() {
+    if (clip) engine.releaseSession(track.id, clip.id)
   }
 
   async function handleFileDrop(e: React.DragEvent) {
@@ -534,6 +544,42 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
 
         <CtxSep />
 
+        {/* Launch mode, legato and velocity (lib/launch.ts) */}
+        <div style={{ padding: '4px 12px' }} data-help-id="launch-mode">
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>Launch Mode</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            {LAUNCH_MODES.map(m => (
+              <button
+                key={m}
+                data-help-id={`launch-mode-${m}`}
+                title={LAUNCH_MODE_HELP[m]}
+                onClick={() => { dispatch({ type: 'SET_SESSION_SLOT', trackId: track.id, sceneIndex, clip: { ...clip, launchMode: m } }); setCtxMenu(null) }}
+                style={{ textAlign: 'left', padding: '3px 6px', fontSize: 10, cursor: 'pointer', background: modeOf(clip.launchMode) === m ? 'rgba(255,255,255,0.1)' : 'transparent', border: 'none', color: 'var(--text-primary)', borderRadius: 3 }}
+              >{LAUNCH_MODE_LABEL[m]}</button>
+            ))}
+          </div>
+          <button
+            data-help-id="launch-legato"
+            title="Legato — a clip launched over a playing one picks up where that one had got to, instead of starting from its own beginning."
+            onClick={() => { dispatch({ type: 'SET_SESSION_SLOT', trackId: track.id, sceneIndex, clip: { ...clip, legatoLaunch: !clip.legatoLaunch } }); setCtxMenu(null) }}
+            style={{ textAlign: 'left', marginTop: 4, padding: '3px 6px', fontSize: 10, cursor: 'pointer', background: clip.legatoLaunch ? 'rgba(255,255,255,0.1)' : 'transparent', border: 'none', color: 'var(--text-primary)', borderRadius: 3, width: '100%' }}
+          >Legato {clip.legatoLaunch ? '✓' : ''}</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Velocity</span>
+            <input
+              data-help-id="launch-velocity"
+              type="range" min={0} max={100} step={5} value={Math.round((clip.velocityAmount ?? 0) * 100)}
+              aria-label="Velocity Amount"
+              title="Velocity Amount — how much the velocity of the press reaches the clip's level. 0% ignores it, which is what a mouse click means."
+              onChange={e => dispatch({ type: 'SET_SESSION_SLOT', trackId: track.id, sceneIndex, clip: { ...clip, velocityAmount: Number(e.target.value) / 100 } })}
+              style={{ flex: 1, accentColor: 'var(--accent)' }}
+            />
+            <span style={{ fontSize: 10, color: 'var(--text-muted)', minWidth: 26, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{Math.round((clip.velocityAmount ?? 0) * 100)}%</span>
+          </div>
+        </div>
+
+        <CtxSep />
+
         {/* Follow action */}
         <div style={{ padding: '4px 12px' }}>
           <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>Follow Action</div>
@@ -573,9 +619,14 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
           border: `${borderWidth} solid ${borderColor}`,
           borderRadius: 3, position: 'relative', overflow: 'hidden',
           cursor: 'default', boxSizing: 'border-box',
+          // A deactivated clip (Live's Clip Activator) is parked: dimmed, and
+          // the engine refuses to launch it.
+          opacity: clip?.active === false ? 0.35 : undefined,
+          filter: clip?.active === false ? 'grayscale(1)' : undefined,
         }}
+        data-clip-inactive={clip?.active === false || undefined}
         onClick={isEmpty ? handleEmptyClick : undefined}
-        onContextMenu={clip ? e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }) } : undefined}
+        onContextMenu={clip ? e => { e.preventDefault(); onTouch(track.id, sceneIndex); setCtxMenu({ x: e.clientX, y: e.clientY }) } : undefined}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         onDragOver={e => { e.preventDefault(); setDragOver(true) }}
@@ -689,14 +740,18 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
             {/* Trigger/launch button */}
             {audioClip && (
               <button
-                onClick={e => { e.stopPropagation(); handleTrigger() }}
+                data-help-id="session-launch"
+                data-launch-mode={modeOf(audioClip.launchMode)}
+                onPointerDown={e => { e.stopPropagation(); handleTrigger() }}
+                onPointerUp={e => { e.stopPropagation(); handleRelease() }}
+                onPointerLeave={handleRelease}
                 style={{
                   position: 'absolute', left: 4, top: '50%', transform: 'translateY(-50%)',
                   width: 20, height: 20, borderRadius: 3, border: 'none',
                   background: triggerBg, color: '#fff', cursor: 'pointer',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2,
                 }}
-                title={displayState === 'playing' ? 'Re-trigger' : displayState === 'queued' ? 'Queued…' : 'Launch'}
+                title={`${LAUNCH_MODE_LABEL[modeOf(audioClip.launchMode)]} — ${LAUNCH_MODE_HELP[modeOf(audioClip.launchMode)]}`}
               >
                 {displayState === 'playing'
                   ? <Square size={8} fill="currentColor" />
@@ -924,6 +979,16 @@ export default function SessionView() {
   // Session commands are registered here because stopping has to settle local
   // playing/recording state as well as tell the engine — dispatching from a
   // central list would stop the sound and leave the buttons lit.
+  // The slot the ⌘K launch commands act on: the one last pressed or
+  // right-clicked, since a session slot is not part of the clip selection.
+  const [lastSlot, setLastSlot] = useState<{ trackId: string; sceneIndex: number } | null>(null)
+  const touchSlot = useCallback((trackId: string, sceneIndex: number) => setLastSlot({ trackId, sceneIndex }), [])
+  const touched = lastSlot ? project.sessionGrid[lastSlot.trackId]?.[lastSlot.sceneIndex] ?? null : null
+  const patchTouched = (patch: Partial<DawClip>) => {
+    if (!lastSlot || !touched) return
+    dispatch({ type: 'SET_SESSION_SLOT', trackId: lastSlot.trackId, sceneIndex: lastSlot.sceneIndex, clip: { ...touched, ...patch } as DawClip })
+  }
+
   useRegisterCommands([
     { id: 'session.stopAll', group: 'Session', label: 'Stop all clips',
       keywords: 'stop all clips silence panic halt everything session',
@@ -931,7 +996,19 @@ export default function SessionView() {
     { id: 'session.addScene', group: 'Session', label: 'Add a scene',
       keywords: 'scene row new add launch section',
       run: () => dispatch({ type: 'ADD_SCENE' }) },
-  ], [dispatch])
+    // Launch settings for the slot last touched (lib/launch.ts). Spelled out
+    // rather than mapped: the discoverability check reads these literally.
+    { id: 'session.launch.trigger', group: 'Session', label: `Launch mode: Trigger — press starts it from the top${touched ? ` (${touched.name})` : ''}`,
+      keywords: 'launch mode trigger press start over session slot clip fire', when: () => !!touched, run: () => patchTouched({ launchMode: 'trigger' }) },
+    { id: 'session.launch.gate', group: 'Session', label: `Launch mode: Gate — it plays while you hold${touched ? ` (${touched.name})` : ''}`,
+      keywords: 'launch mode gate hold while pressed release stops session slot clip', when: () => !!touched, run: () => patchTouched({ launchMode: 'gate' }) },
+    { id: 'session.launch.toggle', group: 'Session', label: `Launch mode: Toggle — press to start, press again to stop${touched ? ` (${touched.name})` : ''}`,
+      keywords: 'launch mode toggle press again stop session slot clip', when: () => !!touched, run: () => patchTouched({ launchMode: 'toggle' }) },
+    { id: 'session.launch.repeat', group: 'Session', label: `Launch mode: Repeat — it starts again every step while held${touched ? ` (${touched.name})` : ''}`,
+      keywords: 'launch mode repeat stutter retrigger held roll session slot clip', when: () => !!touched, run: () => patchTouched({ launchMode: 'repeat' }) },
+    { id: 'session.launch.legato', group: 'Session', label: touched?.legatoLaunch ? 'Legato launch off — the next clip starts from its own beginning' : 'Legato launch — a clip picks up where the playing one had got to',
+      keywords: 'legato launch position inherit continue swap fill session slot clip', when: () => !!touched, run: () => patchTouched({ legatoLaunch: !touched?.legatoLaunch }) },
+  ], [dispatch, stopAll, touched, lastSlot])
 
   async function handleSessionRecord() {
     if (!project.tracks.some(t => t.armed)) return
@@ -1158,6 +1235,7 @@ export default function SessionView() {
                   onDragStart={handleClipDragStart}
                   onDrop={handleClipDrop}
                   onFollowAction={handleFollowAction}
+                  onTouch={touchSlot}
                 />
               ))}
             </div>

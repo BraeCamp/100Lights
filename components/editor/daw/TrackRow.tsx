@@ -1,5 +1,6 @@
 'use client'
 
+import { useDisplaySettings } from '@/lib/display-settings'
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import { useAppear } from '@/components/ui/Appear'
 import { nearestBarBeat, meterSegments } from '@/lib/tempo-map'
@@ -8,6 +9,7 @@ import Knob from './Knob'
 import { createPortal } from 'react-dom'
 import { Plus, Headphones, X, Eraser, ChevronRight, ChevronDown, Circle, Settings, Snowflake, SlidersHorizontal, Music, Piano, Grid3x3, Group, Library, Code, Upload, Minimize2, Maximize2 } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip, makeMidiClip } from '@/lib/daw-state'
+import { landClip } from '@/lib/import-settings'
 import { useIsMobile } from '@/lib/use-is-mobile'
 import { getAllChordRecipes, buildRecipeClip } from '@/lib/practice-recipes'
 import { importAudioFile } from '@/lib/daw-audio-import'
@@ -675,6 +677,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   onSelectionLoopCommit?: (region: { start: number; end: number }, blocks: number) => void
 }) {
   const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId, expandedStepSeqClipId, setExpandedStepSeqClipId, recording, audioMode, blinkIds, collabPeers, notifyLocked } = useDaw()
+  const display = useDisplaySettings()
+  const trackNumber = (() => { const i = project.tracks.findIndex(t => t.id === track.id); return i >= 0 ? i + 1 : null })()
 
   // Flatten: render THIS track solo through the offline path into an audio
   // clip on a fresh track (sound-library backed, so it survives reload), then
@@ -886,7 +890,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       dispatch({ type: 'ADD_CLIP', clip })
       const buf = await engine.loadClipBuffer(clip)
       if (buf) {
-        dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { waveformPeaks: extractPeaks(buf), durationBeats: engine.secondsToBeats(buf.duration), bufferDuration: buf.duration } })
+        // Loop/Warp Short Samples decides how it lands (lib/import-settings.ts).
+        dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { waveformPeaks: extractPeaks(buf), bufferDuration: buf.duration, ...landClip(clip, buf.duration, project.tempo, project.timeSignatureNum || 4).patch } })
       }
       return
     }
@@ -1071,7 +1076,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       const buf = await engine.loadClipBuffer(clip)
       if (buf) {
         const peaks = extractPeaks(buf)
-        dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { waveformPeaks: peaks, durationBeats: engine.secondsToBeats(buf.duration), bufferDuration: buf.duration } })
+        dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { waveformPeaks: peaks, bufferDuration: buf.duration, ...landClip(clip, buf.duration, project.tempo, project.timeSignatureNum || 4).patch } })
       }
     }
   }
@@ -1113,7 +1118,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   // empty arrangement space run the same code — see that file for what each
   // format becomes. Here we only add "select what landed".
   async function importMediaFile(file: File, beat: number) {
-    const clipId = await importAudioFile(file, { trackId: track.id, beat, engine, dispatch })
+    const clipId = await importAudioFile(file, { trackId: track.id, beat, engine, dispatch, beatsPerBar: project.timeSignatureNum || 4 })
     if (clipId) setSelectedClipId(clipId)
   }
 
@@ -1272,6 +1277,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               <Knob
                 value={track.volume} min={0} max={1} defaultValue={0.8} size={20} color={track.color}
                 label="V" title="Group volume — drag to change, double-click resets"
+                spec={{ label: 'Group volume', min: 0, max: 1, unit: '%' }}
                 onChange={v => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v); overrideLane('volume') }}
                 format={v => (v > 0.0001 ? `${(20 * Math.log10(v)).toFixed(1)}dB` : '-inf')}
               />
@@ -1290,6 +1296,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             </div>
             {[
               { label: 'Rename', action: () => { setEditing(true); setDraft(track.name) } },
+              { label: track.infoText ? 'Edit Info Text…' : 'Add Info Text…', action: () => window.dispatchEvent(new CustomEvent('100lights:edit-info', { detail: { kind: 'track', id: track.id } })) },
               { label: isFolded ? 'Expand group' : 'Fold group', action: () => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { collapsed: !collapsed } }) },
               { label: track.mute ? 'Unmute' : 'Mute', action: () => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { mute: !track.mute } }) },
               { label: track.solo ? 'Unsolo' : 'Solo', action: () => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { solo: !track.solo } }) },
@@ -1371,6 +1378,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                 flexShrink: 0, display: 'inline-block', border: '1px solid rgba(0,0,0,0.4)',
               }} />
             ))}
+              {trackNumber != null && <span data-help-id="track-number" title={`Track ${trackNumber}`} style={{ fontSize: 8, fontWeight: 700, color: 'var(--text-muted)', minWidth: 12, textAlign: 'right', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{trackNumber}</span>}
             {editing ? (
               <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
                 onBlur={() => { if (!cancelRenameRef.current) dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); cancelRenameRef.current = false; setEditing(false) }}
@@ -1450,6 +1458,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               <Knob
                 value={track.volume} min={0} max={1} defaultValue={0.8} size={20} color={track.color}
                 label="V" title="Volume — drag to change, double-click resets"
+                spec={{ label: 'Volume', min: 0, max: 1, unit: '%' }}
                 onChange={v => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v); overrideLane('volume') }}
                 format={v => (v > 0.0001 ? `${(20 * Math.log10(v)).toFixed(1)}dB` : '-inf')}
               />
@@ -1461,6 +1470,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               <Knob
                 value={track.pan ?? 0} min={-1} max={1} defaultValue={0} size={20} bipolar color={track.color}
                 label="P" title="Pan — drag to change, double-click centres"
+                spec={{ label: 'Pan', min: -1, max: 1 }}
                 onChange={v => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { pan: v } }); engine.setTrackPan(track.id, v) }}
                 format={v => (Math.abs(v) < 0.01 ? 'C' : `${v < 0 ? 'L' : 'R'}${Math.round(Math.abs(v) * 100)}`)}
               />
@@ -1547,6 +1557,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             {/* Actions */}
             {[
               { label: 'Rename',    action: () => { setEditing(true); setDraft(track.name) } },
+              { label: track.infoText ? 'Edit Info Text…' : 'Add Info Text…', action: () => window.dispatchEvent(new CustomEvent('100lights:edit-info', { detail: { kind: 'track', id: track.id } })) },
               { label: 'Duplicate', action: () => dispatch({ type: 'DUPLICATE_TRACK', trackId: track.id }) },
               { label: 'Delete',    action: () => dispatch({ type: 'REMOVE_TRACK',    trackId: track.id }), danger: true },
             ].map(({ label, action, danger }) => (
@@ -2077,6 +2088,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                   onCrop={() => setCroppingClipId(prev => prev === clip.id ? null : clip.id)}
                   onCropChange={(ts, te) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { trimStart: ts, trimEnd: te } })}
                   onCropSnap={(b) => snapBeat(b, snap, project.timeSignatureNum, meterSegments(project))}
+                  onSlip={p => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: p })}
                   onIsolate={beat => setIsolateTgt(beat)}
                   onSplice={() => {
                     if (frozen) return
@@ -2332,8 +2344,11 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
         document.body
       )}
 
-      {/* Inline Piano Roll — shown when a MIDI clip on this track is expanded */}
+      {/* Inline Piano Roll — shown when a MIDI clip on this track is expanded
+          and the Display setting keeps the clip editor inline; in 'pane' mode
+          the clip pane at the bottom of the studio hosts it (DetailArea). */}
       {(() => {
+        if (display.clipEditor !== 'inline') return null
         const expandedClip = clips.find(c => isMidiClip(c) && c.id === expandedPianoRollClipId)
         if (!expandedClip || isMobile) return null   // on mobile the roll opens in the Sounds tab
         return (
@@ -2366,6 +2381,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
 
       {/* Inline Step Sequencer — sibling to the roll, for a drum clip on this track */}
       {(() => {
+        if (display.clipEditor !== 'inline') return null
         const seqClip = clips.find(c => isMidiClip(c) && c.id === expandedStepSeqClipId)
         if (!seqClip || isMobile) return null   // on mobile the beat editor opens in the Sounds tab
         return (

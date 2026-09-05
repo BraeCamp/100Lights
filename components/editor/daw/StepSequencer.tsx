@@ -292,7 +292,7 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
   }
 
   return (
-    <div ref={rootRef} style={{ background: 'var(--bg-surface)', borderTop: '1px solid var(--border)', height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+    <div ref={rootRef} data-help-id="step-sequencer" data-clip-editor={clip.id} style={{ background: 'var(--bg-surface)', borderTop: '1px solid var(--border)', height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '7px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
         <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--accent-light)' }}>◼ STEP SEQUENCER</span>

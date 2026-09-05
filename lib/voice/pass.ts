@@ -19,7 +19,7 @@
 
 import { STEP_BEATS, STEPS_PER_BAR, DRUM_LANES } from '@/lib/drum-presets'
 import { drumForWord, chordAt } from './vocab'
-import { alignToOnsets, type Onset } from './onsets'
+import { alignToOnsets, type Onset } from '../onsets'
 import type { LaneKey } from './beatbox'
 import type { MidiNote } from '@/lib/daw-types'
 

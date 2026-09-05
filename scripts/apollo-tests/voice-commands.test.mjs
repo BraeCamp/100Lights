@@ -165,7 +165,10 @@ const PROJECT = {
     clip('c5', 't5', 'Vocals clip', 4, 64),
     clip('c6', 't6', 'Lead clip', 8, 72),
     clip('c8', 't8', 'Synth clip', 0, 64),
-    { kind: 'audio', id: 'c9', trackId: 't9', name: 'Vox take', startBeat: 0, durationBeats: 16, sampleId: 's-vox', duration: 8, offset: 0, gain: 1, fadeIn: 0, fadeOut: 0 },
+    // 12 seconds of audio, a second trimmed off each end, in a clip that plays
+    // 8 of them (16 beats at 120) — so the sample commands have something real
+    // to work on: room to slip either way, and two seconds crop can cut.
+    { kind: 'audio', id: 'c9', trackId: 't9', name: 'Vox take', startBeat: 0, durationBeats: 16, sampleId: 's-vox', duration: 8, offset: 0, gain: 1, fadeIn: 0, fadeOut: 0, bufferDuration: 12, trimStart: 1, trimEnd: 1 },
     {
       kind: 'midi', id: 'c10', trackId: 't10', name: 'Organ chords', startBeat: 0, durationBeats: 16, isDrumClip: false,
       notes: [[60, 64, 67], [62, 65, 69], [64, 67, 71], [67, 71, 74]].flatMap((chord, i) => chord.map((pitch, k) => ({
@@ -183,7 +186,14 @@ const PROJECT = {
       })),
     },
   ],
-  scenes: [], sessionGrid: {}, loopStart: 0, loopEnd: 16, loopEnabled: false,
+  // One scene with one slot in it, so the session's own commands (the launch
+  // settings) have something to address — session slots live here, not in
+  // arrangementClips, and nothing else in the fixture can stand in for them.
+  scenes: [{ id: 'sc1', name: 'Scene 1' }],
+  sessionGrid: {
+    t9: [{ kind: 'audio', id: 'sl1', trackId: 't9', name: 'Session take', startBeat: 0, durationBeats: 8, gain: 1, loopEnabled: true, reverse: false, fadeIn: 0, fadeOut: 0, trimStart: 0, trimEnd: 0, bufferDuration: 4 }],
+  },
+  loopStart: 0, loopEnd: 16, loopEnabled: false,
   masterVolume: 1, automationLanes: [], clipEffects: [], returnTracks: [],
   takeLanes: [], crossfaderValue: 0.5, waveformZoom: 1, swing: 0,
   // Markers, so removing one is testable.
@@ -377,6 +387,60 @@ check('the help panel lists every command', helpCount === VOICE_COMMANDS.length,
     !planned.problem && (planned.actions ?? []).some(a => a.type === 'USE_SAMPLE' && a.sampleId === 'hat-closed-1'), JSON.stringify(planned).slice(0, 220))
   const missing = planVoiceCall({ name: 'set_instrument', input: { target: 'Drums', presetName: 'didgeridoo' } }, PROJECT, HEARD)
   check('and says what kinds there ARE when it cannot', /didgeridoo/.test(missing.problem ?? '') && /hihat 2/.test(missing.problem ?? ''), missing.problem)
+}
+
+// ── Live's Clip Activator (Ableton integration, Batch 0.1) ─────────────────
+{
+  // The reducer itself is exercised by the headless check (.claude/active-check.mjs):
+  // lib/daw-state.ts pulls in the Apollo engine client, which the strip-types
+  // importer cannot load here.
+  const parked = { ...PROJECT, arrangementClips: PROJECT.arrangementClips.map(c => c.id === 'c2' ? { ...c, active: false } : c) }
+  const first = phrase => interpret(phrase, CTX).calls[0]
+  const off = first('deactivate the pad clip')
+  check('"deactivate the pad clip" parks that clip', off?.name === 'set_clip_active' && off.input.active === false && /pad/i.test(off.input.target), JSON.stringify(off))
+  const on = first('activate the vox take again')
+  check('"activate the vox take again" brings it back', on?.name === 'set_clip_active' && on.input.active === true, JSON.stringify(on))
+  const mute = first('turn the bass 2 off')
+  check('"turn the bass 2 off" is not a clip activator call', mute?.name !== 'set_clip_active', JSON.stringify(mute))
+  const planned = planVoiceCall({ name: 'set_clip_active', input: { target: 'Pad clip', active: false } }, PROJECT, HEARD)
+  check('the planner turns it into SET_CLIPS_ACTIVE',
+    (planned.actions ?? []).some(a => a.type === 'SET_CLIPS_ACTIVE' && a.active === false && a.clipIds.includes('c2')), JSON.stringify(planned).slice(0, 200))
+  const again = planVoiceCall({ name: 'set_clip_active', input: { target: 'Pad clip', active: false } }, parked, HEARD)
+  check('and says so when it is already parked', !(again.actions ?? []).length && /already/.test(again.say ?? ''), again.say)
+}
+
+// ── The modulation bus by voice ───────────────────────────────────────────
+{
+  const first = phrase => interpret(phrase, CTX).calls[0]
+  const lfo = first('put an lfo on the pad filter')
+  check('"put an LFO on the pad filter" wobbles the low-pass', lfo?.name === 'modulate_parameter' && lfo.input.parameter === 'lowpass' && /pad/i.test(lfo.input.target) && !lfo.input.off, JSON.stringify(lfo))
+  const eighth = first('wobble the bass 2 cutoff every eighth')
+  check('"every eighth" is the rate', eighth?.name === 'modulate_parameter' && eighth.input.rate === 'eighth' && /bass 2/i.test(eighth.input.target), JSON.stringify(eighth))
+  const trem = first('tremolo the pad at 4 hz')
+  check('"tremolo … at 4 hz" is the volume at 4 Hz', trem?.name === 'modulate_parameter' && trem.input.parameter === 'volume' && trem.input.rate === '4 hz', JSON.stringify(trem))
+  const off = first('take the lfo off the pad')
+  check('"take the LFO off" is off', off?.name === 'modulate_parameter' && off.input.off === true, JSON.stringify(off))
+  const apollo = first('lfo 2 rate to 5 hertz on the synth')
+  check('Apollo\'s own "LFO 2 rate" is not a modulator', apollo?.name !== 'modulate_parameter', JSON.stringify(apollo))
+  const ramp = first('open the filter on the pad over 8 bars')
+  check('a sweep over bars is still automation', ramp?.name === 'automate_parameter', JSON.stringify(ramp))
+  const planned = planVoiceCall({ name: 'modulate_parameter', input: { target: 'Pad', parameter: 'lowpass', rate: '1/8', depth: 40 } }, PROJECT, HEARD)
+  const addMod = (planned.actions ?? []).find(a => a.type === 'ADD_MODULATOR')
+  const addFx = (planned.actions ?? []).find(a => a.type === 'ADD_EFFECT')
+  check('the planner adds a low-pass and an LFO routed to its cutoff',
+    !!addMod && !!addFx && addFx.effect.type === 'filter' && addMod.modulator.routes[0].parameter === `fx:${addFx.effect.id}:frequency`
+      && addMod.modulator.rate.division === '1/8' && Math.abs(addMod.modulator.routes[0].amount - 0.4) < 1e-9, JSON.stringify(planned).slice(0, 260))
+  check('and says what it did', /Wobbling the low-pass cutoff on "Pad" — 1\/8 notes, 40% deep/.test(planned.say ?? ''), planned.say)
+  const withMod = { ...PROJECT, tracks: PROJECT.tracks.map(t => t.name === 'Pad' ? { ...t, effects: [addFx.effect] } : t), modulators: [addMod.modulator] }
+  const retune = planVoiceCall({ name: 'modulate_parameter', input: { target: 'Pad', parameter: 'lowpass', rate: '2 Hz', shape: 'square' } }, withMod, HEARD)
+  check('asking again re-tunes the LFO that is there rather than stacking one',
+    (retune.actions ?? []).some(a => a.type === 'UPDATE_MODULATOR' && a.patch.shape === 'square' && a.patch.rate.hz === 2) && !(retune.actions ?? []).some(a => a.type === 'ADD_MODULATOR'), JSON.stringify(retune).slice(0, 200))
+  const gone = planVoiceCall({ name: 'modulate_parameter', input: { target: 'Pad', off: true } }, withMod, HEARD)
+  check('"off" removes it', (gone.actions ?? []).some(a => a.type === 'REMOVE_MODULATOR' && a.modulatorId === addMod.modulator.id), JSON.stringify(gone).slice(0, 200))
+  const none = planVoiceCall({ name: 'modulate_parameter', input: { target: 'Pad', off: true } }, PROJECT, HEARD)
+  check('and answers, not fails, when there was none', !none.problem && /no LFOs/.test(none.say ?? ''), none.say ?? none.problem)
+  const unknown = planVoiceCall({ name: 'modulate_parameter', input: { target: 'Pad', parameter: 'bitcrush' } }, PROJECT, HEARD)
+  check('a parameter it cannot modulate is a question', !!unknown.problem && /bitcrush/.test(unknown.problem), unknown.problem)
 }
 
 console.log(failures

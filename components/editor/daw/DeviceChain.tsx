@@ -7,6 +7,8 @@ import Knob from './Knob'
 import { X, PictureInPicture2 } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { useMidiLearn } from '@/lib/midi-learn'
+import { type KnobSpec, isLogSpec, knobFromNorm } from '@/lib/knob-math'
+import { describeLatency } from '@/lib/latency'
 import type {
   TrackEffect, Eq3Params, CompressorParams, ReverbParams,
   DelayParams, FilterParams, SaturatorParams, ReduxParams, AutoPanParams, UtilityParams, LfoParams, EffectType,
@@ -74,7 +76,7 @@ function CtrlRow({ label, learnKey, children }: { label: string; learnKey?: stri
 const EffectLearnCtx = createContext<string>('')
 const CtrlLabelCtx = createContext<string>('')
 
-function RangeCtrl({ value, min, max, step = 0.01, curve, onChange }: {
+function RangeCtrl({ value, min, max, step = 0.01, curve, unit, onChange }: {
   value: number; min: number; max: number; step?: number
   /**
    * 'log' spaces the knob by RATIO rather than by difference.
@@ -91,23 +93,23 @@ function RangeCtrl({ value, min, max, step = 0.01, curve, onChange }: {
    * this way: each equal turn should halve or double the frequency.
    */
   curve?: 'log'
+  /** Read back after the number and understood when typed: 'Hz', 'dB', 'ms'. */
+  unit?: string
   onChange: (v: number) => void
 }) {
   const eid = useContext(EffectLearnCtx)
   const label = useContext(CtrlLabelCtx)
   const learnId = eid && label ? `${eid}:${label}` : ''
 
-  // A log control is handed to the knob as a plain 0..1 position and converted
-  // back on the way out, so Knob itself stays unaware of tapers.
-  const isLog = curve === 'log' && min > 0 && max > min
-  const toKnob = (v: number) =>
-    isLog ? Math.log(Math.min(max, Math.max(min, v)) / min) / Math.log(max / min) : v
-  const fromKnob = (k: number) =>
-    isLog ? min * Math.pow(max / min, Math.min(1, Math.max(0, k))) : k
+  // The knob takes the value in its own unit and does the taper itself; the
+  // spec is what tells it the range, the unit and the curve. A log control
+  // without a stated unit is a frequency — nothing else here is spaced by ratio.
+  const spec: KnobSpec = { label, min, max, unit: unit ?? (curve === 'log' ? 'Hz' : undefined), curve }
+  const isLog = isLogSpec(spec)
 
   // A CC (0..1) maps across the control's own range — through the same taper,
   // or a knob and a MIDI fader would disagree about where the middle is.
-  const midi = useMidiLearn(learnId, v01 => onChange(isLog ? fromKnob(v01) : min + v01 * (max - min)))
+  const midi = useMidiLearn(learnId, v01 => { const v = knobFromNorm(v01, spec); onChange(isLog ? Math.round(v) : v) })
 
   // Double-click resets a ± control to its neutral centre — flat EQ, no pan,
   // zero gain. For a one-directional control there is no such obvious home, so
@@ -136,14 +138,13 @@ function RangeCtrl({ value, min, max, step = 0.01, curve, onChange }: {
         onClick={e => e.stopPropagation()}
       >
         <Knob
-          value={isLog ? toKnob(value) : value}
-          min={isLog ? 0 : min}
-          max={isLog ? 1 : max}
-          defaultValue={isLog ? toKnob(dflt) : dflt}
+          value={value}
+          spec={spec}
+          defaultValue={dflt}
           size={30}
           bipolar={!isLog && min < 0 && max > 0}
           color={midi.armed ? '#f59e0b' : midi.cc != null ? '#22c55e' : 'var(--accent)'}
-          onChange={v => onChange(isLog ? Math.round(fromKnob(v)) : v)}
+          onChange={v => onChange(isLog ? Math.round(v) : v)}
         />
         {/* The row already carries the name on the left, so the knob does not
             repeat it — it gets the NUMBER instead, which the slider never
@@ -1740,6 +1741,7 @@ export default function DeviceChain({ trackId }: { trackId: string }) {
         <HeliosFxChip trackId={trackId} />
         <VoiceChainButton trackId={trackId} />
         <AddDeviceButton trackId={trackId} />
+        <LatencyChip trackId={trackId} />
       </div>
       {/* MIDI FX row */}
       {(midiEffects.length > 0 || track.instrument) && (
@@ -1754,6 +1756,28 @@ export default function DeviceChain({ trackId }: { trackId: string }) {
         </div>
       )}
     </div>
+  )
+}
+
+// The track's latency and the compensation it is getting (lib/latency.ts),
+// shown only when there is any — most chains hold nothing back.
+function LatencyChip({ trackId }: { trackId: string }) {
+  const { engine, project } = useDaw()
+  const [, bump] = useState(0)
+  useEffect(() => {
+    const on = () => bump(n => n + 1)
+    engine.addEventListener('latency', on)
+    return () => engine.removeEventListener('latency', on)
+  }, [engine])
+  const own = engine.trackLatencySamples(trackId)
+  const comp = engine.trackCompensationSamples(trackId)
+  if (!own && !comp) return null
+  const pdc = project.delayCompensation !== false
+  return (
+    <span data-help-id="track-latency" title={`This track's devices hold the signal ${describeLatency(own, engine.ctx.sampleRate)}${pdc ? `; it is delayed ${describeLatency(comp, engine.ctx.sampleRate)} so every track arrives together` : ' — delay compensation is off'}`}
+      style={{ alignSelf: 'center', fontSize: 9, fontVariantNumeric: 'tabular-nums', color: pdc ? 'var(--text-muted)' : '#f59e0b', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 6px', whiteSpace: 'nowrap' }}>
+      Δ {describeLatency(own, engine.ctx.sampleRate)}{comp ? ` +${describeLatency(comp, engine.ctx.sampleRate)}` : ''}
+    </span>
   )
 }
 

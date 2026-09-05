@@ -26,6 +26,9 @@ import { encodeWav } from '@/lib/wav-codec'
 import { RollSoundPanel } from './RollSettings'
 import { clampToViewport } from './menu-clamp'
 import { canConsolidate, consolidateMidiClip } from '@/lib/daw-consolidate'
+import { sliceToNewTrack, convertToNewTrack } from '@/lib/audio-to-track'
+import { slipByDrag } from '@/lib/sample-editor'
+import type { ConvertKind } from '@/lib/slice-to-midi'
 import Waveform from './Waveform'
 import { tempoSegments, tempoAt } from '@/lib/tempo-map'
 import { SCALE_INTERVALS, type ScaleType } from '@/lib/scale-constants'
@@ -84,7 +87,7 @@ export function detectTransients(
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, collabHolder, onSelect, onShiftSelect, onRangeSelect, onDoubleClick, onSettings, onMove, onResize, onResizeLeft, onResizeStart, onResizeEnd, onCrop, onCropChange, onCropSnap, onIsolate, onSplice, onDelete, onDragStart, onDeleteAll, onReplaceSample, onSpectral, onScrollBy, waveformZoom, onFadeChange, onCopy, onPaste }: {
+export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, collabHolder, onSelect, onShiftSelect, onRangeSelect, onDoubleClick, onSettings, onMove, onResize, onResizeLeft, onResizeStart, onResizeEnd, onCrop, onCropChange, onCropSnap, onSlip, onIsolate, onSplice, onDelete, onDragStart, onDeleteAll, onReplaceSample, onSpectral, onScrollBy, waveformZoom, onFadeChange, onCopy, onPaste }: {
   clip: DawClip; track: DawTrack; beatW: number; selected: boolean; multiSelected: boolean
   loopNativeBeats?: number
   isCropping?: boolean
@@ -101,6 +104,8 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   onCrop(): void
   onCropChange?(trimStart: number, trimEnd: number): void
   onCropSnap?(beat: number): number
+  /** Slip edit (⇧⌥-drag the body): the audio slides under the clip, which stays. */
+  onSlip?(patch: Partial<AudioClip>): void
   onIsolate(beat: number): void; onSplice?(): void; onDelete(): void
   onDragStart?(): void
   onDeleteAll?(): void
@@ -269,6 +274,20 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     setTransientDialog({ sensitivity, transients, buf })
   }
 
+  // Audio → MIDI on a new track (lib/audio-to-track.ts): slice at the
+  // transients, or hear the notes. The clip panel has the dialog with the
+  // slicing choices; the menu does the common case at once.
+  async function toMidi(kind: 'slice' | ConvertKind) {
+    if (!isAudioClip(clip)) return
+    const a = clip as AudioClip
+    const buf = engine.bufferCache.get(a.id) ?? (await engine.loadClipBuffer(a)) ?? null
+    if (!buf) return
+    const r = kind === 'slice'
+      ? await sliceToNewTrack(a, buf, { tempo: project.tempo, barBeats: project.timeSignatureNum || 4, by: 'transients' }, dispatch)
+      : await convertToNewTrack(a, buf, { tempo: project.tempo, kind }, dispatch)
+    console.log(`[to-midi] ${a.name}: ${r.said}`)
+  }
+
   function applyTransientSplit() {
     if (!transientDialog || !isAudioClip(clip)) return
     const { transients, buf } = transientDialog
@@ -306,6 +325,9 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     if (e.button !== 0) return
     e.stopPropagation()
     if (isCropping) return  // don't drag while cropping
+    // ⇧⌥-drag slips the audio under the clip: the clip keeps its place and its
+    // length, the sample slides inside it (lib/sample-editor.ts).
+    if (e.shiftKey && e.altKey && isAudioClip(clip) && onSlip && bufDur) { onMouseDownSlip(e); return }
     // Cmd/Ctrl = add/remove this one item; Shift = select the range between the
     // current item and this one (across tracks). Alt stays free for copy-on-drag.
     const mod = e.metaKey || e.ctrlKey
@@ -378,6 +400,26 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     const startX = e.clientX, startBeat = clip.startBeat
     function mm(ev: MouseEvent) { onResizeLeft!(startBeat + (ev.clientX - startX) / beatW, ev.altKey) }
     function mu() { onResizeEnd?.(); document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu) }
+    document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu)
+  }
+
+  // Slip drag — ⇧⌥ inside the clip body. The patch is always computed from the
+  // trims and markers as they were when the drag began; reading the clip as it
+  // moves would compound every frame and the audio would bolt.
+  function onMouseDownSlip(e: React.MouseEvent) {
+    if (!isAudioClip(clip) || !onSlip || !bufDur) return
+    e.preventDefault()
+    onSelect()
+    const startX = e.clientX
+    const at = { bufferDuration: bufDur, trimStart: clip.trimStart, trimEnd: clip.trimEnd, warpMarkers: clip.warpMarkers }
+    // A pixel of clip is this many seconds of sample: the clip's own seconds
+    // over its width, so the audio tracks the pointer.
+    const clipSec = engine.beatsToSeconds(clip.durationBeats)
+    function mm(ev: MouseEvent) {
+      const p = slipByDrag(at, (-(ev.clientX - startX) / Math.max(1, width)) * clipSec)
+      if (p) { engine.clearStretchedCache(clip.id); onSlip!(p) }
+    }
+    function mu() { document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu) }
     document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu)
   }
 
@@ -568,6 +610,10 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     { label: 'Spectral Editor', fn: () => onSpectral?.() },
     { label: 'Split at Transients', fn: () => { setCtxPos(null); void handleSplitAtTransients() } },
     { label: 'Slice to Library', fn: () => { setCtxPos(null); void handleSliceToLibrary() } },
+    { label: 'Slice to New MIDI Track', fn: () => { setCtxPos(null); void toMidi('slice') } },
+    { label: 'Convert Harmony to MIDI', fn: () => { setCtxPos(null); void toMidi('harmony') } },
+    { label: 'Convert Melody to MIDI', fn: () => { setCtxPos(null); void toMidi('melody') } },
+    { label: 'Convert Drums to MIDI', fn: () => { setCtxPos(null); void toMidi('drums') } },
     { separator: true },
     saveLibraryItem,
     shareItem,
@@ -602,6 +648,9 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   const menuItems: MenuItem[] = ctxSub === 'more' ? moreItems : [
     // Top block: the everyday clip actions in the order Brae wants —
     // Copy, Paste, Splice — then a divider.
+    // Live's Clip Activator (key 0): park the clip without deleting it.
+    { label: `${clip.active === false ? 'Activate' : 'Deactivate'}${isMulti ? ' Selected' : ''}`,
+      fn: () => dispatch({ type: 'SET_CLIPS_ACTIVE', clipIds: isMulti ? [...selectedClipIds] : [clip.id], active: clip.active === false }) },
     { label: isMulti ? 'Copy Selected' : 'Copy', fn: () => onCopy?.() },
     ...(onPaste ? [{ label: 'Paste', fn: () => onPaste() }] : []),
     dragEditItems[0], // Splice at Playhead
@@ -635,6 +684,8 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
       } as MenuItem,
     ]),
     ...(isMulti ? [] : [{ label: 'Rename…', fn: () => { setNameDraft(clip.name); setRenaming(true) } }]),
+    // A note that the Info View shows whenever the pointer is over this clip.
+    ...(isMulti ? [] : [{ label: clip.infoText ? 'Edit Info Text…' : 'Add Info Text…', fn: () => window.dispatchEvent(new CustomEvent('100lights:edit-info', { detail: { kind: 'clip', id: clip.id } })) }]),
     { separator: true },
     // Everything else lives below the second divider.
     ...(isAudioClip(clip)
@@ -713,14 +764,19 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
       default: return false
     }
   })()
+  // Live's Clip Activator: a deactivated clip stays where it is, dimmed and
+  // dashed, and the engine skips it. Distinct from an overlay grey, which is
+  // a question about the clip, not a state of it.
+  const inactive = clip.active === false
 
   return (
     <>
       <div
         ref={clipDivRef}
         data-clip-id={clip.id}
+        data-clip-inactive={inactive || undefined}
         data-overlay-grey={greyed || undefined}
-        style={{ position: 'absolute', left, width, top: 4, bottom: 4, background: greyed ? 'rgba(128,128,128,0.22)' : `${color}40`, border: `1px solid ${isCropping ? '#f59e0b' : selected || multiSelected ? '#fff' : greyed ? '#6b6b6b' : color}`, borderRadius: 3, overflow: 'hidden', cursor: isCropping ? 'default' : 'grab', userSelect: 'none', boxSizing: 'border-box', outline: undefined, boxShadow: collabHolder ? `0 0 0 2px ${collabHolder.color}${collabHolder.editing ? '' : '99'}` : undefined, filter: greyed ? 'grayscale(1)' : undefined, opacity: greyed ? 0.55 : undefined, transition: 'opacity 180ms, filter 180ms, background 180ms' }}
+        style={{ position: 'absolute', left, width, top: 4, bottom: 4, background: greyed ? 'rgba(128,128,128,0.22)' : `${color}40`, border: `1px ${inactive ? 'dashed' : 'solid'} ${isCropping ? '#f59e0b' : selected || multiSelected ? '#fff' : greyed ? '#6b6b6b' : color}`, borderRadius: 3, overflow: 'hidden', cursor: isCropping ? 'default' : 'grab', userSelect: 'none', boxSizing: 'border-box', outline: undefined, boxShadow: collabHolder ? `0 0 0 2px ${collabHolder.color}${collabHolder.editing ? '' : '99'}` : undefined, filter: greyed || inactive ? 'grayscale(1)' : undefined, opacity: greyed ? 0.55 : inactive ? 0.35 : undefined, transition: 'opacity 180ms, filter 180ms, background 180ms' }}
         onMouseDown={onMouseDownBody}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}

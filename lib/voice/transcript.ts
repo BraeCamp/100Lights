@@ -164,6 +164,19 @@ export function describeAction(a: unknown, names: { track?: (id: string) => stri
     case 'ADD_MIDI_NOTE': return `Added a note on ${c(act.clipId)}`
     case 'REMOVE_MIDI_NOTE': return `Removed a note on ${c(act.clipId)}`
     case 'UPDATE_MIDI_NOTE': return `Edited a note on ${c(act.clipId)}`
+    case 'UPDATE_MIDI_NOTES': return `Edited ${(act.notes as unknown[] | undefined)?.length ?? 'the'} notes on ${c(act.clipId)}`
+    case 'ADD_MIDI_NOTES': return `Added ${(act.notes as unknown[] | undefined)?.length ?? ''} notes on ${c(act.clipId)}`
+    case 'SET_CHANCE_GROUP': return `${act.group ? 'Grouped' : 'Ungrouped'} notes on ${c(act.clipId)}`
+    case 'SPLICE_MIDI_NOTES': {
+      const out = (act.remove as unknown[] | undefined)?.length ?? 0, inn = (act.add as unknown[] | undefined)?.length ?? 0
+      return inn > out ? `Split ${out} note${out === 1 ? '' : 's'} into ${inn} on ${c(act.clipId)}` : `Joined ${out} notes into ${inn} on ${c(act.clipId)}`
+    }
+    case 'RESOLVE_NOTE_OVERLAPS': return `Tidied overlapping notes on ${c(act.clipId)}`
+    case 'SELECT_NOTES': return `Selected ${(act.noteIds as unknown[] | undefined)?.length ?? ''} notes on ${c(act.clipId)}`
+    case 'WARP_QUANTIZE': return `Quantized ${c(act.clipId)}'s transients to the grid`
+    case 'SET_TEMPO_LEADER': return act.clipId ? `Made ${c(act.clipId)} the tempo leader — the song follows its tempo` : 'Released the tempo leader'
+    case 'IMPORT_SETTINGS': return 'Changed how dropped samples land (Loop/Warp Short Samples)'
+    case 'AUDIO_TO_MIDI': return act.op === 'slice' ? `Sliced ${c(act.clipId)} to a new MIDI track` : `Converted ${c(act.clipId)}'s ${String(act.op)} to MIDI on a new track`
     case 'ADD_EFFECT': return `Added ${String((act.effect as { type?: string } | undefined)?.type ?? 'an effect')} to ${t(act.trackId)}`
     case 'REMOVE_EFFECT': return `Removed an effect from ${t(act.trackId)}`
     case 'UPDATE_EFFECT': {
