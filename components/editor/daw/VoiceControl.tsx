@@ -153,6 +153,7 @@ import VoiceCaption, { readVoiceCaption, writeVoiceCaption } from './VoiceCaptio
 import { recordExchange, describeAction } from '@/lib/voice/transcript'
 import { publishLevel, subscribeLevel } from '@/lib/voice/level-bus'
 import { LUMENS_NAME } from '@/lib/credit-tiers'
+import { requestNoteSelection } from '@/lib/note-selection'
 import {
   speak, stopSpeaking, speechEnabled, setSpeechEnabled, speechAvailable,
   studioVoice, setStudioVoice,
@@ -1467,6 +1468,14 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // clip. One selected clip is that clip; several is not a single anything.
       setSelectedClipId?.(ids.length === 1 ? ids[0] : null)
       if (a.trackId) setSelectedTrackId?.(a.trackId)
+      return
+    }
+    // Notes inside a clip — "select every C in the pad". The roll owns its
+    // selection; the request is parked for it (lib/note-selection.ts) so it
+    // arrives even when the same sentence just opened the clip.
+    if (act.type === 'SELECT_NOTES') {
+      const a = act as unknown as { clipId: string; noteIds: string[] }
+      requestNoteSelection(a.clipId, a.noteIds ?? [])
       return
     }
 

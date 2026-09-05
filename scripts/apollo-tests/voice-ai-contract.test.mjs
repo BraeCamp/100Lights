@@ -57,6 +57,7 @@ const CALLS = {
   set_chance: { target: 'pad clip', chance: 50 },
   invert_notes: { target: 'pad clip' },
   stretch_notes: { target: 'pad clip', factor: 2 },
+  edit_notes: { target: 'pad clip', op: 'chop', parts: 2 },
   move_clips: { by: { bars: 1 } },
   insert_clip: { sound: 'crash', at: { bar: 2 } },
   set_tempo: { bpm: 128 },

@@ -45,7 +45,8 @@ import { Words, near } from './words'
 import { matchApolloParam, matchFilterType, moduleHint } from '../apollo/spoken-params'
 import { characterWordsIn } from './preset-character'
 import { parseClipAddress, colourOf } from '../clip-address'
-import { parseNoteAddress } from '../note-address'
+import { parseNoteAddress, pitchOf } from '../note-address'
+import { parseFilter } from '../find-notes'
 import { parseTrackAddress } from '../track-address'
 import { viewOf, snapOf, overlayOf, matchCommand } from './workspace'
 
@@ -2276,6 +2277,25 @@ const COMMANDS: VoiceCommand[] = [
         return { calls: [{ name: 'select', input: { what: 'none' } }], confidence: 0.93 }
       }
       if (w.has('loop')) return { calls: [{ name: 'select', input: { what: 'loop' } }], confidence: 0.93 }
+      // Notes inside a clip — Find & Select by voice (lib/find-notes.ts):
+      // "select every C in the pad", "select the quiet notes in the lead",
+      // "select the notes off the scale in the bass". The clip is what follows
+      // "in / on / of"; the rest of the sentence is the filter.
+      const rawSel = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      const noteFilter = parseFilter(rawSel, s => pitchOf(s)?.pitch ?? null)
+      // ⚠️ "the clips longer than a beat" also reads as a note filter (long).
+      // Notes are meant only when the sentence says notes, or names a pitch
+      // class or the scale — and never when it says clips.
+      const meansNotes = !/\bclips?\b/.test(rawSel) && (/\bnotes?\b|\bchords?\b/.test(rawSel) || (noteFilter != null && (noteFilter.pitchClass != null || noteFilter.scale != null)))
+      if (meansNotes) {
+        const inM = /\b(?:in|on|of|from)\s+(?:the\s+)?([a-z0-9' ]+?)$/.exec(rawSel)
+        const target = inM?.[1]?.trim() || ctx.selectedTrackName
+        if (target) {
+          for (const word of w.all) w.markWord(word, 0)
+          const filter = inM ? rawSel.slice(0, inM.index).replace(/^.*?\bselect(?:ed)?\b\s*/, '').trim() : rawSel.replace(/^.*?\bselect(?:ed)?\b\s*/, '').trim()
+          return { calls: [{ name: 'select', input: { what: 'notes', target, filter } }], confidence: 0.9, needsName: true }
+        }
+      }
       // ⚠️ The multi-select, by voice. "all the pad intro parts", "the third
       // pad intro part", "pad intro part 2", "the pad clips after bar 9", "the
       // clips shorter than a bar" — each names a SET of clips, and the set is
@@ -3086,6 +3106,40 @@ const COMMANDS: VoiceCommand[] = [
       if (!named) return null
       for (const word of w.all) w.markWord(word, 0)
       return { calls: [{ name: 'stretch_notes', input: { target: named.name, factor } }], confidence: 0.9 }
+    },
+  },
+  {
+    id: 'edit_notes',
+    tool: 'edit_notes',
+    group: 'Notes',
+    what: 'Split, chop, join, fit or deactivate the notes of a part',
+    say: ['split the pad notes in half', 'chop the lead notes into four', 'join the pad notes', 'deactivate the pad notes', 'fit the pad notes to the loop'],
+    match(w, ctx) {
+      const raw = w.raw.toLowerCase()
+      // These verbs belong to clips too — "split the pad at bar 2", "deactivate
+      // the pad clip" — so the sentence has to say NOTES (or a chord).
+      if (!/\bnotes?\b|\bchords?\b/.test(raw)) return null
+      const op = /\bchop\b/.test(raw) ? 'chop'
+        : /\bsplit\b|\bcut\b.*\bin half\b/.test(raw) ? 'split'
+          : /\bjoin\b|\bmerge\b|\bglue\b/.test(raw) ? 'join'
+            : /\bfit\b/.test(raw) ? 'fit'
+              : /\bdeactivate\b|\bturn off\b|\bsilence\b/.test(raw) ? 'deactivate'
+                : /\breactivate\b|\bactivate\b|\bturn (?:back )?on\b/.test(raw) ? 'activate' : null
+      if (!op) return null
+      // "fit … to the loop" is ours; "fit to scale" is the roll's key fix.
+      if (op === 'fit' && /\bscale\b|\bkey\b/.test(raw)) return null
+      const partsM = /\binto\s+(\d+|two|three|four|five|six|eight)\b/.exec(raw)
+      const WORDS: Record<string, number> = { two: 2, three: 3, four: 4, five: 5, six: 6, eight: 8 }
+      const parts = /\bin half\b|\bin two\b/.test(raw) ? 2 : partsM ? (WORDS[partsM[1]] ?? Number(partsM[1])) : undefined
+      const named = nameOrSelected(w, ctx, ['split', 'chop', 'cut', 'join', 'merge', 'glue', 'fit', 'deactivate', 'reactivate', 'activate',
+        'turn', 'off', 'on', 'back', 'silence', 'the', 'notes', 'note', 'chord', 'chords', 'in', 'half', 'into', 'to', 'loop', 'clip',
+        'two', 'three', 'four', 'five', 'six', 'eight', 'parts', 'pieces', 'of', 'every', 'all'], { dropNums: true })
+      if (!named) return null
+      for (const word of w.all) w.markWord(word, 0)
+      const input: Record<string, unknown> = { target: named.name, op }
+      if (parts && (op === 'split' || op === 'chop')) input.parts = parts
+      if (op === 'fit') input.range = /\bloop\b/.test(raw) ? 'loop' : 'clip'
+      return { calls: [{ name: 'edit_notes', input }], confidence: 0.9 }
     },
   },
   {

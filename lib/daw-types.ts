@@ -952,6 +952,8 @@ export interface MidiNote {
   deviation?: number
   /** Probability group id; the clip's chanceGroups says whether the group plays all or one. */
   chanceGroup?: string
+  /** Live's Deactivate Note (0): `false` = kept in place, drawn dimmed, silent. Absent = active. */
+  active?: boolean
   presetId?: string    // MIDI preset active when this note was recorded
   /** Per-note sound override — wins over clip rollFx and preset sound. */
   fx?: RollFx

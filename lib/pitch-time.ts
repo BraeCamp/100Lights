@@ -129,16 +129,36 @@ export function addInterval(notes: MidiNote[], size: number, scale: Scale | null
  * half speed, ÷2 double speed. The clip's own length is the caller's to
  * grow — Live leaves the loop alone, and so does this.
  */
-export function stretchNotes(notes: MidiNote[], factor: number): NotePatch[] {
-  if (!notes.length || !(factor > 0) || factor === 1) return []
-  const lo = Math.min(...notes.map(n => n.startBeat))
-  return notes.map(n => ({
-    id: n.id,
-    patch: {
-      startBeat: round(lo + (n.startBeat - lo) * factor),
-      durationBeats: Math.max(MIN_NOTE_BEATS, round(n.durationBeats * factor)),
-    },
-  }))
+export function stretchNotes(notes: MidiNote[], factor: number, anchor?: number): NotePatch[] {
+  if (!notes.length || !Number.isFinite(factor) || factor === 0 || factor === 1) return []
+  const lo = anchor ?? Math.min(...notes.map(n => n.startBeat))
+  const map = (t: number) => lo + (t - lo) * factor
+  // A negative factor is the stretch markers dragged past each other: the
+  // order mirrors, so a note's new start is where its END lands.
+  return notes.map(n => {
+    const a = map(n.startBeat), b = map(n.startBeat + n.durationBeats)
+    return {
+      id: n.id,
+      patch: {
+        startBeat: Math.max(0, round(Math.min(a, b))),
+        durationBeats: Math.max(MIN_NOTE_BEATS, round(Math.abs(b - a))),
+      },
+    }
+  })
+}
+
+/**
+ * The pseudo stretch marker: the span [lo, hi] with its middle `mid` dragged
+ * to `newMid`. Notes before the middle compress or expand into [lo, newMid],
+ * notes after it into [newMid, hi]; the ends stay put. Live's third handle.
+ */
+export function warpNotes(notes: MidiNote[], lo: number, mid: number, hi: number, newMid: number): NotePatch[] {
+  if (!(mid > lo) || !(hi > mid) || !(newMid > lo) || !(newMid < hi)) return []
+  const map = (t: number) => (t <= mid ? lo + (t - lo) * ((newMid - lo) / (mid - lo)) : newMid + (t - mid) * ((hi - newMid) / (hi - mid)))
+  return notes.map(n => {
+    const a = map(n.startBeat), b = map(n.startBeat + n.durationBeats)
+    return { id: n.id, patch: { startBeat: Math.max(0, round(a)), durationBeats: Math.max(MIN_NOTE_BEATS, round(b - a)) } }
+  })
 }
 
 /** Set Length: every note the same duration, from the chooser. */

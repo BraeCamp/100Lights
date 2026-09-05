@@ -51,7 +51,9 @@ import {
 import { beatToSeconds } from '../tempo-map'
 import { parseModRate, describeModRate } from '../daw-modulation'
 import { addressClips, parseClipAddress, clipLabel, colourOf, type ClipAddress } from '../clip-address'
-import { parseNoteAddress, addressNotes, chordsOf, type NoteAddress, type Chord } from '../note-address'
+import { parseNoteAddress, addressNotes, chordsOf, pitchOf, type NoteAddress, type Chord } from '../note-address'
+import { splitAt, chopNotes, joinNotes, fitToRange, setActive } from '../note-ops'
+import { parseFilter, findNotes, describeFilter } from '../find-notes'
 import { addressTracks, parseTrackAddress, describeTracks, TRACK_WORDS, type TrackAddress } from '../track-address'
 import { viewOf, snapOf, snapLabel, overlayOf, OVERLAY_LABEL } from './workspace'
 import { isSampleRef, sampleRefId } from '../sample-preset'
@@ -2304,6 +2306,68 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       return { actions, say: `${label ? `${label[0].toUpperCase()}${label.slice(1)} of ` : ''}${got.how} is ${how} now.` }
     }
 
+    // ── NOTE SURGERY — split, chop, join, fit, deactivate (lib/note-ops.ts)
+    case 'edit_notes': {
+      const op = str(i.op).toLowerCase()
+      if (!['split', 'chop', 'join', 'fit', 'deactivate', 'activate'].includes(op)) return fail('Say what to do with the notes — split, chop, join, fit, deactivate or activate.')
+      const got = clipsForEdit(i, target, maps, project, heard, op, {})
+      if (got.ask) return { actions: [], say: '', ask: got.ask }
+      if (!got.clips.length) return fail(`I couldn't find "${target || 'that'}".`)
+      const midi = got.clips.filter((c): c is MidiClip => 'notes' in c)
+      if (!midi.length) return fail(op === 'split' ? 'That is an audio clip — splitting a clip is its own command; say "split the clip at bar 2".' : 'That is an audio clip — these are note edits.')
+      const parts = i.parts != null ? spokenNumber(i.parts as string) : null
+      const place = i.splitAt != null ? placeOf(i.splitAt, maps, project) : null
+      if (place?.problem) return fail(place.problem)
+      const actions: unknown[] = []
+      let label = ''
+      let touched = 0, made = 0
+      for (const clip of midi) {
+        const pick = pickNotes(clip, i, maps, project)
+        if ('problem' in pick) return fail(pick.problem)
+        if (!pick.whole && !pick.notes.length) return fail(`I couldn't find ${pick.label} in "${clip.name}".`)
+        if (!pick.whole) label = pick.label
+        const notes = pick.notes
+        if (!notes.length) continue
+        if (op === 'split' || op === 'chop') {
+          const s = place?.beat != null ? splitAt(notes, place.beat - clip.startBeat, newId) : chopNotes(notes, parts ?? 2, newId)
+          if (!s.add.length) continue
+          actions.push({ type: 'SPLICE_MIDI_NOTES', clipId: clip.id, remove: s.remove, add: s.add })
+          touched += s.remove.length; made += s.add.length
+        } else if (op === 'join') {
+          const s = joinNotes(notes)
+          if (!s.add.length) continue
+          actions.push({ type: 'SPLICE_MIDI_NOTES', clipId: clip.id, remove: s.remove, add: s.add })
+          touched += s.remove.length; made += s.add.length
+        } else if (op === 'fit') {
+          const end = str(i.range) === 'loop' && clip.loopEnabled && clip.loopLengthBeats ? clip.loopLengthBeats : clip.durationBeats
+          const patches = fitToRange(notes, 0, end)
+          if (!patches.length) continue
+          actions.push({ type: 'UPDATE_MIDI_NOTES', clipId: clip.id, notes: patches })
+          touched += patches.length
+        } else {
+          const patches = setActive(notes, op === 'activate')
+          if (!patches.length) continue
+          actions.push({ type: 'UPDATE_MIDI_NOTES', clipId: clip.id, notes: patches })
+          touched += patches.length
+        }
+      }
+      if (!actions.length) {
+        return fail(op === 'join' ? 'Nothing to join — each key has one note.'
+          : op === 'activate' ? 'Those notes are already active.'
+            : op === 'deactivate' ? 'Those notes are already deactivated.'
+              : op === 'fit' ? 'Those notes already fill it.' : 'Nothing there to cut.')
+      }
+      const of = `${label ? `${label} of ` : ''}${got.how}`
+      const n = (k: number) => `${k} note${k === 1 ? '' : 's'}`
+      const say = op === 'join' ? `Joined ${n(touched)} into ${made} in ${of}.`
+        : op === 'fit' ? `Fitted ${of} to ${str(i.range) === 'loop' ? 'the loop' : 'the clip'}.`
+          : op === 'deactivate' ? `Deactivated ${n(touched)} in ${of} — kept, silent.`
+            : op === 'activate' ? `${n(touched)} in ${of} back on.`
+              : place?.beat != null ? `Split ${n(touched)} in ${of} at ${describeBeat(place.beat, maps)}.`
+                : `${op === 'chop' ? 'Chopped' : 'Split'} ${n(touched)} in ${of} into ${made}.`
+      return { actions, say }
+    }
+
     // ── The studio around the song ───────────────────────────────────────
     case 'set_master_volume': {
       const pct = spokenNumber(i.volume as string)
@@ -4335,6 +4399,36 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       const what = str(i.what).toLowerCase() || 'all'
       const clips = allClips(project)
       if (what === 'none') return { actions: [{ type: 'SELECT', clipIds: [] }], say: 'Nothing selected.' }
+      // ── Notes inside a clip — Find & Select by voice (lib/find-notes.ts) ──
+      // "select every C in the pad", "select the quiet notes in the lead".
+      // The clip is selected too, so the roll opens on it and takes the notes.
+      if (what === 'notes' || what === 'note') {
+        const found = resolveClip(target, project)
+        if (!found || !('notes' in found.clip)) return fail(`I couldn't find a MIDI clip called "${target || 'that'}".`)
+        const clip = found.clip as MidiClip
+        let pool = clip.notes
+        let label = ''
+        if (i.notes != null) {
+          const pick = pickNotes(clip, i, maps, project)
+          if ('problem' in pick) return fail(pick.problem)
+          pool = pick.notes
+          label = pick.label
+        }
+        const filterSaid = str(i.filter)
+        const f = filterSaid ? parseFilter(filterSaid, s => pitchOf(s)?.pitch ?? null) : null
+        if (filterSaid && !f && i.notes == null && !/\bnotes?\b|\ball\b|\beverything\b/.test(filterSaid)) {
+          return fail(`I don't know how to pick "${filterSaid}" — try "every C", "the quiet notes", "the short notes", "every other note", "the notes off the scale".`)
+        }
+        const notes = f ? findNotes(pool, f, { scale: projectScale(project) }) : pool
+        if (!notes.length) return fail(`No notes in "${clip.name}" match${f ? ` — ${describeFilter(f)}` : ''}.`)
+        return {
+          actions: [
+            { type: 'SELECT', clipIds: [clip.id], trackId: clip.trackId },
+            { type: 'SELECT_NOTES', clipId: clip.id, noteIds: notes.map(n => n.id) },
+          ],
+          say: `Selected ${notes.length} note${notes.length === 1 ? '' : 's'} in ${clipLabel(project, clip)}${f ? ` — ${describeFilter(f)}` : label ? ` — ${label}` : ''}.`,
+        }
+      }
       // ── Clips by address: one, several, or all with a name ────────────
       //
       // Brae: "give the voice control control over the multiselect function…

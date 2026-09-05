@@ -28,6 +28,11 @@ import { laneValue, lanePatch, randomizeLane, rampLane, LANE_MAX, type LaneField
 import { visibleRows, rowIndexOf, focusScrollTop, stepAdvance, stepMove } from '@/lib/roll-rows'
 import { transposeNotes, transposeDegrees, invertNotes, addInterval, stretchNotes, setLength, humanizeNotes, reverseNotes, durationLabel, describeInterval, type Scale } from '@/lib/pitch-time'
 import { PitchTimePanel } from './PitchTimePanel'
+import { splitAt, chopNotes, chopOnGrid, joinNotes, fitToRange, setActive, anyInactive, type Splice } from '@/lib/note-ops'
+import { findNotes, filterIsEmpty, type NoteFilter } from '@/lib/find-notes'
+import { FindNotesBar } from './FindNotesBar'
+import { StretchMarkers } from './StretchMarkers'
+import { useNoteSelectionRequest, consumeNoteSelection } from '@/lib/note-selection'
 
 /** Roots a sample can be declared at: C1 to C7, every semitone. */
 const ROOT_CHOICES = Array.from({ length: 73 }, (_, i) => 24 + i)
@@ -550,6 +555,22 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const ptBtnRef = useRef<HTMLButtonElement>(null)
   const humanizeRuns = useRef(0)
 
+  // Note surgery (lib/note-ops.ts): E held = the split tool; Chop's part count;
+  // Find & Select (lib/find-notes.ts) with its bar open or closed.
+  const [splitting, setSplitting] = useState(false)
+  const [chopParts, setChopParts] = useState(2)
+  const [findOpen, setFindOpen] = useState(false)
+  const [filter, setFilter] = useState<NoteFilter>({})
+  // A selection asked for from outside — the voice, the palette — parked
+  // until this roll can take it (lib/note-selection.ts).
+  const selReq = useNoteSelectionRequest()
+  useEffect(() => {
+    if (!selReq || selReq.clipId !== clip.id) return
+    const have = new Set(clip.notes.map(n => n.id))
+    setSelectedNotes(new Set(selReq.noteIds.filter(id => have.has(id))))
+    consumeNoteSelection(selReq)
+  }, [selReq, clip.id, clip.notes])
+
   // Voice mapping: sung-pitch ribbon overlay + synced replay (pitched rolls only)
   const voiceMap = useVoiceMap(engine, clip, dispatch)
 
@@ -976,6 +997,30 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     const beat  = snapUnless(e.altKey, rawBeat)
     const pitch = rawPitch
 
+    // E held: the split tool (lib/note-ops.ts). A click splits the note under
+    // the pointer where it was clicked; a drag splits every note the pointer
+    // crosses, each at the x it was crossed. ⌥ leaves the cut off the grid.
+    if (splitting) {
+      const done = new Set<string>()
+      const cutOne = (n: MidiNote | undefined, at: number) => {
+        if (!n || done.has(n.id)) return
+        done.add(n.id)
+        const s = splitAt([n], at, newNoteId)
+        if (s.add.length) dispatch({ type: 'SPLICE_MIDI_NOTES', clipId: clip.id, remove: s.remove, add: s.add })
+      }
+      cutOne(noteAt(rawBeat, pitch), beat)
+      const onSplitMove = (ev: MouseEvent) => {
+        const rb = (ev.clientX - rect.left + scrollLeft) / beatW
+        const p = yToPitch(ev.clientY - rect.top + scrollTop)
+        if (p === null) return
+        cutOne(noteAt(rb, p), snapUnless(ev.altKey, rb))
+      }
+      const onSplitUp = () => { document.removeEventListener('mousemove', onSplitMove); document.removeEventListener('mouseup', onSplitUp) }
+      document.addEventListener('mousemove', onSplitMove)
+      document.addEventListener('mouseup', onSplitUp)
+      return
+    }
+
     if (tool === 'edit') {
       const existing = noteAt(rawBeat, pitch)
       if (existing) {
@@ -1008,6 +1053,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           function onResizeUp() {
             document.removeEventListener('mousemove', onResizeMove)
             document.removeEventListener('mouseup', onResizeUp)
+            settleOverlaps(targets.map(t => t.id))
           }
           document.addEventListener('mousemove', onResizeMove)
           document.addEventListener('mouseup', onResizeUp)
@@ -1033,6 +1079,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           function onLeftUp() {
             document.removeEventListener('mousemove', onLeftMove)
             document.removeEventListener('mouseup', onLeftUp)
+            settleOverlaps(targets.map(t => t.id))
           }
           document.addEventListener('mousemove', onLeftMove)
           document.addEventListener('mouseup', onLeftUp)
@@ -1061,6 +1108,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           function onUpSel() {
             document.removeEventListener('mousemove', onDragSel)
             document.removeEventListener('mouseup', onUpSel)
+            settleOverlaps(origins.map(o => o.id))
           }
           document.addEventListener('mousemove', onDragSel)
           document.addEventListener('mouseup', onUpSel)
@@ -1087,6 +1135,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
         function onUpExisting() {
           document.removeEventListener('mousemove', onMoveExisting)
           document.removeEventListener('mouseup', onUpExisting)
+          settleOverlaps([existingId])
         }
         document.addEventListener('mousemove', onMoveExisting)
         document.addEventListener('mouseup', onUpExisting)
@@ -1339,6 +1388,40 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     setPtAnchor(r ? { x: r.left, y: r.bottom + 6 } : { x: 240, y: 240 })
   }
 
+  // Note surgery (lib/note-ops.ts). A splice is one undo step; the pieces of
+  // a split keep the first piece's id so the selection stays on it.
+  const newNoteId = () => crypto.randomUUID()
+  function splice(s: Splice, select?: 'added') {
+    if (!s.remove.length && !s.add.length) return
+    dispatch({ type: 'SPLICE_MIDI_NOTES', clipId: clip.id, remove: s.remove, add: s.add })
+    if (select === 'added') setSelectedNotes(new Set(s.add.map(n => n.id)))
+  }
+  /** ⌘E: chop the selection on the grid; with nothing selected, split at the playhead (or the step marker). */
+  function splitOrChop() {
+    if (selectedNotes.size) { splice(chopOnGrid(targetNotes(), quant, newNoteId), 'added'); return }
+    const rel = engine.currentBeat - clip.startBeat
+    const at = stepEntry ? stepBeat : rel > 0 && rel < clip.durationBeats ? rel : null
+    if (at == null) return
+    splice(splitAt(clip.notes, at, newNoteId), 'added')
+  }
+  function chopSelected(parts = chopParts) { splice(chopNotes(targetNotes(), parts, newNoteId), 'added') }
+  function joinSelected() { splice(joinNotes(targetNotes()), 'added') }
+  /** ⌘⌥J: the selection scaled into the clip's loop, or the whole clip. */
+  function fitSelectedToRange() {
+    const end = clip.loopEnabled && clip.loopLengthBeats ? clip.loopLengthBeats : clip.durationBeats
+    patchMany(fitToRange(targetNotes(), 0, end))
+  }
+  /** 0: deactivate the selection — or bring it back when any of it is off. */
+  function toggleActive() {
+    const t = targetNotes()
+    patchMany(setActive(t, anyInactive(t)))
+  }
+  const findScale: Scale | null = project.scale !== 'chromatic' ? rollScale : null
+  const found = useMemo(() => (filterIsEmpty(filter) ? [] : findNotes(clip.notes, filter, { scale: findScale })), [clip.notes, filter, findScale])
+  function selectFound() { if (!filterIsEmpty(filter)) setSelectedNotes(new Set(found.map(n => n.id))) }
+  /** Live's overlap rule, once a drag has ended (lib/note-ops.ts). */
+  const settleOverlaps = (ids: string[]) => { if (ids.length) dispatch({ type: 'RESOLVE_NOTE_OVERLAPS', clipId: clip.id, noteIds: ids }) }
+
   /** Stretch every note to touch the next one that starts after it, so a line
    *  is joined rather than a row of separate blips. Notes with nothing after
    *  them are left alone. */
@@ -1444,6 +1527,26 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       keywords: 'stretch halve squash faster double speed time compress', run: () => stretch(0.5) },
     { id: 'roll.setLength', group: 'Notes', label: `Set length — make ${rollScope} ${durationLabel(lengthBeats)} long`,
       keywords: 'set length duration same length every note fixed uniform', run: () => applyLength() },
+    // Note surgery (lib/note-ops.ts).
+    { id: 'roll.split', group: 'Notes', label: selectedNotes.size ? `Chop ${rollScope} on the grid` : 'Split the notes at the playhead',
+      keywords: 'split cut chop grid divide slice notes e', shortcut: '⌘E', run: splitOrChop },
+    { id: 'roll.chop', group: 'Notes', label: `Chop ${rollScope} into ${chopParts} parts`,
+      keywords: 'chop split parts pieces divide equal notes', run: () => chopSelected() },
+    { id: 'roll.chopMore', group: 'Notes', label: `Chop into more parts (${chopParts + 1})`,
+      keywords: 'chop parts more count up', run: () => setChopParts(p => Math.min(64, p + 1)) },
+    { id: 'roll.chopFewer', group: 'Notes', label: `Chop into fewer parts (${Math.max(2, chopParts - 1)})`,
+      keywords: 'chop parts fewer count down', when: () => chopParts > 2, run: () => setChopParts(p => Math.max(2, p - 1)) },
+    { id: 'roll.join', group: 'Notes', label: `Join ${rollScope} — one note per key`,
+      keywords: 'join merge combine glue notes tie', shortcut: '⌘J', run: joinSelected },
+    { id: 'roll.fitRange', group: 'Notes', label: `Fit ${rollScope} to ${clip.loopEnabled && clip.loopLengthBeats ? 'the loop' : 'the clip'}`,
+      keywords: 'fit to time range fill loop clip stretch notes', shortcut: '⌘⌥J', run: fitSelectedToRange },
+    { id: 'roll.deactivate', group: 'Notes', label: anyInactive(targetNotes()) ? `Activate ${rollScope} again` : `Deactivate ${rollScope} — keep them, silence them`,
+      keywords: 'deactivate activate mute notes silence disable enable off on 0', shortcut: '0', run: toggleActive },
+    // Find & Select (lib/find-notes.ts).
+    { id: 'roll.find', group: 'Notes', label: findOpen ? 'Close Find & Select notes' : 'Find & Select notes — filter by pitch, velocity, chance, length, time, scale',
+      keywords: 'find select notes filter search magnifier every nth quiet loud short long', run: () => setFindOpen(v => !v) },
+    { id: 'roll.findSelect', group: 'Notes', label: `Select the ${found.length} notes the Find filter matches`,
+      keywords: 'find select apply filter matches', when: () => !filterIsEmpty(filter), run: selectFound },
     { id: 'roll.selectAll', group: 'Notes', label: 'Select every note in this clip',
       keywords: 'all everything notes select', shortcut: '⌘A',
       run: () => setSelectedNotes(new Set(clip.notes.map(n => n.id))) },
@@ -1481,7 +1584,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     { id: 'roll.close', group: 'Notes', label: 'Close the piano roll',
       keywords: 'hide dismiss done back arrangement',
       run: () => { setExpandedPianoRollClipId?.(null); setEditTarget?.(null) } },
-  ], [clip.id, clip.notes, selectedNotes, rollScope, isDrum, quant, project.tempo, project.key, project.scale, groupLabel, fold, foldScale, highlightScale, stepEntry, scaleOn, intervalSize, lengthBeats, humanizeAmount, ptAnchor])
+  ], [clip.id, clip.notes, selectedNotes, rollScope, isDrum, quant, project.tempo, project.key, project.scale, groupLabel, fold, foldScale, highlightScale, stepEntry, scaleOn, intervalSize, lengthBeats, humanizeAmount, ptAnchor, chopParts, findOpen, filter, found, clip.loopEnabled, clip.loopLengthBeats])
 
   function handleKeyDown(e: React.KeyboardEvent) {
     const selected = clip.notes.filter(n => selectedNotes.has(n.id))
@@ -1541,6 +1644,13 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     }
     // Arrows: nudge time / transpose pitch (⇧ = octave; drums move by lane)
     // Fold (F), Fold to Scale (G), Highlight Scale (K), Focus (N) — lib/roll-rows.ts.
+    // Note surgery (lib/note-ops.ts): E held is the split tool; ⌘E chops or
+    // splits; ⌘J joins; ⌘⌥J fits; 0 deactivates.
+    if (kb === 'notes.splitTool') { e.preventDefault(); e.stopPropagation(); if (!splitting) setSplitting(true); return }
+    if (kb === 'notes.split') { e.preventDefault(); e.stopPropagation(); splitOrChop(); return }
+    if (kb === 'notes.join') { e.preventDefault(); e.stopPropagation(); if (selected.length) joinSelected(); return }
+    if (kb === 'notes.fitRange') { e.preventDefault(); e.stopPropagation(); if (selected.length) fitSelectedToRange(); return }
+    if (kb === 'notes.deactivate') { e.preventDefault(); e.stopPropagation(); if (selected.length) toggleActive(); return }
     if (kb === 'notes.fold') { e.preventDefault(); e.stopPropagation(); setFold(v => !v); return }
     if (kb === 'notes.foldScale') { e.preventDefault(); e.stopPropagation(); setFoldScale(v => !v); return }
     if (kb === 'notes.highlightScale') { e.preventDefault(); e.stopPropagation(); setHighlightScale(v => !v); return }
@@ -1720,6 +1830,8 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       data-help-id="piano-roll"
       data-clip-editor={clip.id}
       onKeyDown={handleKeyDown}
+      onKeyUp={e => { if (splitting && resolveKey(e, ['roll'])?.id === 'notes.splitTool') setSplitting(false) }}
+      onBlur={() => { if (splitting) setSplitting(false) }}
       // Scrolling inside the roll must not also pan the arrangement behind it
       // (ArrangementView has a handleWheel on the whole track area)
       onWheel={e => e.stopPropagation()}
@@ -1750,6 +1862,12 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
               {t.charAt(0).toUpperCase() + t.slice(1)}
             </button>
           ))}
+
+          <button onClick={() => setFindOpen(v => !v)} aria-pressed={findOpen} data-help-id="roll-find"
+            title="Find & Select notes — a filter over the clip's notes (pitch, velocity, chance, length, time, every nth, condition, scale) that becomes the selection"
+            style={{ ...prBtn, background: findOpen ? 'var(--bg-surface)' : 'transparent', color: findOpen ? 'var(--text-primary)' : 'var(--text-muted)', border: findOpen ? '1px solid var(--border)' : '1px solid transparent', fontSize: 9, padding: '2px 6px' }}>
+            ⌕ Find
+          </button>
 
           <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
           {([2, 1, 0.5, 0.25] as Quant[]).map(q => { const label = QUANT_LABELS[q]; return (
@@ -2063,6 +2181,11 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
         )}
 
         {/* Row 2: MUSICAL — draw mode, melodic clips only */}
+        {findOpen && (
+          <FindNotesBar filter={filter} setFilter={setFilter} count={found.length} total={clip.notes.length}
+            onSelect={selectFound} onClose={() => setFindOpen(false)} scaleOn={!!findScale} />
+        )}
+
         {tool === 'edit' && !isDrum && (
           <div style={{
             height: CHORD_ROW_H, display: 'flex', alignItems: 'center', gap: 2, padding: '0 8px',
@@ -2176,7 +2299,8 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           <div
             ref={gridRef}
             data-help-id="roll-grid"
-            style={{ flex: 1, overflow: 'hidden', position: 'relative', cursor: tool === 'edit' ? (hoverEdge ? 'ew-resize' : 'crosshair') : tool === 'draw' ? 'copy' : 'cell', touchAction: isMobile ? 'none' : undefined }}
+            data-splitting={splitting || undefined}
+            style={{ flex: 1, overflow: 'hidden', position: 'relative', cursor: splitting ? 'col-resize' : tool === 'edit' ? (hoverEdge ? 'ew-resize' : 'crosshair') : tool === 'draw' ? 'copy' : 'cell', touchAction: isMobile ? 'none' : undefined }}
             onMouseDown={handleGridMouseDown}
             onMouseMove={handleGridMouseMove}
             onMouseLeave={() => setHoverPitch(null)}
@@ -2232,9 +2356,13 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                 const w = Math.max(4, note.durationBeats * beatW - 1)
                 const sel = selectedNotes.has(note.id)
                 const hasPreset = !!note.presetId
+                // A deactivated note (0) is kept in place, drawn hollow and dim.
+                const off = note.active === false
                 return (
                   <div
                     key={note.id}
+                    data-note-id={note.id}
+                    data-note-active={off ? 'false' : undefined}
                     onContextMenu={e => {
                       e.preventDefault()
                       e.stopPropagation()
@@ -2243,12 +2371,12 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                     style={{
                       position: 'absolute', left: x, top: y + 1,
                       width: w, height: rowH - 2,
-                      background: color,
-                      border: sel ? '1px solid #fff' : hasPreset ? `1px solid var(--accent-light)` : `1px solid ${color}cc`,
+                      background: off ? 'transparent' : color,
+                      border: sel ? '1px solid #fff' : off ? `1px dashed ${color}` : hasPreset ? `1px solid var(--accent-light)` : `1px solid ${color}cc`,
                       boxShadow: sel ? '0 0 0 1px #fff, 0 0 6px rgba(255,255,255,0.55)' : undefined,
                       filter: sel ? 'brightness(1.3)' : undefined,
                       borderRadius: 2, boxSizing: 'border-box',
-                      opacity: sel ? 1 : 0.9, cursor: 'context-menu',
+                      opacity: off ? (sel ? 0.7 : 0.45) : sel ? 1 : 0.9, cursor: 'context-menu',
                     }}
                   />
                 )
@@ -2267,6 +2395,17 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
             <PlayheadLine clipStart={clip.startBeat} clipDuration={clip.durationBeats} beatW={beatW} scrollLeft={scrollLeft} />
             {stepEntry && (
               <div data-help-id="step-marker" data-step-beat={stepBeat} style={{ position: 'absolute', top: 0, bottom: 0, left: stepBeat * beatW - scrollLeft, width: 2, background: '#f59e0b', boxShadow: '0 0 4px rgba(245,158,11,0.7)', pointerEvents: 'none', zIndex: 6 }} />
+            )}
+
+            {/* Stretch markers over a selection of two or more notes (lib/pitch-time.ts) */}
+            {selectedNotes.size >= 2 && tool === 'edit' && (
+              <StretchMarkers
+                notes={clip.notes.filter(n => selectedNotes.has(n.id))}
+                beatW={beatW} scrollLeft={scrollLeft}
+                snap={(b, free) => snapUnless(free, b)}
+                apply={patchMany}
+                onDone={() => settleOverlaps([...selectedNotes])}
+              />
             )}
 
             {/* Selection rectangle */}

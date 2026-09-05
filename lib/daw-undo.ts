@@ -43,6 +43,8 @@ export function touchedByAction(action: DawAction): Touched {
     case 'REMOVE_MIDI_NOTE':
     case 'UPDATE_MIDI_NOTE':
     case 'UPDATE_MIDI_NOTES':
+    case 'SPLICE_MIDI_NOTES':
+    case 'RESOLVE_NOTE_OVERLAPS':
     case 'SET_CHANCE_GROUP':  return { whole: [], entities: { arrangementClips: [action.clipId] } }
 
     // ── clip effects (FX bars) ──

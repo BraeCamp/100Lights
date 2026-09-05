@@ -377,6 +377,24 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'edit_notes',
+    description:
+      'NOTE SURGERY — split, chop, join, fit or deactivate the notes of a clip. "split the pad notes in half" (op split, parts 2), "chop the lead into four" (chop, parts 4), "split the bass notes at bar 2" (split, at), "join the pad notes" (join — the notes on each key become one), "fit the pad notes to the loop" (fit), "deactivate the last chord of the pad" (deactivate — kept in place, silent; activate brings them back). Part of a clip with `notes`, as in transpose. NOT for clips: splitting a clip is split_clip, deactivating a clip is set_clip_active.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        op: { type: 'string', enum: ['split', 'chop', 'join', 'fit', 'deactivate', 'activate'] },
+        parts: { type: 'number', description: 'For split / chop: how many equal pieces each note becomes. 2 for "in half". Omit with `splitAt`.' },
+        splitAt: { ...POSITION, description: 'For split: cut every note sounding at this place — "split the bass notes at bar 2".' },
+        range: { type: 'string', enum: ['loop', 'clip'], description: 'For fit: fill the clip\'s loop, or the whole clip (the default).' },
+        ...NOTE_ADDRESS,
+        ...ADDRESS,
+      },
+      required: ['target', 'op'],
+    },
+  },
+  {
     name: 'transport',
     description:
       'TRANSPORT — play, stop, or return to the start. ALWAYS call this when the sentence ends with "then restart", "then play it", "and play it back", or similar: "restart" means go back to the beginning and play, and it is a real request like any other, not a closing remark. "go to bar 9" moves the playhead — but ONLY when going there is the request itself. A bar mentioned inside a larger sentence is describing WHERE something should happen, not asking to move: "until the 6th bar", "add a crash at bar 5", "make it louder from bar 3" are not transport calls, and moving the playhead during one of them is an edit nobody asked for.',
@@ -716,8 +734,10 @@ export const MUSIC_TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        what: { type: 'string', enum: ['all', 'none', 'track', 'loop', 'clips'] },
-        target: { ...TARGET, description: 'For "track" — which one. For "clips" — the clip name (or track) to address.' },
+        what: { type: 'string', enum: ['all', 'none', 'track', 'loop', 'clips', 'notes'] },
+        target: { ...TARGET, description: 'For "track" — which one. For "clips" — the clip name (or track) to address. For "notes" — the clip whose notes to pick.' },
+        filter: { type: 'string', description: 'For "notes": Find & Select in words — "every C", "the quiet notes", "the notes louder than 100", "the short notes", "every other note", "the notes off the scale", "the deactivated notes", "the notes above C5". Combine freely. Or name a part with `notes` ("the last chord").' },
+        ...NOTE_ADDRESS,
         ...ADDRESS,
       },
       required: ['what'],

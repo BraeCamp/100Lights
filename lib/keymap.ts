@@ -151,6 +151,13 @@ export const KEYMAP: KeyBinding[] = [
   // semitone reachable without switching the scale off.
   { id: 'notes.upSemitone', keys: '⌥↑', scope: 'roll', group: 'Piano Roll', action: 'Transpose a semitone even with the scale on (↑ / ↓ move by scale degree then)', modes: ['music'], display: '⌥↑ / ⌥↓' },
   { id: 'notes.downSemitone', keys: '⌥↓', scope: 'roll', group: 'Piano Roll', action: 'Transpose down a semitone with the scale on', modes: ['music'], hidden: true },
+  // Note surgery (lib/note-ops.ts). E is a HOLD: while it is down, a click
+  // or a drag through notes splits them where the pointer crosses.
+  { id: 'notes.splitTool', keys: 'E', scope: 'roll', group: 'Piano Roll', action: 'Hold E and click or drag through notes to split them where the pointer crosses (⌥ = off the grid)', modes: ['music'] },
+  { id: 'notes.split', keys: '⌘E', scope: 'roll', group: 'Piano Roll', action: 'Chop the selected notes on the grid — or, with nothing selected, split at the playhead', modes: ['music'] },
+  { id: 'notes.join', keys: '⌘J', scope: 'roll', group: 'Piano Roll', action: 'Join the selected notes on each key into one', modes: ['music'] },
+  { id: 'notes.fitRange', keys: '⌘⌥J', scope: 'roll', group: 'Piano Roll', action: 'Fit the selected notes to the loop (or the whole clip)', modes: ['music'] },
+  { id: 'notes.deactivate', keys: '0', scope: 'roll', group: 'Piano Roll', action: 'Deactivate / activate the selected notes — kept in place, dimmed, silent', modes: ['music'] },
 
   // ── Knobs (handled by the focused knob itself; listed so the help panel knows) ──
   { id: 'knob.next', keys: 'Tab', scope: 'knob', group: 'Knobs', action: 'Move between knobs — every knob takes keyboard focus' },

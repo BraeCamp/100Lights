@@ -187,6 +187,21 @@ export function audioLatencyHint(): LatencyChoice {
   return 'interactive'
 }
 
+/**
+ * The clip as it PLAYS: without its deactivated notes (Live's 0, lib/note-ops.ts).
+ * The scheduler's own path filters them in _processedNotes; this is for the
+ * paths that hand the clip on whole — the Apollo combine render and its stamp.
+ * Memoised on the clip object (the reducer never mutates one), so the notes
+ * array keeps its identity and lib/apollo/clip-stamp.ts's memo still hits.
+ */
+const playableClips = new WeakMap<MidiClip, MidiClip>()
+function playableClip(clip: MidiClip): MidiClip {
+  if (!clip.notes.some(n => n.active === false)) return clip
+  let v = playableClips.get(clip)
+  if (!v) { v = { ...clip, notes: clip.notes.filter(n => n.active !== false) }; playableClips.set(clip, v) }
+  return v
+}
+
 export class DawEngine extends EventTarget {
   ctx: AudioContext
   masterGain: GainNode
@@ -575,7 +590,9 @@ export class DawEngine extends EventTarget {
   private _processedNotes(clip: MidiClip, track: DawTrack): MidiNote[] {
     const hit = this._midiFxCache.get(clip.id)
     if (hit) return hit
-    const out = this._applyMidiEffects(clip.notes, track.midiEffects ?? [])
+    // A deactivated note (Live's 0, `active: false`) is kept on the roll and
+    // never scheduled — lib/note-ops.ts.
+    const out = this._applyMidiEffects(clip.notes.filter(n => n.active !== false), track.midiEffects ?? [])
     this._midiFxCache.set(clip.id, out)
     return out
   }
@@ -2056,7 +2073,7 @@ export class DawEngine extends EventTarget {
     this._captureLaunch(trackId, clip, launchBeat)
 
     const clipDurBeats = clip.durationBeats || 4
-    const processedNotes = this._applyMidiEffects(clip.notes, track.midiEffects ?? [])
+    const processedNotes = this._applyMidiEffects(clip.notes.filter(n => n.active !== false), track.midiEffects ?? [])
 
     // Beat-based iteration scheduling: each loop pass lands on the transport's
     // beat grid THROUGH the tempo map, so session MIDI stays locked across
@@ -2422,7 +2439,8 @@ export class DawEngine extends EventTarget {
       .map(x => ({
         trackId: x.trackId,
         patch: x.inst.params as unknown as ApolloPatch,
-        clips: this._midiClips.filter(c => c.trackId === x.trackId && c.notes.length > 0),
+        // Without the deactivated notes — the render is made from these.
+        clips: this._midiClips.filter(c => c.trackId === x.trackId && c.notes.length > 0).map(playableClip).filter(c => c.notes.length > 0),
       }))
       .filter(g => g.clips.length > 0)
   }
@@ -2472,6 +2490,10 @@ export class DawEngine extends EventTarget {
     if (this._renderNow != null) return false
     const inst = this._resolveInstrument(track)
     if (inst?.type !== 'apollo') return false
+    // A combined buffer is rendered from the clip's notes directly, so the
+    // deactivated ones (lib/note-ops.ts) have to be out of the clip it sees —
+    // and out of its stamp, or the old render would keep playing them.
+    clip = playableClip(clip)
     // Already playing live in this pass — leave it alone until the transport
     // restarts, or the buffer doubles what is already sounding.
     if (this._liveScheduledClips.has(clip.id)) return false

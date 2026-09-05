@@ -18,6 +18,7 @@ import {
 } from './daw-types'
 import { DawEngine } from './daw-engine'
 import { legacyToBar } from './effect-bar'
+import { resolveOverlaps } from './note-ops'
 
 // ── Action types ────────────────────────────────────────────────────────
 
@@ -74,6 +75,10 @@ export type DawAction =
   | { type: 'UPDATE_MIDI_NOTE'; clipId: string; noteId: string; patch: Partial<MidiNote> }
   | { type: 'UPDATE_MIDI_NOTES'; clipId: string; notes: Array<{ id: string; patch: Partial<MidiNote> }> }
   | { type: 'ADD_MIDI_NOTES'; clipId: string; notes: MidiNote[] }
+  /** Split / Chop / Join: some notes out, some in, one undo step (lib/note-ops.ts). */
+  | { type: 'SPLICE_MIDI_NOTES'; clipId: string; remove: string[]; add: MidiNote[] }
+  /** Live's overlap rule for notes that just landed — after a move or resize ends. */
+  | { type: 'RESOLVE_NOTE_OVERLAPS'; clipId: string; noteIds: string[] }
   | { type: 'SET_CHANCE_GROUP'; clipId: string; noteIds: string[]; group: string | null; mode?: 'all' | 'one' }
   // Effects chain
   | { type: 'ADD_EFFECT'; trackId: string; effect: TrackEffect }
@@ -584,6 +589,32 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
         if (c.id !== action.clipId || c.kind !== 'midi') return c
         const end = Math.max(...action.notes.map(n => n.startBeat + n.durationBeats))
         return growToFitNoteEnd({ ...c, notes: [...c.notes, ...action.notes] } as MidiClip, end, project.timeSignatureNum)
+      })
+      return { ...project, arrangementClips: clips }
+    }
+    case 'SPLICE_MIDI_NOTES': {
+      if (!action.remove.length && !action.add.length) return project
+      const gone = new Set(action.remove)
+      const clips = project.arrangementClips.map(c => {
+        if (c.id !== action.clipId || c.kind !== 'midi') return c
+        const notes = [...c.notes.filter(n => !gone.has(n.id)), ...action.add]
+        const end = Math.max(0, ...action.add.map(n => n.startBeat + n.durationBeats))
+        return growToFitNoteEnd({ ...c, notes } as MidiClip, end, project.timeSignatureNum)
+      })
+      return { ...project, arrangementClips: clips }
+    }
+    // Live's overlap rule (lib/note-ops.ts): a note that lands on the start
+    // of another on the same key replaces it; one that lands inside another
+    // shortens it. Run when a gesture ENDS — not per move, or a group drag
+    // would eat its own notes on the way.
+    case 'RESOLVE_NOTE_OVERLAPS': {
+      const clips = project.arrangementClips.map(c => {
+        if (c.id !== action.clipId || c.kind !== 'midi') return c
+        const { remove, patches } = resolveOverlaps(c.notes, new Set(action.noteIds))
+        if (!remove.length && !patches.length) return c
+        const gone = new Set(remove)
+        const byId = new Map(patches.map(p => [p.id, p.patch]))
+        return { ...c, notes: c.notes.filter(n => !gone.has(n.id)).map(n => (byId.has(n.id) ? { ...n, ...byId.get(n.id) } : n)) }
       })
       return { ...project, arrangementClips: clips }
     }
