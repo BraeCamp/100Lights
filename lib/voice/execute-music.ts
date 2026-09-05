@@ -1386,6 +1386,20 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
 
   switch (call.name) {
     // DUPLICATE — "loop bass 2 three more times"
+    // ── Live's Clip Activator: park a clip, bring it back ─────────────────
+    case 'set_clip_active': {
+      const active = i.active === true || i.active === 'true'
+      const chosen = resolveClipOrAsk(target, project, maps, 'set_clip_active', { active })
+      if (chosen.ask) return { actions: [], say: '', ask: chosen.ask }
+      if (!chosen.clip) return fail(`I couldn't find "${target || 'that'}" — say the track or clip name.`)
+      const how = chosen.how ?? `"${chosen.clip.name}"`
+      if ((chosen.clip.active !== false) === active) return { actions: [], say: `${how} is already ${active ? 'active' : 'parked'}.` }
+      return {
+        actions: [{ type: 'SET_CLIPS_ACTIVE', clipIds: [chosen.clip.id], active }],
+        say: active ? `${how} is back on.` : `Parked ${how} — it stays put, silent, until you activate it again.`,
+      }
+    }
+
     case 'duplicate_clip': {
       const count = spokenNumber(i.count as string) ?? 1
       if (count < 1) return fail('Say how many more times to repeat it.')

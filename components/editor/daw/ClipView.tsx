@@ -602,6 +602,9 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   const menuItems: MenuItem[] = ctxSub === 'more' ? moreItems : [
     // Top block: the everyday clip actions in the order Brae wants —
     // Copy, Paste, Splice — then a divider.
+    // Live's Clip Activator (key 0): park the clip without deleting it.
+    { label: `${clip.active === false ? 'Activate' : 'Deactivate'}${isMulti ? ' Selected' : ''}`,
+      fn: () => dispatch({ type: 'SET_CLIPS_ACTIVE', clipIds: isMulti ? [...selectedClipIds] : [clip.id], active: clip.active === false }) },
     { label: isMulti ? 'Copy Selected' : 'Copy', fn: () => onCopy?.() },
     ...(onPaste ? [{ label: 'Paste', fn: () => onPaste() }] : []),
     dragEditItems[0], // Splice at Playhead
@@ -713,14 +716,19 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
       default: return false
     }
   })()
+  // Live's Clip Activator: a deactivated clip stays where it is, dimmed and
+  // dashed, and the engine skips it. Distinct from an overlay grey, which is
+  // a question about the clip, not a state of it.
+  const inactive = clip.active === false
 
   return (
     <>
       <div
         ref={clipDivRef}
         data-clip-id={clip.id}
+        data-clip-inactive={inactive || undefined}
         data-overlay-grey={greyed || undefined}
-        style={{ position: 'absolute', left, width, top: 4, bottom: 4, background: greyed ? 'rgba(128,128,128,0.22)' : `${color}40`, border: `1px solid ${isCropping ? '#f59e0b' : selected || multiSelected ? '#fff' : greyed ? '#6b6b6b' : color}`, borderRadius: 3, overflow: 'hidden', cursor: isCropping ? 'default' : 'grab', userSelect: 'none', boxSizing: 'border-box', outline: undefined, boxShadow: collabHolder ? `0 0 0 2px ${collabHolder.color}${collabHolder.editing ? '' : '99'}` : undefined, filter: greyed ? 'grayscale(1)' : undefined, opacity: greyed ? 0.55 : undefined, transition: 'opacity 180ms, filter 180ms, background 180ms' }}
+        style={{ position: 'absolute', left, width, top: 4, bottom: 4, background: greyed ? 'rgba(128,128,128,0.22)' : `${color}40`, border: `1px ${inactive ? 'dashed' : 'solid'} ${isCropping ? '#f59e0b' : selected || multiSelected ? '#fff' : greyed ? '#6b6b6b' : color}`, borderRadius: 3, overflow: 'hidden', cursor: isCropping ? 'default' : 'grab', userSelect: 'none', boxSizing: 'border-box', outline: undefined, boxShadow: collabHolder ? `0 0 0 2px ${collabHolder.color}${collabHolder.editing ? '' : '99'}` : undefined, filter: greyed || inactive ? 'grayscale(1)' : undefined, opacity: greyed ? 0.55 : inactive ? 0.35 : undefined, transition: 'opacity 180ms, filter 180ms, background 180ms' }}
         onMouseDown={onMouseDownBody}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}

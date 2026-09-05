@@ -379,6 +379,26 @@ check('the help panel lists every command', helpCount === VOICE_COMMANDS.length,
   check('and says what kinds there ARE when it cannot', /didgeridoo/.test(missing.problem ?? '') && /hihat 2/.test(missing.problem ?? ''), missing.problem)
 }
 
+// ── Live's Clip Activator (Ableton integration, Batch 0.1) ─────────────────
+{
+  // The reducer itself is exercised by the headless check (.claude/active-check.mjs):
+  // lib/daw-state.ts pulls in the Apollo engine client, which the strip-types
+  // importer cannot load here.
+  const parked = { ...PROJECT, arrangementClips: PROJECT.arrangementClips.map(c => c.id === 'c2' ? { ...c, active: false } : c) }
+  const first = phrase => interpret(phrase, CTX).calls[0]
+  const off = first('deactivate the pad clip')
+  check('"deactivate the pad clip" parks that clip', off?.name === 'set_clip_active' && off.input.active === false && /pad/i.test(off.input.target), JSON.stringify(off))
+  const on = first('activate the vox take again')
+  check('"activate the vox take again" brings it back', on?.name === 'set_clip_active' && on.input.active === true, JSON.stringify(on))
+  const mute = first('turn the bass 2 off')
+  check('"turn the bass 2 off" is not a clip activator call', mute?.name !== 'set_clip_active', JSON.stringify(mute))
+  const planned = planVoiceCall({ name: 'set_clip_active', input: { target: 'Pad clip', active: false } }, PROJECT, HEARD)
+  check('the planner turns it into SET_CLIPS_ACTIVE',
+    (planned.actions ?? []).some(a => a.type === 'SET_CLIPS_ACTIVE' && a.active === false && a.clipIds.includes('c2')), JSON.stringify(planned).slice(0, 200))
+  const again = planVoiceCall({ name: 'set_clip_active', input: { target: 'Pad clip', active: false } }, parked, HEARD)
+  check('and says so when it is already parked', !(again.actions ?? []).length && /already/.test(again.say ?? ''), again.say)
+}
+
 console.log(failures
   ? `\n${failures} failing`
   : `\nevery advertised command resolves, plans, and acts`)

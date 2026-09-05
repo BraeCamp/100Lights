@@ -3034,6 +3034,16 @@ export default function AudioEditor(props: AudioEditorProps) {
         ids.forEach(id => dispatch({ type: 'REMOVE_CLIP', clipId: id }))
         setSelectedClipIds(new Set()); setSelectedClipId(null)
       } },
+    // Live's Clip Activator: park a clip without deleting it (key 0).
+    { id: 'audio.edit.toggleClipActive', group: 'Edit',
+      label: paletteClip && paletteClip.active === false ? `Activate ${clipLabel}` : `Deactivate ${clipLabel}`,
+      keywords: 'deactivate activate disable enable park clip off on silent', shortcut: '0', when: () => editable && anyClips,
+      run: () => {
+        const ids = selectedClipIds.size ? [...selectedClipIds] : (clipTarget() ? [clipTarget()!.id] : [])
+        if (!ids.length) return
+        const first = projectRef.current.arrangementClips.find(c => c.id === ids[0])
+        dispatch({ type: 'SET_CLIPS_ACTIVE', clipIds: ids, active: first?.active === false })
+      } },
     { id: 'audio.edit.duplicateClip', group: 'Edit', label: `Duplicate ${clipLabel}`,
       keywords: 'copy repeat again clip', shortcut: '⌘D', when: () => editable && anyClips,
       run: () => withClip(c => {

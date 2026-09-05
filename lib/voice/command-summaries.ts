@@ -83,6 +83,7 @@ export const COMMAND_SUMMARIES: Record<string, string> = {
   modulate: 'Changes key from a point onwards: transposes the notes from there AND moves the key setting. That second half is the whole difference between a key change and a transpose — without it the scale highlighting disagrees with the song.',
 
   // ── Arrangement ──────────────────────────────────────────────────────────
+  set_clip_active: 'Parks a clip: it stays exactly where it is, drawn dimmed, and playback and every render skip it until you activate it again. This is the move for trying an idea without it — nothing is deleted, nothing moves, and the whole track keeps playing its other clips. Deleting is a different command, and silencing a whole track is mute.',
   duplicate_clip: 'Repeats a clip back to back, as many times as you say. The copies follow on immediately rather than landing on top of each other.',
   nudge: 'Moves something by a few milliseconds — the adjustment you make when a part is nearly right. ⚠️ Not move_clips: that works in bars and beats, which are musical distances. A nudge is a fixed amount of TIME, so it converts through the tempo and stays the same nudge whatever the grid says.',
   move_clips: 'Shifts clips later or earlier by bars or beats. Nothing is ever moved before the start of the song.',

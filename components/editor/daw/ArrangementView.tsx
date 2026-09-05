@@ -1286,6 +1286,17 @@ export default function ArrangementView() {
         return
       }
 
+      // Live's Clip Activator: `0` parks the selected clips — kept in place,
+      // dimmed, silent — and `0` again brings them back.
+      if (!meta && e.key === '0') {
+        const ids = selectedClipIds.size > 0 ? [...selectedClipIds] : selectedClipId ? [selectedClipId] : []
+        if (!ids.length) return
+        e.preventDefault()
+        const first = project.arrangementClips.find(c => c.id === ids[0])
+        dispatch({ type: 'SET_CLIPS_ACTIVE', clipIds: ids, active: first?.active === false })
+        return
+      }
+
       if (meta && e.key === 'c') {
         e.preventDefault()
         if (selectedEffectIds.size > 0) {

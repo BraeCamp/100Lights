@@ -765,6 +765,10 @@ export interface AudioClip {
   createdBy?: string
   /** When it was added (ISO) — powers the away-recap. */
   createdAt?: string
+  /** Live's Clip Activator. `false` = deactivated: kept in place, drawn
+   *  dimmed, never played or rendered. Absent or `true` = active. "Deactivate,
+   *  don't delete" is how an idea is parked while auditioning others. */
+  active?: boolean
   startBeat: number
   durationBeats: number
   r2Key?: string
@@ -916,6 +920,8 @@ export interface MidiClip {
   createdBy?: string
   /** When it was added (ISO) — powers the away-recap. */
   createdAt?: string
+  /** Live's Clip Activator — see AudioClip.active. */
+  active?: boolean
   startBeat: number
   durationBeats: number
   notes: MidiNote[]

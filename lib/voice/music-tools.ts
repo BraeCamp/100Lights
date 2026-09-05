@@ -144,6 +144,19 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'set_clip_active',
+    description:
+      'DEACTIVATE / ACTIVATE A CLIP — Live\'s clip activator. The clip stays exactly where it is, drawn dimmed, and is not played or rendered until it is activated again. This is what "deactivate the pad intro", "turn the stab clip off", "disable that clip", "bring the drums clip back" mean: parking an idea while auditioning others. It is NOT deleting (delete_clip) and NOT silencing the whole track (mute).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        active: { type: 'boolean', description: 'false parks the clip, true brings it back.' },
+      },
+      required: ['target', 'active'],
+    },
+  },
+  {
     name: 'copy_notes',
     description:
       'COPY A PART OF A CLIP — "take the first chord in pad intro and put it at bar 1", "recreate the opening chord of the pad at the first bar and repeat it 4 times", "copy the first two bars of the bass to bar 17". Makes a NEW clip on the same track holding only that part; `times` copies land back to back. ⚠️ This is the tool for a PART of a clip. move_clips moves the whole clip, duplicate_clip repeats the whole clip after itself, and name_notes only reads the notes out — none of them is what "take the first chord and put it at bar 1" asks for.',

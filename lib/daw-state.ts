@@ -37,6 +37,9 @@ export type DawAction =
   | { type: 'ADD_CLIP'; clip: DawClip }
   | { type: 'REMOVE_CLIP'; clipId: string }
   | { type: 'UPDATE_CLIP'; clipId: string; patch: Partial<AudioClip> | Partial<MidiClip> }
+  // Live's Clip Activator (key `0`): park clips without deleting them. One
+  // action for the whole selection so it undoes as one step.
+  | { type: 'SET_CLIPS_ACTIVE'; clipIds: string[]; active: boolean }
   | { type: 'MOVE_CLIP'; clipId: string; startBeat: number; trackId?: string }
   // Session grid
   | { type: 'SET_SESSION_SLOT'; trackId: string; sceneIndex: number; clip: DawClip | null }
@@ -334,6 +337,15 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
     case 'UPDATE_CLIP': {
       const clips = project.arrangementClips.map(c =>
         c.id === action.clipId ? ({ ...c, ...action.patch } as DawClip) : c
+      )
+      return { ...project, arrangementClips: clips }
+    }
+
+    case 'SET_CLIPS_ACTIVE': {
+      const ids = new Set(action.clipIds)
+      if (!ids.size) return project
+      const clips = project.arrangementClips.map(c =>
+        ids.has(c.id) ? ({ ...c, active: action.active ? undefined : false } as DawClip) : c
       )
       return { ...project, arrangementClips: clips }
     }

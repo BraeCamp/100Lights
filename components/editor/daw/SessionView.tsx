@@ -573,7 +573,12 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
           border: `${borderWidth} solid ${borderColor}`,
           borderRadius: 3, position: 'relative', overflow: 'hidden',
           cursor: 'default', boxSizing: 'border-box',
+          // A deactivated clip (Live's Clip Activator) is parked: dimmed, and
+          // the engine refuses to launch it.
+          opacity: clip?.active === false ? 0.35 : undefined,
+          filter: clip?.active === false ? 'grayscale(1)' : undefined,
         }}
+        data-clip-inactive={clip?.active === false || undefined}
         onClick={isEmpty ? handleEmptyClick : undefined}
         onContextMenu={clip ? e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }) } : undefined}
         onMouseEnter={() => setHovered(true)}

@@ -1394,8 +1394,10 @@ export class DawEngine extends EventTarget {
     this.swing        = project.swing ?? 0
     this._beatsPerBar = project.timeSignatureNum ?? 4
     this._meterSegs   = meterSegments(project)
-    this._clips       = project.arrangementClips.filter(isAudioClip)
-    this._midiClips   = project.arrangementClips.filter(isMidiClip)
+    // A deactivated clip (Live's Clip Activator, `active: false`) is parked:
+    // it is simply not in the lists the scheduler and the renderers read.
+    this._clips       = project.arrangementClips.filter(isAudioClip).filter(c => c.active !== false)
+    this._midiClips   = project.arrangementClips.filter(isMidiClip).filter(c => c.active !== false)
     // Notes may have changed — drop the cached occurrences/unison sets so they
     // rebuild from the new note data on the next tick. (Fires only on edits.)
     this._unisonCache.clear()
@@ -1728,6 +1730,7 @@ export class DawEngine extends EventTarget {
   }
 
   async queueSession(trackId: string, clip: AudioClip, quantOverride?: LaunchQuantization) {
+    if (clip.active === false) return   // a parked clip does not launch
     if (this.ctx.state === 'suspended') await this.ctx.resume()
 
     // Toggle off if this clip is already playing
@@ -1917,6 +1920,7 @@ export class DawEngine extends EventTarget {
   }
 
   async queueSessionMidi(trackId: string, clip: MidiClip, quantOverride?: LaunchQuantization) {
+    if (clip.active === false) return   // a parked clip does not launch
     if (this.ctx.state === 'suspended') await this.ctx.resume()
 
     const playing = this._sessionMidiSlots.get(trackId)

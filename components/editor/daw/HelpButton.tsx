@@ -50,6 +50,7 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: '⇧⌘Z', action: 'Redo' },
       { keys: '⌘S', action: 'Save project' },
       { keys: 'Delete', action: 'Delete selected clips' },
+      { keys: '0', action: 'Deactivate / activate the selected clips — kept in place, dimmed, silent' },
       { keys: 'B', action: 'Toggle the sound library panel' },
       { keys: 'I', action: 'Inspect mode — hover anything for its name and details' },
       { keys: 'Hold E / L', action: 'While dragging a clip edge — force Expand or Loop for that drag' },
@@ -215,6 +216,8 @@ const FEATURES: Feature[] = [
     description: 'Halt every playing session clip at once and hand playback back to the arrangement timeline — the clean way out of a live jam.' },
 
   // ── Clips ──
+  { group: 'Clips', name: 'Deactivate / Activate', helpIds: [], hint: CLIP_HINT,
+    description: 'Park a clip without deleting it: press 0 (or right-click → Deactivate) and it stays in place, dimmed and dashed, skipped by playback and every render until you activate it again. The way to try the arrangement without an idea and still keep the idea.' },
   { group: 'Clips', name: 'Clip Settings', helpIds: [], hint: CLIP_HINT,
     description: 'Gain, pitch, warp mode, fades, boomerang, and more for the selected clip. Warp keeps a clip locked to the project tempo; pitch stays independent of speed.' },
   { group: 'Clips', name: 'Crop', helpIds: [], hint: CLIP_HINT,

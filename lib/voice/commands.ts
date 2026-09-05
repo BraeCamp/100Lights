@@ -1207,6 +1207,36 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
   {
+    id: 'set_clip_active',
+    tool: 'set_clip_active',
+    group: 'Arrangement',
+    what: 'Park a clip without deleting it, or bring it back',
+    say: ['deactivate the pad clip', 'turn the drums clip off', 'activate the vox take again'],
+    match(w, ctx) {
+      // Live's Clip Activator. "Off"/"on" only count with the word "clip",
+      // because "turn the bass off" is the track (mute), not a clip. Read from
+      // the raw sentence: "on" and "off" are filler words the token list drops.
+      const raw = w.raw.toLowerCase()
+      const off = w.has('deactivate', 'disable') || w.exact('park')
+        || /\b(?:turn|switch)\b[^.]*\bclip\b[^.]*\boff\b/.test(raw)
+      const on = w.has('activate', 'reactivate', 'enable') || w.exact('unpark')
+        || /\b(?:turn|switch|bring)\b[^.]*\bclip\b[^.]*\b(?:on|back)\b/.test(raw)
+      if (!off && !on) return null
+      if (w.has('track', 'mute', 'unmute')) return null
+      const hit = clipOrSelected(w, ctx, ['deactivate', 'disable', 'park', 'activate', 'reactivate', 'enable', 'unpark',
+        'turn', 'switch', 'bring', 'off', 'on', 'back', 'again', 'clip'], { dropNums: true })
+      if (!hit) return null
+      // The whole sentence is this request — "again" is not a repeat and
+      // "back" is not the strip-back — so claim every word.
+      for (const word of w.all) w.markWord(word, 0)
+      return {
+        calls: [{ name: 'set_clip_active', input: { target: hit.name, active: !!on && !off } }],
+        confidence: nameConfidence(hit.score),
+        needsName: true,
+      }
+    },
+  },
+  {
     id: 'duplicate_clip',
     tool: 'duplicate_clip',
     group: 'Arrangement',
@@ -1217,6 +1247,9 @@ const COMMANDS: VoiceCommand[] = [
       // copy_notes, whatever verb comes with it; repeating the whole clip is
       // this.
       if (/\b(?:first|second|third|fourth|fifth|sixth|last|opening|\d+(?:st|nd|rd|th))\s+(?:(?:one|two|three|four|\d+)\s+)?(?:chords?|notes?|(?:\d+\s+)?(?:bars?|beats?))\b|\bchord\s+\d/.test(w.raw.toLowerCase())) return null
+      // "activate the pad clip again" is the clip activator, not a repeat:
+      // "again" there means "as before".
+      if (w.has('activate', 'reactivate', 'deactivate', 'enable', 'disable') || w.exact('park', 'unpark')) return null
       const asked = w.has('repeat', 'duplicate', 'again', 'copy')
         || (w.has('loop') && w.has('times', 'more'))
         || w.has('double')
@@ -2474,7 +2507,9 @@ const COMMANDS: VoiceCommand[] = [
       // ⚠️ No 'unmute': set_all_tracks already owns "unmute everything", and
       // two commands claiming one sentence is one command with a coin flip.
       // "Bring it back in" is the phrase that belongs to stripping back.
-      const restore = w.has('bring') && w.has('back', 'everything', 'all')
+      // "Bring the pad clip back" is one parked clip returning (set_clip_active),
+      // not the whole mix.
+      const restore = w.has('bring') && w.has('back', 'everything', 'all') && !w.has('clip', 'clips')
       if (restore) return { calls: [{ name: 'strip_back', input: { restore: true } }], confidence: 0.9 }
       // ⚠️ said(), not has(): "just" is filler everywhere else in the language
       // and is stripped before any rule sees it — the same trap "go" and "thin"

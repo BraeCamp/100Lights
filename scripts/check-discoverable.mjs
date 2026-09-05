@@ -52,6 +52,7 @@ const EXPECTED = [
   ['deselect',             ['deselect']],
   ['delete clip',          ['delete clip', 'delete ']],
   ['duplicate clip',       ['duplicate clip', 'duplicate ']],
+  ['deactivate clip',      ['deactivate', 'activate']],
   ['split / splice clip',  ['splice', 'split']],
   ['rename clip',          ['rename clip', 'rename ']],
 
