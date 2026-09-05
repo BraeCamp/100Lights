@@ -17,7 +17,7 @@
 // Tab, glance at the session grid, let go, you are back). One key, both
 // behaviours, no setting.
 
-export type KeyScope = 'global' | 'arrangement' | 'roll' | 'sample' | 'knob'
+export type KeyScope = 'global' | 'arrangement' | 'roll' | 'sample' | 'knob' | 'session'
 export type KeyMode = 'music' | 'podcast'
 
 export interface KeyBinding {
@@ -57,6 +57,10 @@ export const KEYMAP: KeyBinding[] = [
   // ── Transport & Global ─────────────────────────────────────────────────
   { id: 'transport.play', keys: 'Space', scope: 'global', group: 'Transport & Global', action: 'Play / Stop', command: 'audio.transport.play' },
   { id: 'transport.record', keys: 'R', scope: 'global', group: 'Transport & Global', action: 'Start / stop recording' },
+  // Punch in / out have no default key in Live — they are control-bar buttons.
+  // These are ours, next to Record and free on every layout.
+  { id: 'transport.punchIn', keys: '⌥R', scope: 'global', group: 'Transport & Global', action: 'Punch in — the recorder waits for the loop brace', modes: ['music'], command: 'transport.punchIn' },
+  { id: 'transport.punchOut', keys: '⇧⌥R', scope: 'global', group: 'Transport & Global', action: 'Punch out — the recorder stops at the end of the brace', modes: ['music'], command: 'transport.punchOut' },
   { id: 'transport.metronome', keys: 'M', scope: 'global', group: 'Transport & Global', action: 'Toggle metronome', command: 'audio.transport.metronome' },
   { id: 'transport.back', keys: '←', scope: 'global', group: 'Transport & Global', action: 'Move playhead ±1 beat (no clips selected)', display: '← / →' },
   { id: 'transport.forward', keys: '→', scope: 'global', group: 'Transport & Global', action: 'Move playhead ±1 beat (no clips selected)', hidden: true },
@@ -64,6 +68,30 @@ export const KEYMAP: KeyBinding[] = [
   { id: 'edit.redo', keys: '⇧⌘Z', scope: 'global', group: 'Transport & Global', action: 'Redo', command: 'audio.edit.redo' },
   { id: 'file.save', keys: '⌘S', scope: 'global', group: 'Transport & Global', action: 'Save project', command: 'audio.save' },
   { id: 'edit.deleteClip', keys: 'Delete', also: ['Backspace'], scope: 'global', group: 'Transport & Global', action: 'Delete selected clips', command: 'audio.edit.deleteClip' },
+  // The snap grid from ANYWHERE — Live's ⌘1…5. The bare 1–5 below are the
+  // arrangement's and only work when it has focus; these reach it from the
+  // piano roll, the mixer, wherever you are.
+  { id: 'grid.off', keys: '⌘1', scope: 'global', group: 'Transport & Global', action: 'Snap grid: off / 1/16 / 1/8 / beat / bar — from anywhere', display: '⌘1–⌘5', modes: ['music'] },
+  { id: 'grid.16th', keys: '⌘2', scope: 'global', group: 'Transport & Global', action: 'Snap to 1/16', modes: ['music'], hidden: true },
+  { id: 'grid.8th', keys: '⌘3', scope: 'global', group: 'Transport & Global', action: 'Snap to 1/8', modes: ['music'], hidden: true },
+  { id: 'grid.beat', keys: '⌘4', scope: 'global', group: 'Transport & Global', action: 'Snap to the beat', modes: ['music'], hidden: true },
+  { id: 'grid.bar', keys: '⌘5', scope: 'global', group: 'Transport & Global', action: 'Snap to the bar', modes: ['music'], hidden: true },
+
+  // Global Quantization (lib/launch.ts) — the one setting you change WHILE
+  // playing, so it gets keys rather than a menu.
+  //
+  // ⚠️ NOT Live's ⌘6…0. ⌘0 is "interface back to 100 %" here, and that is what
+  // ⌘0 does in every browser this studio runs in — taking it for a launch
+  // setting would break a reflex nobody would think to look up. ⌥ instead, and
+  // the five stay together.
+  { id: 'launch.none', keys: '⌥6', scope: 'global', group: 'Transport & Global', action: 'Global launch quantization: None / 1 beat / 1 bar / 2 bars / 4 bars', display: '⌥6–⌥0', modes: ['music'] },
+  { id: 'launch.beat', keys: '⌥7', scope: 'global', group: 'Transport & Global', action: 'Global launch quantization: 1 beat', modes: ['music'], hidden: true },
+  { id: 'launch.bar', keys: '⌥8', scope: 'global', group: 'Transport & Global', action: 'Global launch quantization: 1 bar', modes: ['music'], hidden: true },
+  { id: 'launch.2bar', keys: '⌥9', scope: 'global', group: 'Transport & Global', action: 'Global launch quantization: 2 bars', modes: ['music'], hidden: true },
+  { id: 'launch.4bar', keys: '⌥0', scope: 'global', group: 'Transport & Global', action: 'Global launch quantization: 4 bars', modes: ['music'], hidden: true },
+  { id: 'track.rename', keys: '⌘R', scope: 'global', group: 'Transport & Global', action: 'Rename the selected track — Tab moves to the next one, and # numbers them as you go', modes: ['music'], command: 'audio.track.rename' },
+  { id: 'edit.history', keys: '⌘⌥Z', scope: 'global', group: 'Transport & Global', action: 'Undo History — everything you have done, and a way back to any of it', command: 'audio.edit.history' },
+  { id: 'track.bounce', keys: '⌘B', scope: 'global', group: 'Transport & Global', action: 'Bounce the selected track to a new track — its devices printed as audio', modes: ['music'], command: 'audio.track.bounce' },
   { id: 'edit.consolidate', keys: '⌘J', scope: 'global', group: 'Transport & Global', action: 'Consolidate — print a looping MIDI clip’s repeats as real notes' },
   { id: 'edit.deselect', keys: 'Esc', scope: 'global', group: 'Transport & Global', action: 'Clear every selection', command: 'audio.edit.deselect' },
   { id: 'view.session', keys: 'Tab', scope: 'global', group: 'Transport & Global', action: 'Session ⇄ Arrangement — tap to switch, hold to peek', modes: ['music'], momentary: true },
@@ -183,6 +211,24 @@ export const KEYMAP: KeyBinding[] = [
   { id: 'sample.markerNext', keys: '⌘→', scope: 'sample', group: 'Sample Editor', action: 'Select the next warp marker', modes: ['music'], hidden: true },
   { id: 'sample.nudgeLeft', keys: '←', scope: 'sample', group: 'Sample Editor', action: 'Nudge the selected marker earlier in the sample', modes: ['music'], hidden: true },
   { id: 'sample.nudgeRight', keys: '→', scope: 'sample', group: 'Sample Editor', action: 'Nudge the selected marker later in the sample', modes: ['music'], hidden: true },
+  // ── The session grid, played from the keyboard ───────────────────────────
+  { id: 'session.launch', keys: 'Enter', scope: 'session', group: 'Session', action: 'Launch the highlighted clip — or the whole scene, on the scene column', modes: ['music'] },
+  { id: 'session.launchScene', keys: '⇧Enter', scope: 'session', group: 'Session', action: 'Launch the whole scene the highlight is on', modes: ['music'] },
+  // ⚠️ ⌥, not Live's ⌃: '⌘' in this table already means Command OR Control so
+  // that one chord works on both platforms, which leaves Control with no way to
+  // be written. ⌥ is free on both.
+  { id: 'session.stopTrack', keys: '⌥Enter', scope: 'session', group: 'Session', action: 'Stop the highlighted track', modes: ['music'] },
+  { id: 'session.stopAll', keys: '⇧⌥Enter', scope: 'session', group: 'Session', action: 'Stop every clip', modes: ['music'] },
+  { id: 'session.up', keys: '↑', scope: 'session', group: 'Session', action: 'Move the highlight around the grid', modes: ['music'], display: '↑ ↓ ← →' },
+  { id: 'session.down', keys: '↓', scope: 'session', group: 'Session', action: 'Move the highlight down', modes: ['music'], hidden: true },
+  { id: 'session.left', keys: '←', scope: 'session', group: 'Session', action: 'Move the highlight left', modes: ['music'], hidden: true },
+  { id: 'session.right', keys: '→', scope: 'session', group: 'Session', action: 'Move the highlight right', modes: ['music'], hidden: true },
+  { id: 'session.pageUp', keys: 'PageUp', scope: 'session', group: 'Session', action: 'Jump eight scenes up or down', modes: ['music'], display: 'Page Up / Down' },
+  { id: 'session.pageDown', keys: 'PageDown', scope: 'session', group: 'Session', action: 'Jump eight scenes down', modes: ['music'], hidden: true },
+  { id: 'session.home', keys: 'Home', scope: 'session', group: 'Session', action: 'Jump the highlight to the first or last scene', modes: ['music'], display: 'Home / End' },
+  { id: 'session.end', keys: 'End', scope: 'session', group: 'Session', action: 'Jump to the last scene', modes: ['music'], hidden: true },
+  { id: 'session.insertScene', keys: '⌘I', scope: 'session', group: 'Session', action: 'Insert a scene above the highlight', modes: ['music'] },
+  { id: 'session.captureScene', keys: '⇧⌘I', scope: 'session', group: 'Session', action: 'Capture what is playing into a new scene', modes: ['music'] },
   { id: 'sample.crop', keys: '⇧⌘J', scope: 'sample', group: 'Sample Editor', action: 'Crop the sample to what the clip plays — the audio past its end goes', modes: ['music'] },
   { id: 'sample.slipLeft', keys: '⇧⌥←', scope: 'sample', group: 'Sample Editor', action: 'Slip the audio under the clip by 10 ms (⇧⌥-drag the waveform to slide it)', modes: ['music'], display: '⇧⌥← / ⇧⌥→' },
   { id: 'sample.slipRight', keys: '⇧⌥→', scope: 'sample', group: 'Sample Editor', action: 'Slip the audio later under the clip', modes: ['music'], hidden: true },

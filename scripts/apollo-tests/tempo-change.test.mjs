@@ -78,7 +78,7 @@ const { planVoiceCall } = await importTs('lib/voice/execute-music.ts')
     /fxOnlyPatch\(units, bpmNow\)/.test(helios) && /p\.global\.bpm = bpm/.test(helios))
   const transport = readFileSync('components/editor/daw/Transport.tsx', 'utf8')
   check("the count-in clicks at the section's tempo",
-    /countIn\(countInBars \* project\.timeSignatureNum, tempoAt\(engine\.currentBeat/.test(transport))
+    /countIn\((?:metro\.)?countInBars \* project\.timeSignatureNum, tempoAt\(engine\.currentBeat/.test(transport))
 }
 
 // ── a global tempo edit moves the sound with the number ────────────────────

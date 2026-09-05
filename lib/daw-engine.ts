@@ -5,7 +5,7 @@ import { midiToNoteName } from './scale-constants'
 import { rngFor } from '@/lib/seeded-random'
 import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, Modulator, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams, PolyInstrumentParams, ApolloInstrumentParams, RollFx, TrackInstrument } from './daw-types'
 import { isAudioClip, isMidiClip, POLY_PRESETS } from './daw-types'
-import { tempoSegments, tempoAt, beatsAtEvenSeconds, beatToSeconds as mapBeatToSeconds, secondsToBeat as mapSecondsToBeat, meterSegments, nearestBarBeat, type TempoSegment, type MeterSegment } from './tempo-map'
+import { tempoSegments, tempoAt, beatsAtEvenSeconds, beatToSeconds as mapBeatToSeconds, secondsToBeat as mapSecondsToBeat, meterSegments, nearestBarBeat, beatsPerBarAt, type TempoSegment, type MeterSegment } from './tempo-map'
 import { resolveNoteFx, fxHasAudibleField, fxHasPitchMod, FX_FIELD_BY_KEY, fieldIsSet } from './roll-fx'
 import { resolveArtic, ARTIC_GAP_BEATS, LEGATO_ONSET_SKIP, type ClipArtic } from './articulation'
 import { barParamValue, activeBarFields } from './effect-bar'
@@ -14,6 +14,7 @@ import { evaluateModulators, type ModReadout, type ParamRange } from './daw-modu
 import { automatableParams } from './daw-effect-params'
 import { compensationDelays } from './latency'
 import { crossfadeGain } from './crossfader'
+import { renderClick, clickBeats, type ClickSound, type ClickRhythm } from './metronome'
 import { rollNote, groupWinners, winnerFor, clipHasExpression } from './note-chance'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { buildHeliosFxChain, buildHeliosMasterBus, type HeliosChain } from './apollo/daw-fx'
@@ -33,6 +34,7 @@ import { validMarkers, markersKey, warpStraight, beatToSec } from './warp'
 import { renderWarped } from './warp-render'
 import { DEFAULT_BEATS, DEFAULT_TONES, DEFAULT_TEXTURE, type WarpModeName } from './warp-modes'
 import { onPress, onRelease, repeats, repeatBeats, velocityGain, legatoOffset } from './launch'
+import { followOf, isIdle, followBeats, pickAction, followTarget, filledScenes } from './follow-actions'
 import { detectOnsets, monoOf } from './onsets'
 import { libraryGetByFolder, libraryGetById } from './sound-library'
 import { libraryFulfill, renderPresetAtPitch } from './default-samples'
@@ -287,6 +289,18 @@ export class DawEngine extends EventTarget {
    * Keyed by track, since a track plays one slot at a time.
    */
   private _sessionHeld = new Map<string, { clipId: string; kind: 'audio' | 'midi' }>()
+  /**
+   * The session grid, so a FOLLOW ACTION knows what else there is to play
+   * (lib/follow-actions.ts).
+   *
+   * ⚠️ The engine holds it because a follow action has to keep working when
+   * nobody is looking at the session view. It used to be fired by that view,
+   * off a clip going from playing to idle — which for a LOOPING clip never
+   * happens, so follow actions silently did nothing on the normal case.
+   */
+  private _sessionGrid: Record<string, (DawClip | null)[]> = {}
+  /** The launch each track has already acted on, so a follow fires once per turn. */
+  private _followFired = new Map<string, number>()
   private _sessionMidiQueue  = new Map<string, { clip: MidiClip; launchBeat: number; launchCtxTime: number }>()
   private _sessionStopQueue  = new Map<string, { stopBeat: number; stopCtxTime: number }>()
   private _sessionSlots      = new Map<string, SessionSlot>()
@@ -396,6 +410,10 @@ export class DawEngine extends EventTarget {
   loopEnd = 16
   swing = 0
   private _beatsPerBar = 4
+
+  /** An armed punch: where the recorder starts and stops by itself (lib/punch.ts).
+   *  Checked on the scheduler tick so it lands on the same clock as the notes. */
+  private _punch: { startAt: number | null; stopAt: number | null } | null = null
 
   private _startCtxTime = 0
   private _startBeat    = 0
@@ -1393,6 +1411,31 @@ export class DawEngine extends EventTarget {
     this.dispatchEvent(new CustomEvent('transport', { detail: { playing: false, beat: this._startBeat } }))
   }
 
+  /**
+   * Nudge: slide the whole transport a few milliseconds earlier or later
+   * against the wall clock, without changing the tempo or the playhead's
+   * position in the song.
+   *
+   * This is for playing along with something the studio cannot hear — a record,
+   * another machine, somebody in the room. You are on the right tempo and the
+   * wrong phase, and no amount of tempo correction fixes phase; you have to
+   * push the whole thing sideways. Live does it by momentarily speeding the
+   * transport up or down, which is the same thing said in the time domain.
+   *
+   * Nothing in the project changes. It is a performance gesture, not an edit,
+   * so there is nothing to undo and nothing to save.
+   */
+  nudge(milliseconds: number): void {
+    if (!this.isPlaying || !Number.isFinite(milliseconds)) return
+    // LATER means the song should happen later, so its start moves forward.
+    this._startCtxTime += milliseconds / 1000
+    this._killAllSources()
+    this._noteKeyVersion++
+    this._scheduledNoteKeys.clear()
+    this._liveScheduledClips.clear()
+    this._nextMetronomeBeat = Math.ceil(this.currentBeat)
+  }
+
   seek(beat: number) {
     const wasPlaying = this.isPlaying
     if (wasPlaying) { this._killAllSources(); this._stopScheduler() }
@@ -1449,9 +1492,15 @@ export class DawEngine extends EventTarget {
     this.loopStart    = project.loopStart
     this.loopEnd      = project.loopEnd
     this.swing        = project.swing ?? 0
+    // Global Quantization: when a slot names no launch quantization of its own,
+    // this is the one it gets (lib/launch.ts). It used to be a hard 'bar' in
+    // the engine with nothing able to change it.
+    this.launchQuantization = project.launchQuantization ?? 'bar'
     this._delayCompensation = project.delayCompensation !== false
     this._beatsPerBar = project.timeSignatureNum ?? 4
     this._meterSegs   = meterSegments(project)
+    // The grid, for follow actions (lib/follow-actions.ts).
+    this._sessionGrid = project.sessionGrid ?? {}
     // A deactivated clip (Live's Clip Activator, `active: false`) is parked:
     // it is simply not in the lists the scheduler and the renderers read.
     this._clips       = project.arrangementClips.filter(isAudioClip).filter(c => c.active !== false)
@@ -1607,7 +1656,7 @@ export class DawEngine extends EventTarget {
       const groupNodes = group ? this.trackNodes.get(group.id) : undefined
       this._routeTrackOutput(t.id, groupNodes ? groupNodes.effectsInput : this.masterGain)
       const silenced = this._trackSilenced(t, group, anySoloed, project.tracks)
-      const xf = crossfadeGain(t.crossfader, project.crossfaderValue ?? 0.5)
+      const xf = crossfadeGain(t.crossfader, project.crossfaderValue ?? 0.5, project.crossfaderCurve)
       if (Math.abs(xf - 1) < 1e-6) this._xfGain.delete(t.id); else this._xfGain.set(t.id, xf)
       this.setTrackVolume(t.id, silenced ? 0 : t.volume)
       this.setTrackPan(t.id, t.pan)
@@ -1754,11 +1803,54 @@ export class DawEngine extends EventTarget {
         this._sessionStopQueue.delete(trackId)
       }
     }
+    this._checkFollowActions(now)
     // Held Repeat slots keep the ticker alive even between retriggers.
     const hasActive = this._sessionHeld.size > 0 || this._sessionQueue.size > 0 || this._sessionSlots.size > 0
                    || this._sessionMidiQueue.size > 0 || this._sessionMidiSlots.size > 0
                    || this._sessionStopQueue.size > 0
     if (!hasActive) this._stopSessionTicker()
+  }
+
+  /**
+   * A clip that has had its turn: stop, play again, move on, or hand over to
+   * another clip in the column (lib/follow-actions.ts).
+   *
+   * Wall-clock rather than transport beats on purpose — a session clip plays
+   * whether or not the arrangement is rolling, and a follow action that only
+   * fired while the transport ran would be dead in exactly the way anybody
+   * uses the session view.
+   */
+  private _checkFollowActions(now: number) {
+    const beatsPerSecond = (this.tempo || 120) / 60
+    const playing: Array<{ trackId: string; clip: DawClip; started: number }> = []
+    for (const [trackId, s] of this._sessionSlots) playing.push({ trackId, clip: s.clip, started: s.startContextTime })
+    for (const [trackId, s] of this._sessionMidiSlots) playing.push({ trackId, clip: s.clip, started: s.startCtxTime })
+
+    for (const { trackId, clip, started } of playing) {
+      const settings = followOf(clip)
+      if (isIdle(settings)) continue
+      if (this._followFired.get(trackId) === started) continue
+      if (this._sessionHeld.has(trackId)) continue   // still under a finger: Gate and Repeat decide
+      const due = followBeats(settings, clip.durationBeats) / beatsPerSecond
+      if (now - started < due) continue
+
+      this._followFired.set(trackId, started)
+      const filled = filledScenes(this._sessionGrid[trackId])
+      const at = (this._sessionGrid[trackId] ?? []).findIndex(c => c?.id === clip.id)
+      // ⚠️ Seeded on this launch, not Math.random. Two renders of one song
+      // have to come out the same, and the start time already differs from
+      // turn to turn in a performance, which is where the variety comes from.
+      const roll = rngFor(`follow:${clip.id}:${started.toFixed(4)}`)
+      const action = pickAction(settings!, roll())
+      const target = followTarget(action, at, filled, roll(), settings!.jumpTo)
+      if (target === null) continue
+      if (target === 'stop') { this.stopSessionTrack(trackId); continue }
+      const next = (this._sessionGrid[trackId] ?? [])[target]
+      if (!next) continue
+      // ⚠️ Through the ordinary launch, so quantization, legato, velocity and
+      // the launch mode all behave exactly as they do from a press.
+      void (isAudioClip(next) ? this.queueSession(trackId, next) : this.queueSessionMidi(trackId, next as MidiClip))
+    }
   }
 
   /**
@@ -1918,6 +2010,26 @@ export class DawEngine extends EventTarget {
     this._sessionHeld.delete(trackId)
     if (held.kind === 'midi') this._stopSessionMidiTrack(trackId)
     else this._stopSessionTrack(trackId)
+  }
+
+  /**
+   * What a track's session is doing right now, for the status line in its
+   * header: the clip sounding, and how long it has left before its follow
+   * action fires (lib/follow-actions.ts). Null where nothing is playing, and a
+   * null `remaining` where nothing is going to happen.
+   */
+  sessionStatus(trackId: string): { clipId: string; name?: string; remainingBeats: number | null } | null {
+    const audio = this._sessionSlots.get(trackId)
+    const midi = this._sessionMidiSlots.get(trackId)
+    const clip = audio?.clip ?? midi?.clip
+    const started = audio?.startContextTime ?? midi?.startCtxTime
+    if (!clip || started == null) return null
+    const settings = followOf(clip)
+    if (isIdle(settings)) return { clipId: clip.id, name: clip.name, remainingBeats: null }
+    const beatsPerSecond = (this.tempo || 120) / 60
+    const due = followBeats(settings, clip.durationBeats)
+    const gone = (this.ctx.currentTime - started) * beatsPerSecond
+    return { clipId: clip.id, name: clip.name, remainingBeats: Math.max(0, due - gone) }
   }
 
   /** Seconds into the sample where the playing slot began reading — 0 unless it was launched legato. */
@@ -2740,6 +2852,9 @@ export class DawEngine extends EventTarget {
     }
 
     const now          = offline ? this._renderNow! : this.currentBeat
+    // Punch in / out: the recorder starting and stopping by itself at the brace.
+    // Live only — an offline render is not a performance.
+    if (!offline && this._punch) this._checkPunch(now)
     const contextNow   = offline ? this._renderCtxBase : this.ctx.currentTime
     const aheadBeats   = offline ? this._renderLookahead : this._aheadBeats(now, SCHEDULE_LOOKAHEAD)
     // Crossing into a section at another bpm retimes synced delays, Apollo's
@@ -4914,20 +5029,31 @@ export class DawEngine extends EventTarget {
 
   // ── Metronome ──────────────────────────────────────────────────────────────
 
+  /** How the click sounds, how often, and whether it is only for takes
+   *  (lib/metronome.ts). The studio pushes these in; the engine never reads
+   *  the workspace itself. */
+  private _clickSound: ClickSound = 'click'
+  private _clickRhythm: ClickRhythm = 'auto'
+  private _clickOnlyWhileRecording = false
+
+  setMetronomeSettings(s: { sound?: ClickSound; rhythm?: ClickRhythm; onlyWhileRecording?: boolean }): void {
+    if (s.sound && s.sound !== this._clickSound) { this._clickSound = s.sound; this._buildMetronomeBuffers() }
+    if (s.rhythm) this._clickRhythm = s.rhythm
+    if (typeof s.onlyWhileRecording === 'boolean') this._clickOnlyWhileRecording = s.onlyWhileRecording
+  }
+
+  get metronomeSound(): ClickSound { return this._clickSound }
+
   private _buildMetronomeBuffers() {
-    const sr  = this.ctx.sampleRate
-    const len = Math.floor(sr * 0.04)
-    const tick = this.ctx.createBuffer(1, len, sr)
-    const tock = this.ctx.createBuffer(1, len, sr)
-    const td = tick.getChannelData(0)
-    const wd = tock.getChannelData(0)
-    for (let i = 0; i < len; i++) {
-      const env = Math.exp(-i / (sr * 0.015))
-      td[i] = Math.sin(2 * Math.PI * 1800 * i / sr) * env
-      wd[i] = Math.sin(2 * Math.PI * 900  * i / sr) * env * 0.5
+    const sr = this.ctx.sampleRate
+    const mk = (accent: boolean) => {
+      const data = renderClick(this._clickSound, sr, accent)
+      const buf = this.ctx.createBuffer(1, data.length, sr)
+      buf.getChannelData(0).set(data)
+      return buf
     }
-    this._tickBuf = tick
-    this._tockBuf = tock
+    this._tickBuf = mk(true)
+    this._tockBuf = mk(false)
   }
 
   setMetronome(on: boolean) {
@@ -4941,9 +5067,18 @@ export class DawEngine extends EventTarget {
 
   private _scheduleMetronome() {
     if (!this.isPlaying) return
+    // Enable Only While Recording: playback stays clean and the click is there
+    // for the take. The clicks are not SKIPPED, they are not scheduled — so
+    // switching a take on mid-song starts clicking from the next one.
+    if (this._clickOnlyWhileRecording && !this.isRecording) return
     const now         = this.ctx.currentTime
     const currentBeat = this.currentBeat
     const ahead       = this._aheadBeats(currentBeat, SCHEDULE_LOOKAHEAD)
+    // How far apart the clicks are: Auto subdivides when the beat is too far
+    // apart to play to, and thins out when it would be a buzz (lib/metronome.ts).
+    const step = clickBeats(this._clickRhythm, this.tempo || 120, beatsPerBarAt(currentBeat, this._meterSegs))
+    // Keep the clicks on the grid rather than on wherever the transport started.
+    if (this._nextMetronomeBeat % step > 1e-6) this._nextMetronomeBeat = Math.ceil(this._nextMetronomeBeat / step) * step
     while (this._nextMetronomeBeat <= currentBeat + ahead) {
       const when       = this._ctxTimeForBeat(Math.max(currentBeat, this._nextMetronomeBeat), currentBeat, now)
       // Downbeat = a bar START in the meter map (honors mid-song time-sig changes);
@@ -4959,7 +5094,7 @@ export class DawEngine extends EventTarget {
         src.start(when)
         src.onended = () => { src.disconnect(); g.disconnect() }
       }
-      this._nextMetronomeBeat++
+      this._nextMetronomeBeat += step
     }
   }
 
@@ -5005,6 +5140,10 @@ export class DawEngine extends EventTarget {
     if (this.ctx.state === 'suspended') await this.ctx.resume()
     const secPerBeat = 60 / tempo
     const start = this.ctx.currentTime + 0.06
+    // What the position display reads while this runs: negative bars counting
+    // down to the take (lib/metronome.ts countInPosition). Off the audio clock,
+    // not a timer, so the number on screen matches the click you can hear.
+    this._countIn = { startCtxTime: start, totalBeats: beats, secPerBeat }
     for (let i = 0; i < beats; i++) {
       const isDownbeat = (i % this._beatsPerBar) === 0
       const buf = isDownbeat ? this._tickBuf : this._tockBuf
@@ -5018,6 +5157,16 @@ export class DawEngine extends EventTarget {
       src.onended = () => { src.disconnect(); g.disconnect() }
     }
     await new Promise(r => setTimeout(r, (0.06 + beats * secPerBeat) * 1000))
+    this._countIn = null
+  }
+
+  /** Beats elapsed and total while a count-in runs, else null. Read every frame
+   *  by the transport to show negative bars. */
+  private _countIn: { startCtxTime: number; totalBeats: number; secPerBeat: number } | null = null
+  get countInProgress(): { elapsed: number; total: number } | null {
+    const c = this._countIn
+    if (!c) return null
+    return { elapsed: Math.max(0, (this.ctx.currentTime - c.startCtxTime) / c.secPerBeat), total: c.totalBeats }
   }
 
   // ── Recording ─────────────────────────────────────────────────────────────
@@ -5160,6 +5309,43 @@ export class DawEngine extends EventTarget {
       }
     }
     node.connect(ctx.destination)
+  }
+
+  /**
+   * Hand the engine a punch plan (lib/punch.ts) and let it drive the recorder.
+   *
+   * The check runs on the scheduler tick rather than a timer of its own so the
+   * punch lands on the same clock as the notes — a `setInterval` would drift
+   * against the transport under exactly the load a take puts on the machine,
+   * and a punch that is a beat late has ruined the take it was there to save.
+   */
+  armPunch(plan: { startAt: number | null; stopAt: number | null }): void {
+    this._punch = { ...plan }
+  }
+
+  disarmPunch(): void { this._punch = null }
+
+  /** The armed punch, for the transport to show what is about to happen. */
+  get punch(): { startAt: number | null; stopAt: number | null } | null {
+    return this._punch ? { ...this._punch } : null
+  }
+
+  /** Waiting on a punch-in that has not come round yet. */
+  get punchWaiting(): boolean {
+    return this._punch?.startAt != null && !this.isRecording
+  }
+
+  private _checkPunch(now: number): void {
+    const p = this._punch
+    if (!p) return
+    if (p.startAt != null && !this.isRecording && now >= p.startAt) {
+      p.startAt = null              // consumed — a loop pass must not re-arm it
+      void this.startRecording()
+    }
+    if (p.stopAt != null && this.isRecording && now >= p.stopAt) {
+      this._punch = null
+      void this.stopRecording()
+    }
   }
 
   async startRecording(): Promise<void> {

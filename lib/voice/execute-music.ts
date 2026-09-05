@@ -21,7 +21,7 @@
 //   Never invent an id. Everything referenced is resolved from the project or
 //   freshly minted here.
 
-import type { DawProject, DawTrack, MidiClip, MidiNote, DawClip, AudioClip, EffectType, TrackEffect } from '../daw-types'
+import type { DawProject, DawTrack, MidiClip, MidiNote, DawClip, AudioClip, EffectType, TrackEffect, LaunchQuantization } from '../daw-types'
 import { defaultDrumInstrument } from '../daw-types'
 import { parseSpokenBeat, beatToNotes, describeBeat as describeSpokenBeat } from './beatbox'
 import { parseDefinitions, applyDefinitions, clearVocab, definitions, laneFromName } from './vocab'
@@ -59,7 +59,18 @@ import { loopRange, workingRange, notesInRange, duplicateLoop, cropToRange, inse
 import { setSegBpm, slipByDrag, cropSample } from '../sample-editor'
 import { warpAsLoop, warpAtBpm, warpStraight } from '../warp'
 import { SHORT_SAMPLE_LABEL, type ShortSampleMode } from '../import-settings'
-import { LAUNCH_MODE_LABEL, LAUNCH_MODE_HELP } from '../launch'
+import { LAUNCH_MODE_LABEL, LAUNCH_MODE_HELP, launchQuantShort } from '../launch'
+import { describePunch, punchArmed } from '../punch'
+import { recordGridLabel, type RecordGrid } from '../record-quantize'
+import { CLICK_SOUNDS } from '../metronome'
+import { bounceSpan, clipsInSpan } from '../bounce'
+import { insertShape, simplify, describeSimplify, shapeLabel, type ShapeId } from '../envelope-shapes'
+import { describeFollow, type FollowAction } from '../follow-actions'
+import { plainWordIn, needsAsking, senseFromAnswer, defaultSense, describeSense, askText } from './plain-words'
+import {
+  getProposal, describeSpan, playbackSpan, rampParameter, rampEnds, stepAmount, clampAmount,
+  type Proposal, type StepSize,
+} from './proposal'
 import { addressTracks, parseTrackAddress, describeTracks, TRACK_WORDS, type TrackAddress } from '../track-address'
 import { viewOf, snapOf, snapLabel, overlayOf, OVERLAY_LABEL } from './workspace'
 import { isSampleRef, sampleRefId } from '../sample-preset'
@@ -161,6 +172,14 @@ export interface VoicePlan {
   actions: unknown[]
   say: string
   problem?: string
+  /**
+   * A change left on the table, still under discussion (lib/voice/proposal.ts).
+   *
+   * The planner does not store it — it hands it back and the studio holds it,
+   * so planning stays something you can do twice with the same answer. `null`
+   * means the opposite: whatever was on the table is finished with.
+   */
+  proposal?: Proposal | null
   /**
    * A question, when the sentence named something the project holds more than
    * one of.
@@ -477,7 +496,53 @@ function spanOf(v: unknown, atBeat: number, maps: MusicMaps): Spanned {
   return cannot(String(v))
 }
 
-const allClips = (p: DawProject): DawClip[] => p.arrangementClips ?? []
+/**
+ * Every clip anybody can name — the arrangement's AND the session grid's.
+ *
+ * ⚠️ Slots used to be invisible here, so "reverse the drum loop slot" found
+ * nothing while the same words worked on an arrangement clip. They are clips
+ * with names, and the reducer now answers clip-shaped actions wherever the clip
+ * lives (lib/daw-state.ts), so there is nothing left to keep them out.
+ */
+const allClips = (p: DawProject): DawClip[] => [...(p.arrangementClips ?? []), ...sessionClips(p)]
+
+/**
+ * The name to hand an ordinary tool call, given what somebody said. A track
+ * wins over a clip of the same name, as everywhere else; when neither is found
+ * the words are passed on unchanged so the inner call can decline in its own
+ * voice rather than this one guessing.
+ */
+function resolveTrackOrClipName(spoken: string, p: DawProject): string | null {
+  const track = resolveTrack(spoken, p)
+  if (track) return track.name ?? spoken
+  const clip = resolveClip(spoken, p)
+  return clip ? (clip.clip.name ?? spoken) : null
+}
+
+/** Where a named track or clip lives, in beats — for playing a change back where it happens. */
+function spanOfTargetFor(name: string, p: DawProject): { start: number; end: number } | null {
+  const want = foldName(name)
+  const clips = (p.arrangementClips ?? []).filter(c => {
+    if (foldName(c.name ?? '') === want) return true
+    const track = (p.tracks ?? []).find(t => t.id === c.trackId)
+    return foldName(track?.name ?? '') === want
+  })
+  if (!clips.length) return null
+  return { start: Math.min(...clips.map(c => c.startBeat)), end: Math.max(...clips.map(c => c.startBeat + c.durationBeats)) }
+}
+
+/** Where the song stops, so a playback span never runs off the end of it. */
+function songEndBeat(p: DawProject): number {
+  const clips = p.arrangementClips ?? []
+  return clips.length ? Math.max(...clips.map(c => c.startBeat + c.durationBeats)) : 16
+}
+
+/** The session grid's clips, in track then scene order. */
+export function sessionClips(p: Pick<DawProject, 'sessionGrid'>): DawClip[] {
+  const out: DawClip[] = []
+  for (const row of Object.values(p.sessionGrid ?? {})) for (const c of row ?? []) if (c) out.push(c)
+  return out
+}
 
 /**
  * The effects a spoken command can reach, and how to build one.
@@ -4597,6 +4662,99 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       }
     }
 
+    // ── A SOUND ASKED FOR BY FEEL (lib/voice/plain-words.ts) ────────────
+    //
+    // "I want it to sound fuzzier" names no control and no number. The word is
+    // looked up, and if it carries two sounds this studio can tell apart, the
+    // studio asks WHICH SOUND rather than guessing — one question, with each
+    // answer described for somebody who does not know the word. Then it makes
+    // the change for real and plays it back, and what it made stays on the
+    // table so "a little bit less of it" has something to mean.
+    case 'sound_like': {
+      const said = str(i.like) || str(i.said)
+      const word = plainWordIn(said) ?? plainWordIn(str(heard?.said ?? ''))
+      if (!word) return fail(`I don't know what "${said || 'that'}" should sound like. Try brighter, darker, warmer, punchier — or tell me a control and a number.`)
+
+      // Nobody working on one track keeps saying its name — "I want it to
+      // sound fuzzier" is about whatever is selected.
+      const selected = heard?.selectedTrackId ? project.tracks.find(t => t.id === heard.selectedTrackId)?.name : undefined
+      const found = target ? resolveTrackOrClipName(target, project) : null
+      const name = found ?? target ?? selected ?? ''
+      if (!name) return fail('Say what should sound that way — a track or a clip.')
+
+      const chosen = str(i.sense) ? word.senses.find(s => s.id === str(i.sense)) ?? senseFromAnswer(word, str(i.sense)) : null
+      if (!chosen && needsAsking(word)) {
+        return {
+          actions: [], say: '',
+          ask: {
+            speak: askText(word),
+            options: word.senses.map(s => ({
+              label: `${s.label} — ${s.says}`,
+              keywords: [s.id, ...s.keywords],
+              calls: [{ name: 'sound_like', input: { target: name, like: word.word, sense: s.id, ...(i.amount != null ? { amount: i.amount } : {}) } }],
+            })),
+          },
+        }
+      }
+      const sense = chosen ?? defaultSense(word)
+      const amountSaid = i.amount != null ? spokenNumber(i.amount as string) : null
+      const amount = clampAmount(amountSaid ?? sense.amount)
+      const inner = planVoiceCall(sense.call(name, amount), project, heard)
+      if (inner.problem) return inner
+
+      const span = spanOfTargetFor(name, project)
+      const bar = project.timeSignatureNum || 4
+      // In the words it was asked in, not the effect rack's. Someone who said
+      // "fuzzier" is not helped by "Added saturator to Pad at 40%".
+      return {
+        ...inner,
+        say: `Here's ${describeSense(sense, amount, name)} on ${name}. How does that sound?`,
+        actions: [...inner.actions, { type: 'PLAY_SPAN', ...playbackSpan(span, bar, songEndBeat(project)) }],
+        proposal: { word: word.word, sense, target: name, span, amount, at: Date.now() },
+      }
+    }
+
+    // ── BENDING WHAT IS ON THE TABLE (lib/voice/proposal.ts) ────────────
+    case 'adjust_it': {
+      const p = getProposal()
+      if (!p) return fail('There is nothing on the table to change — tell me what to work on.')
+      const how = str(i.how).toLowerCase()
+      const size = (['little', 'normal', 'lot'].includes(str(i.size)) ? str(i.size) : 'normal') as StepSize
+      const bar = project.timeSignatureNum || 4
+
+      if (how === 'keep') return { actions: [], say: 'Nice one.', proposal: null }
+      if (how === 'undo') return { actions: [{ type: 'UNDO' }], say: `Took the ${p.word} back off.`, proposal: null }
+
+      if (how === 'ramp_down' || how === 'ramp_up') {
+        const parameter = rampParameter(p.sense)
+        if (!parameter) return fail(`I can't spread ${describeSense(p.sense, p.amount)} across the bars — that one is either on or off. I can make it stronger or weaker instead.`)
+        if (!p.span) return fail('I am not sure how far it should run — say which bars.')
+        const ends = rampEnds(p, how, size)
+        const inner = planVoiceCall({ name: 'automate_parameter', input: { target: p.target, parameter, from: ends.from, to: ends.to, start: { beat: p.span.start }, end: { beat: p.span.end } } }, project, heard)
+        if (inner.problem) return inner
+        // ⚠️ Said in the words it was asked in. The automation planner's own
+        // sentence is exact and unreadable to a beginner — "low-pass cutoff
+        // from 1.1 kHz to 200 Hz until bar 8 beat 4" — and this whole path
+        // exists for somebody who does not know what a low-pass is.
+        return {
+          ...inner,
+          say: `${describeSense(p.sense, ends.from, p.target)}, ${how === 'ramp_down' ? 'easing down' : 'building up'} to ${ends.to}% across ${describeSpan(p.span, bar)}. How does that sound?`,
+          actions: [...inner.actions, { type: 'PLAY_SPAN', ...playbackSpan(p.span, bar, songEndBeat(project)) }],
+          proposal: { ...p, amount: ends.to, ramped: ends, at: Date.now() },
+        }
+      }
+
+      const amount = stepAmount(p.amount, how === 'less' ? 'less' : 'more', size)
+      const inner = planVoiceCall(p.sense.call(p.target, amount), project, heard)
+      if (inner.problem) return inner
+      return {
+        ...inner,
+        say: `${describeSense(p.sense, amount, p.target)}. How does that sound?`,
+        actions: [...inner.actions, { type: 'PLAY_SPAN', ...playbackSpan(p.span, bar, songEndBeat(project)) }],
+        proposal: { ...p, amount, at: Date.now() },
+      }
+    }
+
     // ── A SESSION SLOT'S LAUNCH SETTINGS (lib/launch.ts) ────────────────
     // ⚠️ Session slots live in project.sessionGrid, not arrangementClips, so
     // the ordinary clip lookup cannot see them and UPDATE_CLIP cannot change
@@ -4636,7 +4794,40 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         patch.launchQuantization = lq
         said.push(`launching on ${lq === 'none' ? 'the press' : lq === 'beat' ? 'the beat' : lq === 'bar' ? 'the bar' : `${lq[0]} bars`}`)
       }
-      if (!said.length) return fail('Say what to change — the launch mode, legato, the velocity amount, or when it launches.')
+      // What it does when its turn is over (lib/follow-actions.ts).
+      const followWord = str(i.follow).toLowerCase()
+      if (followWord || str(i.followB) || i.followTime != null) {
+        const readAction = (w: string): FollowAction | null => {
+          const s = w.toLowerCase()
+          if (/stop|end|silence/.test(s)) return 'stop'
+          if (/again|repeat|itself/.test(s)) return 'again'
+          if (/next/.test(s)) return 'next'
+          if (/prev|before|back/.test(s)) return 'previous'
+          if (/first|top/.test(s)) return 'first'
+          if (/last/.test(s)) return 'last'
+          if (/other/.test(s)) return 'other'
+          if (/any|random/.test(s)) return 'any'
+          if (/jump/.test(s)) return 'jump'
+          if (/none|nothing/.test(s)) return 'none'
+          return null
+        }
+        const a = followWord ? readAction(followWord) : 'none'
+        if (!a) return fail('Say what it should do when it ends — stop, play again, next, any other, or nothing.')
+        const b = str(i.followB) ? readAction(str(i.followB)) : null
+        const pct = i.followChance != null ? spokenFraction(str(i.followChance)) : null
+        const time = i.followTime != null ? spanOf(i.followTime, 0, maps).beats ?? undefined : undefined
+        const follow = {
+          a, ...(b && b !== 'none' ? { b } : {}),
+          chanceA: pct != null ? Math.round(pct * 100) : 1,
+          chanceB: b && b !== 'none' ? (pct != null ? Math.round((1 - pct) * 100) : 1) : 0,
+          ...(time != null ? { linked: false, time } : { linked: true }),
+        }
+        patch.follow = follow
+        patch.followAction = undefined
+        patch.followActionTime = undefined
+        said.push(describeFollow(follow, slot.clip.durationBeats))
+      }
+      if (!said.length) return fail('Say what to change — the launch mode, legato, the velocity amount, when it launches, or what it does when it ends.')
       return {
         actions: [{ type: 'SET_SESSION_SLOT', trackId: slot.trackId, sceneIndex: slot.sceneIndex, clip: { ...slot.clip, ...patch } }],
         say: `${slot.clip.name ?? 'That slot'}: ${said.join(', ')}.`,
@@ -4679,6 +4870,193 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (typeof i.autoWarpLong === 'boolean') { out.autoWarpLong = i.autoWarpLong; said.push(i.autoWarpLong ? 'long samples are auto-warped to the song tempo' : 'long samples are left as they are') }
       if (!said.length) return fail('Say what to change — how short samples land (one-shot, loop, auto), or whether long samples are auto-warped.')
       return { actions: [out], say: `From now on, ${said.join('; ')}. Clips already in the song are unchanged.` }
+    }
+
+    // ── INSERT SHAPE / SIMPLIFY (lib/envelope-shapes.ts) ─────────────────────
+    case 'envelope_shape': {
+      const track = resolveTrack(target, project)
+      if (!track) return fail(`I couldn't find a track called "${target || 'that'}".`)
+      const lanes = (project.automationLanes ?? []).filter(l => l.trackId === track.id)
+      if (!lanes.length) return fail(`"${track.name}" has no automation lanes yet — open one first and I can put a shape in it.`)
+      const lane = lanes[0]
+      const op = /simplif|tidy|clean|fewer/.test(str(i.op).toLowerCase() + ' ' + str(i.shape).toLowerCase()) ? 'simplify' : str(i.op).toLowerCase() === 'simplify' ? 'simplify' : 'insert'
+      if (op === 'simplify') {
+        const next = simplify(lane.points)
+        if (next.length >= lane.points.length) return { actions: [], say: `"${lane.label}" is already as simple as it can be — every point is carrying the shape.` }
+        return {
+          actions: [{ type: 'UPDATE_AUTOMATION_LANE', laneId: lane.id, patch: { points: next } }],
+          say: `${lane.label}: ${describeSimplify(lane.points.length, next.length)}`,
+        }
+      }
+      const said = str(i.shape).toLowerCase()
+      const shape: ShapeId | null =
+        /inverse|reverse|backwards/.test(said) && /saw/.test(said) ? 'sawInverse'
+        : /adsr|attack/.test(said) ? 'adsr'
+        : /ramp\s*up|rise|fade in|up\b/.test(said) ? 'rampUp'
+        : /ramp\s*down|fall|fade out|down\b/.test(said) ? 'rampDown'
+        : /square|gate|on and off/.test(said) ? 'square'
+        : /triangle/.test(said) ? 'triangle'
+        : /saw|ramp/.test(said) ? 'saw'
+        : /sine|sin\b|smooth|wave/.test(said) ? 'sine'
+        : null
+      if (!shape) return fail('Say which shape — a sine, a triangle, a saw, a square, a ramp up or down, or an ADSR.')
+      const bar = project.timeSignatureNum || 4
+      const from = project.loopEnabled && project.loopEnd > project.loopStart ? project.loopStart : 0
+      const to = project.loopEnabled && project.loopEnd > project.loopStart ? project.loopEnd : Math.max(16, ...lane.points.map(p => p.beat))
+      const cycles = Math.max(1, Math.round(Number(i.cycles) || 1))
+      return {
+        actions: [{ type: 'UPDATE_AUTOMATION_LANE', laneId: lane.id, patch: {
+          points: insertShape(lane.points, from, to, shape, () => crypto.randomUUID(), { cycles }),
+        } }],
+        say: `${shapeLabel(shape)}${cycles > 1 ? ` × ${cycles}` : ''} into "${lane.label}" on "${track.name}", bars ${Math.floor(from / bar) + 1} to ${Math.ceil(to / bar)}. What is outside that is untouched.`,
+      }
+    }
+
+    // ── AUTOMATION ARM (lib/automation-record.ts) ─────────────────────────────
+    case 'set_automation_arm': {
+      const said = str(i.mode).toLowerCase()
+      const mode = /latch|hold|replace/.test(said) ? 'latch'
+        : /touch|on|arm|record|write/.test(said) ? 'touch'
+        : /off|stop|no/.test(said) ? 'off'
+        : null
+      if (!mode) return fail('Say touch, latch, or off.')
+      return {
+        actions: [{ type: 'AUTOMATION_ARM', mode }],
+        say: mode === 'off'
+          ? 'Automation recording off — moving a control overrides its lane instead.'
+          : mode === 'touch'
+            ? 'Automation armed on touch. Record, move a control, and the move goes into its lane while you hold it.'
+            : 'Automation armed on latch. Record, move a control, and it holds that value to the end of the song — replacing whatever was there.',
+      }
+    }
+
+    // ── GLOBAL QUANTIZATION — when a launch lands, for every slot ─────────────
+    case 'set_global_quantization': {
+      const said = str(i.quantization).toLowerCase()
+      const q: LaunchQuantization | null =
+        /none|off|instant|straight ?away|immediate/.test(said) ? 'none'
+        : /\b4\b|four/.test(said) ? '4bar'
+        : /\b2\b|two/.test(said) ? '2bar'
+        : /bar/.test(said) ? 'bar'
+        : /beat/.test(said) ? 'beat'
+        : null
+      if (!q) return fail('Say none, a beat, a bar, two bars or four bars.')
+      return {
+        actions: [{ type: 'SET_LAUNCH_QUANTIZATION', quantization: q }],
+        say: q === 'none'
+          ? 'Session clips now start the instant you press them.'
+          : `Session clips now wait for the next ${launchQuantShort(q).toLowerCase()} before they come in — unless a slot says otherwise.`,
+      }
+    }
+
+    // ── BOUNCE — a track's devices printed as audio (lib/bounce.ts) ───────────
+    case 'bounce_track': {
+      const track = resolveTrack(target, project)
+      if (!track) return fail(`I couldn't find a track called "${target || 'that'}".`)
+      const inPlace = /in ?place|same track|itself|over it|replace/.test(str(i.where).toLowerCase())
+      const what = inPlace ? 'inPlace' : 'newTrack'
+      const span = bounceSpan(project, track.id)
+      if (!span) return fail(`"${track.name}" has nothing to bounce — it has no active clips.`)
+      const covered = clipsInSpan(project, track.id, span)
+      return {
+        actions: [{ type: 'BOUNCE', trackId: track.id, what }],
+        // ⚠️ Said in the future tense, because the render happens after this
+        // returns and takes real seconds. Saying "bounced" here would be a
+        // claim about something that has not happened yet.
+        say: what === 'newTrack'
+          ? `Bouncing "${track.name}" to a new track — printing ${covered.length} clip${covered.length === 1 ? '' : 's'} as audio. The originals will be parked, not deleted.`
+          : `Bouncing "${track.name}" in place — the ${covered.length} clip${covered.length === 1 ? '' : 's'} there will be replaced by the audio.`,
+      }
+    }
+
+    // ── THE CLICK — sound, rhythm, count-in (lib/metronome.ts) ────────────────
+    case 'set_metronome': {
+      const out: Record<string, unknown> = { type: 'METRONOME' }
+      const said: string[] = []
+      const sound = str(i.sound).toLowerCase()
+      if (sound) {
+        const s = CLICK_SOUNDS.find(x => x.id === sound || x.label.toLowerCase() === sound)
+          ?? (/bell/.test(sound) ? CLICK_SOUNDS.find(x => x.id === 'cowbell') : null)
+          ?? (/rim|snare/.test(sound) ? CLICK_SOUNDS.find(x => x.id === 'rimshot') : null)
+          ?? (/block|wood/.test(sound) ? CLICK_SOUNDS.find(x => x.id === 'wood') : null)
+          ?? (/stick/.test(sound) ? CLICK_SOUNDS.find(x => x.id === 'stick') : null)
+          ?? (/beep|tone/.test(sound) ? CLICK_SOUNDS.find(x => x.id === 'beep') : null)
+        if (!s) return fail(`I don't have a "${sound}" click. There's ${CLICK_SOUNDS.map(x => x.label).join(', ')}.`)
+        out.sound = s.id
+        said.push(`${s.label.toLowerCase()} — ${s.hint.replace(/\.$/, '').toLowerCase()}`)
+      }
+      const rhythm = str(i.rhythm).toLowerCase()
+      if (rhythm) {
+        const triplet = /triplet|t$/.test(rhythm)
+        const r = /auto/.test(rhythm) ? 'auto'
+          : /16|sixteen/.test(rhythm) ? (triplet ? '1/16T' : '1/16')
+          : /\b8\b|eighth|1\/8/.test(rhythm) ? (triplet ? '1/8T' : '1/8')
+          : /\b4\b|quarter|beat|1\/4/.test(rhythm) ? '1/4'
+          : null
+        if (!r) return fail('Say auto, quarters, eighths, eighth triplets, sixteenths or sixteenth triplets.')
+        out.rhythm = r
+        said.push(r === 'auto' ? 'clicking on auto — it subdivides when the beat is far apart' : `clicking on ${r}`)
+      }
+      if (typeof i.onlyWhileRecording === 'boolean') {
+        out.onlyWhileRecording = i.onlyWhileRecording
+        said.push(i.onlyWhileRecording ? 'only while recording' : 'clicking for playback too')
+      }
+      if (i.countInBars != null) {
+        const n = Math.max(0, Math.min(4, Math.round(Number(i.countInBars))))
+        if (!Number.isFinite(n)) return fail('Say how many bars to count in — none, one, two or four.')
+        out.countInBars = n
+        said.push(n === 0 ? 'no count-in' : `${n} bar${n > 1 ? 's' : ''} of count-in, shown as negative bars`)
+      }
+      if (!said.length) return fail('Say what to change about the click — its sound, how often it clicks, whether it is only for takes, or the count-in.')
+      return { actions: [out], say: `The click: ${said.join('; ')}.` }
+    }
+
+    // ── RECORD QUANTIZATION — the grid a take lands on (lib/record-quantize.ts) ──
+    case 'set_record_quantize': {
+      const said = str(i.grid).toLowerCase().trim()
+      if (!said) return fail('Say a grid — quarters, eighths, sixteenths, or off.')
+      const both = /\band\b|\+|both/.test(said)
+      const triplet = /triplet|\bt\b|\/8t|\/16t/.test(said)
+      const grid: RecordGrid | null =
+        /\b(none|off|no)\b|straight timing/.test(said) ? 'none'
+        : /32|thirty/.test(said) ? 'thirtysecond'
+        : /16|sixteen/.test(said) ? (both ? 'sixteenthBoth' : triplet ? 'sixteenthT' : 'sixteenth')
+        : /\b8\b|eighth|1\/8/.test(said) ? (both ? 'eighthBoth' : triplet ? 'eighthT' : 'eighth')
+        : /\b4\b|quarter|1\/4|beat/.test(said) ? 'quarter'
+        : null
+      if (!grid) return fail(`I don't know the grid "${said}" — say quarters, eighths, eighth triplets, sixteenths, thirty-seconds, or off.`)
+      return {
+        actions: [{ type: 'SET_RECORD_QUANTIZE', grid }],
+        say: grid === 'none'
+          ? 'Record quantization off — takes keep their own timing.'
+          : `Recording onto ${recordGridLabel(grid)} from now on. Only the note starts move; the lengths stay as you play them.`,
+      }
+    }
+
+    // ── PUNCH IN / OUT — recording bounded by the loop brace (lib/punch.ts) ──
+    case 'set_punch': {
+      const next = {
+        punchIn:  typeof i.punchIn  === 'boolean' ? i.punchIn  : project.punchIn,
+        punchOut: typeof i.punchOut === 'boolean' ? i.punchOut : project.punchOut,
+        loopStart: project.loopStart,
+        loopEnd: project.loopEnd,
+      }
+      if (typeof i.punchIn !== 'boolean' && typeof i.punchOut !== 'boolean') {
+        return fail('Say which — punch in, punch out, or both.')
+      }
+      const action: Record<string, unknown> = { type: 'SET_PUNCH' }
+      if (typeof i.punchIn  === 'boolean') action.punchIn  = i.punchIn
+      if (typeof i.punchOut === 'boolean') action.punchOut = i.punchOut
+      // ⚠️ Said out loud rather than just switched on, because punching without
+      // a brace over the right bars records nothing and looks like it worked.
+      const bars = describePunch(next, project.timeSignatureNum || 4)
+      const noBrace = punchArmed(next) && !(project.loopEnd > project.loopStart)
+      return {
+        actions: [action],
+        say: noBrace
+          ? `${bars}, but the loop brace is empty — set the loop over the part you want to record.`
+          : `${bars}.`,
+      }
     }
 
     // ── WARP MARKERS on an audio clip (lib/warp.ts) ──────────────────────
@@ -5736,6 +6114,12 @@ export function planVoiceCallsEach(calls: VoiceCall[], project: DawProject, hear
 export function planVoiceCalls(calls: VoiceCall[], project: DawProject, heard?: VoiceContext): VoicePlan {
   const actions: unknown[] = []
   const said: string[] = []
+  // ⚠️ The change left on the table has to survive being merged. It did not:
+  // this function built a fresh plan out of the actions and the sentences and
+  // dropped everything else, so a proposal never reached the studio and "a
+  // little bit less of that" — the whole point of holding one — was read as a
+  // volume command instead.
+  let proposal: Proposal | null | undefined
   for (const c of calls) {
     const plan = planVoiceCall(c, withCreated(project, actions), heard)
     if (plan.problem) return { actions: [], say: '', problem: plan.problem }
@@ -5745,9 +6129,10 @@ export function planVoiceCalls(calls: VoiceCall[], project: DawProject, heard?: 
     if (plan.ask) return { actions: [], say: '', ask: plan.ask }
     actions.push(...plan.actions)
     if (plan.say) said.push(plan.say)
+    if (plan.proposal !== undefined) proposal = plan.proposal
   }
   // A plan with no actions is not necessarily empty — a query answers in words
   // and changes nothing, which is a complete and successful command.
   if (!actions.length && !said.length) return fail('I didn\'t catch anything to do.')
-  return { actions, say: said.join(' ') }
+  return { actions, say: said.join(' '), ...(proposal !== undefined ? { proposal } : {}) }
 }

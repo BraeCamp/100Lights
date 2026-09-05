@@ -132,6 +132,17 @@ function matchesName(want: string, name: string): boolean {
  */
 export function addressClips(project: DawProject, addr: ClipAddress): DawClip[] {
   let pool = [...(project.arrangementClips ?? [])]
+  // ⚠️ A SESSION SLOT IS A CLIP, and naming it is the only way to talk about
+  // one — the grid has no timeline to point at. It joins the pool only when the
+  // address NAMES a clip the arrangement does not have: everything positional
+  // here ("the last one", "the clips in the chorus") is a timeline idea, and a
+  // bulk command should not quietly reach into the grid and change, or delete,
+  // what the person is not looking at.
+  if (addr.name && !pool.some(c => foldName(c.name ?? '').includes(foldName(addr.name!)))) {
+    const grid: DawClip[] = []
+    for (const row of Object.values(project.sessionGrid ?? {})) for (const c of row ?? []) if (c) grid.push(c)
+    if (grid.length) pool = grid
+  }
   if (addr.ids) { const ids = new Set(addr.ids); pool = pool.filter(c => ids.has(c.id)) }
   if (addr.section) {
     const span = sectionSpan(project, addr.section)

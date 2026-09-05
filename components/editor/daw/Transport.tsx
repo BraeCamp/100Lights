@@ -20,14 +20,19 @@ const PluginMenu = nextDynamic(() => import('./PluginMenu'), { ssr: false })
 // so it still sits in the transport bar exactly as before.
 import { setLightSlot } from '@/lib/voice/light-slot'
 import { createPortal } from 'react-dom'
-import { Play, Square, Circle, SkipBack, Repeat, Gauge, Volume2, Camera, Video, ChevronDown, History, Upload, X, Headphones, Zap, RotateCcw } from 'lucide-react'
+import { Play, Square, Circle, SkipBack, Repeat, Gauge, Volume2, Camera, Video, ChevronDown, History, Upload, X, Headphones, Zap, RotateCcw, LogIn, LogOut } from 'lucide-react'
 import { TbMetronome } from 'react-icons/tb'
 import { apIcon, apIconOn, apDivider } from './apollo-chrome'
 import { captureScreenshot, screenshotSupported } from '@/lib/screen-recorder'
 import { usePlan } from '@/hooks/usePlan'
 import { useDaw, formatBeat, makeAudioClip, migrateProject, type DawAction } from '@/lib/daw-state'
 import { tempoSegments, tempoAt, clampBpm } from '@/lib/tempo-map'
-import type { DawProject } from '@/lib/daw-types'
+import { planPunch, describePunch, punchArmed } from '@/lib/punch'
+import { useArmMode, setArmMode, ARM_MODES, armLabel, armHint, type ArmMode } from '@/lib/automation-record'
+import { LAUNCH_QUANTIZATIONS, DEFAULT_LAUNCH_QUANTIZATION, launchQuantLabel, launchQuantShort } from '@/lib/launch'
+import { useMetronomeSettings, setMetronomeSettings, countInPosition, describeMetronome, CLICK_SOUNDS, CLICK_RHYTHMS, type ClickSound, type ClickRhythm } from '@/lib/metronome'
+import { RECORD_GRIDS, DEFAULT_RECORD_GRID, recordGridLabel, type RecordGrid } from '@/lib/record-quantize'
+import type { DawProject, LaunchQuantization } from '@/lib/daw-types'
 import { openProjectInStudio } from '@/lib/open-in-studio'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
 import { useUITierOptional } from '../UITierProvider'
@@ -122,6 +127,8 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
   const [bpmDraft, setBpmDraft] = useState('')
   const [fxOpen, setFxOpen] = useState(false)
   const fxA = useAppear(fxOpen, 'pop-up')
+  const [metroMenu, setMetroMenu] = useState(false)
+  const metroA = useAppear(metroMenu, 'pop-up')
   const [editingTimeSig, setEditingTimeSig] = useState(false)
   const [showTuner, setShowTuner] = useState(false)
   const [showRecorder, setShowRecorder] = useState(false)
@@ -244,6 +251,12 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
     return () => window.removeEventListener('100lights:record-toggle', on)
   })
 
+  // The click's sound, rhythm, count-in and only-while-recording all live in
+  // the workspace (lib/metronome.ts) — preferences about how you work, not part
+  // of the song, since the click is never in the render.
+  const metro = useMetronomeSettings()
+  const arm = useArmMode()
+
   // RAF loop — music mode: render beats; podcast mode: render wall-clock time
   useEffect(() => {
     if (audioMode === 'podcast') {
@@ -266,7 +279,13 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
       const num = project.timeSignatureNum
       function musicFrame() {
         if (posRef.current) {
-          posRef.current.textContent = formatBeat(engine.currentBeat, num)
+          // During a count-in the display reads NEGATIVE bars ticking down to
+          // the take. Counting up from zero would show 1.1.1 while the song has
+          // not started, and the number a player watches to come in on would be
+          // the same one they see once they are already late (lib/metronome.ts).
+          const c = engine.countInProgress
+          posRef.current.textContent =
+            (c && countInPosition(c.elapsed, c.total, num)) ?? formatBeat(engine.currentBeat, num)
         }
         rafRef.current = requestAnimationFrame(musicFrame)
       }
@@ -274,6 +293,12 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
     }
     return () => { if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current) }
   }, [engine, project.timeSignatureNum, audioMode])
+
+  // The click's sound, rhythm and only-while-recording live in the workspace
+  // (lib/metronome.ts); the engine is told, it never reads them itself.
+  useEffect(() => {
+    engine.setMetronomeSettings({ sound: metro.sound, rhythm: metro.rhythm, onlyWhileRecording: metro.onlyWhileRecording })
+  }, [engine, metro.sound, metro.rhythm, metro.onlyWhileRecording, arm, playing])
 
   // ── Common handlers ─────────────────────────────────────────────────────────
 
@@ -289,7 +314,6 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
   const [recordSetup, setRecordSetup] = useState(false)
   const [monitorOn, setMonitorOn] = useState(false)
   const [recFx, setRecFx] = useState<MonitorFx[]>([])
-  const [countInBars, setCountInBars] = useState(0)
   const [latencyMs, setLatencyMs] = useState<number>(() => {
     try {
       const s = typeof localStorage !== 'undefined' ? localStorage.getItem('100lights-rec-latency-ms') : null
@@ -346,19 +370,33 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
     setMonitorOn(false)
     setRecordSetup(false)
     try {
-      if (countInBars > 0) {
-        setMicError(`Count-in — ${countInBars} bar${countInBars > 1 ? 's' : ''}…`)
+      if (metro.countInBars > 0) {
+        setMicError(`Count-in — ${metro.countInBars} bar${metro.countInBars > 1 ? 's' : ''}…`)
         // The count-in clicks at the tempo of the section the take starts in,
         // not the opening bpm — after a tempo change those differ.
-        await engine.countIn(countInBars * project.timeSignatureNum, tempoAt(engine.currentBeat, tempoSegments(project)))
+        await engine.countIn(metro.countInBars * project.timeSignatureNum, tempoAt(engine.currentBeat, tempoSegments(project)))
         setMicError('')
+      }
+      // Punch in / out (lib/punch.ts). With a punch armed the engine drives the
+      // recorder off the transport clock; this only opens the inputs and rolls.
+      const punch = planPunch(project, engine.currentBeat, project.timeSignatureNum)
+      if (punch.refused) {
+        setMicError(punch.refused)
+        setTimeout(() => setMicError(''), 8000)
+        return
       }
       const armedTracks = project.tracks.filter(t => t.type === 'audio' && t.armed && t.inputSource)
       engine.setPendingRecordFx(recFx)
       await Promise.all(armedTracks.map(t => engine.startMicInput(t.id, t.inputSource ?? 'mic')))
+      if (punch.startAt != null || punch.stopAt != null) engine.armPunch(punch)
+      else engine.disarmPunch()
       if (!playing) engine.play()
-      await engine.startRecording()
-      setMicError('')
+      // A punch-in that has not come round yet: the tick starts the take at the
+      // brace. Anything else rolls now — including a punch-out on its own.
+      if (punch.startAt == null) await engine.startRecording()
+      setMicError(punch.startAt != null
+        ? `Waiting for bar ${Math.floor(punch.startAt / (project.timeSignatureNum || 4)) + 1} — punching in…`
+        : '')
     } catch (err) {
       const msg = err instanceof DOMException && err.name === 'NotAllowedError'
         ? 'Mic permission denied — allow access in system settings'
@@ -369,8 +407,18 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
   }
 
   async function handleRecord() {
+    // Armed and waiting for the punch-in bar: pressing record again calls it off,
+    // rather than dropping into the setup box behind a take that is about to start.
+    if (!recording && engine.punchWaiting) {
+      engine.disarmPunch()
+      engine.stopAllMicInputs()
+      if (playing) engine.stop()
+      setMicError('')
+      return
+    }
     if (recording) {
       if (playing) engine.stop()
+      engine.disarmPunch()
       await engine.stopRecording()
     } else if (recordSetup) {
       closeRecordSetup()
@@ -502,16 +550,32 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 10, color: 'var(--text-secondary)' }}>Count-in</span>
-          {[0, 1, 2].map(b => (
-            <button key={b} onClick={() => setCountInBars(b)}
+          {[0, 1, 2, 4].map(b => (
+            <button key={b} data-help-id={b === 0 ? 'count-in' : undefined} onClick={() => setMetronomeSettings({ countInBars: b })}
               style={{
                 fontSize: 10, padding: '3px 10px', borderRadius: 5, cursor: 'pointer', fontWeight: 700,
-                border: countInBars === b ? '1px solid rgba(220,38,38,0.6)' : '1px solid #2e2e2e',
-                background: countInBars === b ? 'rgba(220,38,38,0.14)' : '#1e1e1e',
-                color: countInBars === b ? '#f87171' : 'var(--text-muted)',
+                border: metro.countInBars === b ? '1px solid rgba(220,38,38,0.6)' : '1px solid #2e2e2e',
+                background: metro.countInBars === b ? 'rgba(220,38,38,0.14)' : '#1e1e1e',
+                color: metro.countInBars === b ? '#f87171' : 'var(--text-muted)',
               }}
             >{b === 0 ? 'Off' : `${b} bar${b > 1 ? 's' : ''}`}</button>
           ))}
+        </div>
+
+        {/* Record Quantization (lib/record-quantize.ts) — the grid a take lands
+            on as it is played. Only note starts move; the lengths are kept. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 10, color: 'var(--text-secondary)' }}>Quantize as played</span>
+          <select
+            data-help-id="record-quantize"
+            aria-label="Record quantization"
+            value={project.recordQuantize ?? DEFAULT_RECORD_GRID}
+            title={`Recorded notes land on this grid as you play them. Only the starts move — the lengths are kept exactly as held. Now: ${recordGridLabel(project.recordQuantize)}.`}
+            onChange={e => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: e.target.value as RecordGrid })}
+            style={{ fontSize: 10, padding: '3px 6px', borderRadius: 5, background: '#1e1e1e', color: 'var(--text-primary)', border: '1px solid #2e2e2e', cursor: 'pointer' }}
+          >
+            {RECORD_GRIDS.map(g => <option key={g.id} value={g.id}>{g.label}</option>)}
+          </select>
         </div>
 
         <div style={{ display: 'flex', gap: 8 }}>
@@ -587,13 +651,89 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
       keywords: 'cycle everything full span entire repeat',
       when: () => project.arrangementClips.length > 0,
       run: handleLoopFullSpan },
+    // Punch in / out (lib/punch.ts) — the recorder starting and stopping at the
+    // loop brace by itself, so a fix in the middle of a take cannot eat what is
+    // either side of it.
+    // Automation Arm (lib/automation-record.ts). Spelled out per mode: latch
+    // is destructive and must never be one keystroke away from touch by accident.
+    { id: 'transport.armOff', group: 'Transport', label: 'Automation arm off — moving a control overrides its lane, nothing is recorded',
+      keywords: 'automation arm record write off override manual', when: () => arm !== 'off',
+      run: () => setArmMode('off') },
+    { id: 'transport.armTouch', group: 'Transport', label: 'Automation arm: Touch — record a move while you hold the control',
+      keywords: 'automation arm record write touch gesture perform ride fader', when: () => arm !== 'touch',
+      run: () => setArmMode('touch') },
+    { id: 'transport.armLatch', group: 'Transport', label: 'Automation arm: Latch — record a move and hold it to the end (replaces what was there)',
+      keywords: 'automation arm record write latch hold replace overwrite', when: () => arm !== 'latch',
+      run: () => setArmMode('latch') },
+    { id: 'transport.nudgeEarlier', group: 'Transport', label: 'Nudge the song 8 ms earlier (play along with something outside)',
+      keywords: 'nudge earlier phase align sync beatmatch external record ahead',
+      when: () => playing, run: () => engine.nudge(-8) },
+    { id: 'transport.nudgeLater', group: 'Transport', label: 'Nudge the song 8 ms later (play along with something outside)',
+      keywords: 'nudge later phase align sync beatmatch external record behind',
+      when: () => playing, run: () => engine.nudge(8) },
+    { id: 'transport.punchIn', group: 'Transport', label: project.punchIn ? 'Punch in off — record as soon as you press record' : 'Punch in — start recording at the loop brace',
+      keywords: 'punch in record start brace loop drop fix overdub replace',
+      run: () => dispatch({ type: 'SET_PUNCH', punchIn: !project.punchIn }) },
+    { id: 'transport.punchOut', group: 'Transport', label: project.punchOut ? 'Punch out off — record until you press stop' : 'Punch out — stop recording at the end of the loop brace',
+      keywords: 'punch out record stop brace loop end fix overdub replace',
+      run: () => dispatch({ type: 'SET_PUNCH', punchOut: !project.punchOut }) },
+    // Record Quantization (lib/record-quantize.ts) — the grid a take lands on
+    // as it is played.
+    //
+    // ⚠️ Spelled out one command per grid rather than mapped over the list, for
+    // the same reason as the crossfader curves below: the discoverability check
+    // reads these labels literally out of the source, and a label built by
+    // interpolation is a label it cannot see. It is also what a person wants —
+    // you pick a grid, you do not step through nine.
+    { id: 'transport.recordQuantize.none', group: 'Transport', label: 'Record quantization: None — takes keep their own timing',
+      keywords: 'record quantization quantize grid snap timing as played input off none straight', when: () => (project.recordQuantize ?? DEFAULT_RECORD_GRID) !== 'none',
+      run: () => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: 'none' }) },
+    { id: 'transport.recordQuantize.quarter', group: 'Transport', label: 'Record quantization: 1/4 — notes land on the beat as you play',
+      keywords: 'record quantization quantize grid snap timing as played input quarter beat', run: () => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: 'quarter' }) },
+    { id: 'transport.recordQuantize.eighth', group: 'Transport', label: 'Record quantization: 1/8 — notes land on eighths as you play',
+      keywords: 'record quantization quantize grid snap timing as played input eighth 8th', run: () => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: 'eighth' }) },
+    { id: 'transport.recordQuantize.eighthT', group: 'Transport', label: 'Record quantization: 1/8 triplets — notes land on eighth triplets',
+      keywords: 'record quantization quantize grid snap timing as played input eighth triplet swing', run: () => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: 'eighthT' }) },
+    { id: 'transport.recordQuantize.eighthBoth', group: 'Transport', label: 'Record quantization: 1/8 and 1/8T — whichever line is nearer',
+      keywords: 'record quantization quantize grid snap timing as played input eighth triplet both straight nearer', run: () => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: 'eighthBoth' }) },
+    { id: 'transport.recordQuantize.sixteenth', group: 'Transport', label: 'Record quantization: 1/16 — notes land on sixteenths as you play',
+      keywords: 'record quantization quantize grid snap timing as played input sixteenth 16th', run: () => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: 'sixteenth' }) },
+    { id: 'transport.recordQuantize.sixteenthT', group: 'Transport', label: 'Record quantization: 1/16 triplets — notes land on sixteenth triplets',
+      keywords: 'record quantization quantize grid snap timing as played input sixteenth triplet', run: () => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: 'sixteenthT' }) },
+    { id: 'transport.recordQuantize.sixteenthBoth', group: 'Transport', label: 'Record quantization: 1/16 and 1/16T — whichever line is nearer',
+      keywords: 'record quantization quantize grid snap timing as played input sixteenth triplet both straight nearer', run: () => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: 'sixteenthBoth' }) },
+    { id: 'transport.recordQuantize.thirtysecond', group: 'Transport', label: 'Record quantization: 1/32 — notes land on thirty-seconds',
+      keywords: 'record quantization quantize grid snap timing as played input thirty-second 32nd', run: () => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: 'thirtysecond' }) },
+    { id: 'transport.recordQuantize.half', group: 'Transport', label: 'Record quantization: 1/2 — notes land on half notes',
+      keywords: 'record quantization quantize grid snap timing as played input half two beats', run: () => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: 'half' }) },
+    { id: 'transport.recordQuantize.whole', group: 'Transport', label: 'Record quantization: 1/1 — notes land on the bar',
+      keywords: 'record quantization quantize grid snap timing as played input whole bar', run: () => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: 'whole' }) },
+    // The click's sound and rhythm (lib/metronome.ts). Behind a right-click on
+    // the metronome button, which nobody discovers, so they are spelled out
+    // here — one per sound, for the same reason as the grids above.
+    { id: 'transport.click.click', group: 'Transport', label: 'Metronome sound: Click — a short high ping', keywords: 'metronome click sound tick tone ping cut through', run: () => setMetronomeSettings({ sound: 'click' }) },
+    { id: 'transport.click.beep', group: 'Transport', label: 'Metronome sound: Beep — the most audible, the least pleasant', keywords: 'metronome click sound beep tone loud audible', run: () => setMetronomeSettings({ sound: 'beep' }) },
+    { id: 'transport.click.stick', group: 'Transport', label: 'Metronome sound: Stick — broadband, survives a busy mix', keywords: 'metronome click sound stick sticks crack noise busy mix', run: () => setMetronomeSettings({ sound: 'stick' }) },
+    { id: 'transport.click.wood', group: 'Transport', label: 'Metronome sound: Wood — a wood block, easy over long sessions', keywords: 'metronome click sound wood block dry mid', run: () => setMetronomeSettings({ sound: 'wood' }) },
+    { id: 'transport.click.cowbell', group: 'Transport', label: 'Metronome sound: Cowbell — metallic, sits above a kit', keywords: 'metronome click sound cowbell metallic bell drums', run: () => setMetronomeSettings({ sound: 'cowbell' }) },
+    { id: 'transport.click.rimshot', group: 'Transport', label: 'Metronome sound: Rimshot — a crack with body under it', keywords: 'metronome click sound rimshot rim crack snare', run: () => setMetronomeSettings({ sound: 'rimshot' }) },
+    ...CLICK_RHYTHMS.filter(r => r.id !== metro.rhythm).map(r => ({
+      id: `transport.clickRhythm.${r.id}`, group: 'Transport',
+      label: r.id === 'auto' ? 'Metronome rhythm: Auto — subdivides when the beat is far apart' : `Metronome rhythm: ${r.label}`,
+      keywords: `metronome click rhythm how often subdivision grid ${r.label.toLowerCase()}`,
+      run: () => setMetronomeSettings({ rhythm: r.id }),
+    })),
+    { id: 'transport.clickOnlyRecording', group: 'Transport',
+      label: metro.onlyWhileRecording ? 'Metronome on for playback too' : 'Metronome only while recording',
+      keywords: 'metronome click only while recording takes playback silent enable',
+      run: () => setMetronomeSettings({ onlyWhileRecording: !metro.onlyWhileRecording }) },
     // Count-in is four unlabelled number buttons inside the record setup box —
     // you cannot find it unless you are already recording.
-    ...[0, 1, 2].filter(b => b !== countInBars).map(b => ({
+    ...[0, 1, 2, 4].filter(b => b !== metro.countInBars).map(b => ({
       id: `transport.countin.${b}`, group: 'Transport',
       label: b === 0 ? 'No count-in before recording' : `Count in ${b} bar${b > 1 ? 's' : ''} before recording`,
       keywords: 'countin count in lead pre roll click bars metronome record',
-      run: () => setCountInBars(b),
+      run: () => setMetronomeSettings({ countInBars: b }),
     })),
     // Tempo goes through applyTempo because a project with tempo markers must
     // retempo the segment under the playhead, not stamp one global BPM over a
@@ -632,7 +772,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
     { id: 'transport.historyrec', group: 'Share', label: 'Record how this project gets built',
       keywords: 'history timelapse replay capture session process',
       run: () => { setRecorderMode('history'); setShowRecorder(true) } },
-  ], [recording, project.loopEnabled, project.arrangementClips.length, project.tempo, project.swing, countInBars, loopToolArmed])
+  ], [recording, project.loopEnabled, project.arrangementClips.length, project.tempo, project.swing, metro.countInBars, loopToolArmed, project.punchIn, project.punchOut, project.recordQuantize, metro.rhythm, metro.onlyWhileRecording, arm, playing])
 
   // ── Music-only handlers ─────────────────────────────────────────────────────
 
@@ -963,6 +1103,77 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
         <Repeat size={13} />
       </button>
 
+      {/* Automation Arm (lib/automation-record.ts) — whether moving a control
+          while recording WRITES its move into a lane, and how. */}
+      <select
+        data-help-id="automation-arm"
+        aria-label="Automation arm"
+        value={arm}
+        title={`${armLabel(arm)} — ${armHint(arm)}`}
+        onChange={e => setArmMode(e.target.value as ArmMode)}
+        style={{
+          fontSize: 10, padding: '3px 5px', borderRadius: 5, cursor: 'pointer',
+          background: arm === 'off' ? '#1e1e1e' : 'rgba(220,38,38,0.14)',
+          color: arm === 'off' ? 'var(--text-secondary)' : '#f87171',
+          border: `1px solid ${arm === 'off' ? '#2e2e2e' : 'rgba(220,38,38,0.6)'}`,
+        }}
+      >
+        {ARM_MODES.map(m => <option key={m.id} value={m.id}>{m.id === 'off' ? 'Auto off' : `Auto ${m.label.toLowerCase()}`}</option>)}
+      </select>
+
+      {/* Nudge — slide the whole song a few milliseconds against the wall
+          clock, for playing along with something the studio cannot hear. Not
+          an edit: nothing in the project changes. */}
+      <div style={{ display: 'flex', gap: 2 }}>
+        {([['◀', -8, 'earlier'], ['▶', 8, 'later']] as const).map(([glyph, ms, dir]) => (
+          <button key={dir}
+            data-help-id={`nudge-${dir}`}
+            aria-label={`Nudge the song ${dir}`}
+            title={`Nudge the song ${dir} by 8 ms against the wall clock — for playing along with something outside the studio. Hold to keep nudging. Nothing in the project changes.`}
+            disabled={!playing}
+            onClick={() => engine.nudge(ms)}
+            style={{ ...base, padding: '3px 5px', fontSize: 9, opacity: playing ? 1 : 0.35, cursor: playing ? 'pointer' : 'default' }}
+          >{glyph}</button>
+        ))}
+      </div>
+
+      {/* Global Quantization (lib/launch.ts) — when a session launch lands, for
+          every slot that names none of its own. On the bar because it is the
+          one setting you change WHILE playing: a set landing on the bar wants
+          to go to a beat for the fill and back afterwards. */}
+      <select
+        data-help-id="global-quantization"
+        aria-label="Global launch quantization"
+        value={project.launchQuantization ?? DEFAULT_LAUNCH_QUANTIZATION}
+        title={`When a session clip's launch lands, unless the slot says otherwise. Now: ${launchQuantLabel(project.launchQuantization)}. ⌥6–⌥0.`}
+        onChange={e => dispatch({ type: 'SET_LAUNCH_QUANTIZATION', quantization: e.target.value as LaunchQuantization })}
+        style={{ fontSize: 10, padding: '3px 5px', borderRadius: 5, background: '#1e1e1e', color: 'var(--text-secondary)', border: '1px solid #2e2e2e', cursor: 'pointer' }}
+      >
+        {LAUNCH_QUANTIZATIONS.map(q => <option key={q.id} value={q.id}>{launchQuantShort(q.id)}</option>)}
+      </select>
+
+      {/* Punch in / out — recording that starts and stops at the loop brace by
+          itself, so a fix in the middle of a take never risks what is either
+          side of it (lib/punch.ts). */}
+      <button
+        style={project.punchIn ? active : base}
+        onClick={() => dispatch({ type: 'SET_PUNCH', punchIn: !project.punchIn })}
+        title={`Punch in — the recorder waits for the start of the loop brace. ${describePunch(project, project.timeSignatureNum)}.`}
+        data-help-id="punch-in"
+        aria-pressed={Boolean(project.punchIn)}
+      >
+        <LogIn size={13} />
+      </button>
+      <button
+        style={project.punchOut ? active : base}
+        onClick={() => dispatch({ type: 'SET_PUNCH', punchOut: !project.punchOut })}
+        title={`Punch out — the recorder stops at the end of the loop brace. ${describePunch(project, project.timeSignatureNum)}.`}
+        data-help-id="punch-out"
+        aria-pressed={Boolean(project.punchOut)}
+      >
+        <LogOut size={13} />
+      </button>
+
       {/* Performance FX — parity with the mobile ⚡ hold-FX */}
       <div style={{ position: 'relative' }}>
         <button onClick={() => setFxOpen(o => !o)} style={fxOpen ? active : base} title="Performance FX — hold a pad to sweep the master" data-help-id="perf-fx">
@@ -1126,16 +1337,49 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
         </button>
       )}
 
-      {/* Metronome */}
-      <button
-        style={metronome ? active : base}
-        onClick={handleMetronomeToggle}
-        title="Toggle metronome (M)"
-        aria-pressed={metronome}
-        data-help-id="metronome"
-      >
-        <TbMetronome size={15} />
-      </button>
+      {/* Metronome. Right-click opens what it sounds like and how often — the
+          click has to cut through what you are playing, and which sound does
+          that depends entirely on the music (lib/metronome.ts). */}
+      <div style={{ position: 'relative' }}>
+        <button
+          style={metronome ? active : base}
+          onClick={handleMetronomeToggle}
+          onContextMenu={e => { e.preventDefault(); setMetroMenu(o => !o) }}
+          title={`Toggle metronome (M). Right-click for the click's sound and rhythm — ${describeMetronome(metro)}.`}
+          aria-pressed={metronome}
+          data-help-id="metronome"
+        >
+          <TbMetronome size={15} />
+        </button>
+        {metroA.mounted && (
+          <div className={metroA.cls} data-help-id="metronome-settings"
+            style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: 6, padding: 10, minWidth: 200, display: 'flex', flexDirection: 'column', gap: 8, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, zIndex: 1000, boxShadow: '0 6px 20px rgba(0,0,0,0.5)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 10, color: 'var(--text-secondary)', width: 46 }}>Sound</span>
+              <select value={metro.sound} aria-label="Metronome sound" data-help-id="metronome-sound"
+                title={CLICK_SOUNDS.find(x => x.id === metro.sound)?.hint}
+                onChange={e => setMetronomeSettings({ sound: e.target.value as ClickSound })}
+                style={{ flex: 1, fontSize: 10, padding: '3px 6px', borderRadius: 5, background: '#1e1e1e', color: 'var(--text-primary)', border: '1px solid #2e2e2e', cursor: 'pointer' }}>
+                {CLICK_SOUNDS.map(x => <option key={x.id} value={x.id}>{x.label}</option>)}
+              </select>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 10, color: 'var(--text-secondary)', width: 46 }}>Rhythm</span>
+              <select value={metro.rhythm} aria-label="Metronome rhythm" data-help-id="metronome-rhythm"
+                title="Auto subdivides when the beat is too far apart to play to, and thins out when it would be a buzz."
+                onChange={e => setMetronomeSettings({ rhythm: e.target.value as ClickRhythm })}
+                style={{ flex: 1, fontSize: 10, padding: '3px 6px', borderRadius: 5, background: '#1e1e1e', color: 'var(--text-primary)', border: '1px solid #2e2e2e', cursor: 'pointer' }}>
+                {CLICK_RHYTHMS.map(x => <option key={x.id} value={x.id}>{x.label}</option>)}
+              </select>
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={metro.onlyWhileRecording} data-help-id="metronome-only-recording"
+                onChange={e => setMetronomeSettings({ onlyWhileRecording: e.target.checked })} />
+              Only while recording
+            </label>
+          </div>
+        )}
+      </div>
 
       {showMore && <div style={divider} />}
 

@@ -6,6 +6,7 @@ import type {
   Scene, DawView, EditTarget,
   TrackEffect, AutomationLane, AutomationPoint, ClipEffect, Modulator, ModRoute,
   ReturnTrack, TakeLane, MidiEffect, CueMarker, CollabPeer, DawHistoryEntry,
+  LaunchQuantization,
 } from './daw-types'
 import { repairAutomationPoints } from './automation-repair'
 import { fatPatch } from './apollo/patch-diff'
@@ -21,6 +22,9 @@ import { legacyToBar } from './effect-bar'
 import { resolveOverlaps } from './note-ops'
 import { clipDefaultsFor, clipDefaultsKey } from './clip-defaults'
 import { followLeader, releaseLeader, setLeader, touchesLeader } from './tempo-leader'
+import { insertTime as insertArrangementTime, deleteTime as deleteArrangementTime, duplicateTime as duplicateArrangementTime } from './arrangement-time'
+import type { CrossfaderCurve } from './crossfader'
+import type { RecordGrid } from './record-quantize'
 
 // ── Action types ────────────────────────────────────────────────────────
 
@@ -50,6 +54,8 @@ export type DawAction =
   | { type: 'SET_LANE_OVERRIDDEN'; laneId: string; overridden: boolean }
   | { type: 'REENABLE_ALL_AUTOMATION' }
   | { type: 'ADD_SCENE'; id?: string }
+  | { type: 'ARRANGEMENT_TIME'; op: 'insert' | 'delete' | 'duplicate'; from: number; to?: number; amount?: number }
+  | { type: 'INSERT_SCENE'; sceneIndex: number; id?: string; name?: string; clips?: Record<string, DawClip | null> }
   | { type: 'REMOVE_SCENE'; sceneIndex: number }
   | { type: 'UPDATE_SCENE'; sceneIndex: number; patch: Partial<Scene> }
   // Transport / project
@@ -70,6 +76,9 @@ export type DawAction =
   | { type: 'PATCH_PROJECT'; patch: Partial<DawProject> }
   | { type: 'SET_LOOP'; start: number; end: number }
   | { type: 'SET_LOOP_ENABLED'; enabled: boolean }
+  | { type: 'SET_PUNCH'; punchIn?: boolean; punchOut?: boolean }
+  | { type: 'SET_RECORD_QUANTIZE'; grid: RecordGrid }
+  | { type: 'SET_LAUNCH_QUANTIZATION'; quantization: LaunchQuantization }
   | { type: 'SET_MASTER_VOLUME'; volume: number }
   | { type: 'SET_PROJECT_NAME'; name: string }
   // MIDI notes
@@ -125,6 +134,7 @@ export type DawAction =
   | { type: 'UPDATE_TAKE_LANE'; laneId: string; patch: Partial<TakeLane> }
   // Crossfader / waveform zoom
   | { type: 'SET_CROSSFADER'; value: number }
+  | { type: 'SET_CROSSFADER_CURVE'; curve: CrossfaderCurve }
   | { type: 'SET_WAVEFORM_ZOOM'; zoom: number }
   // Swing + key/scale
   | { type: 'SET_SWING'; swing: number }
@@ -210,7 +220,51 @@ function growToFitNoteEnd(clip: MidiClip, noteEnd: number, timeSignatureNum: num
   return { ...clip, durationBeats: Math.ceil(noteEnd / bar) * bar }
 }
 
+/**
+ * The clip-shaped actions a SESSION SLOT understands. Everything here changes
+ * a clip and nothing around it, so it means the same thing wherever the clip
+ * lives. `MOVE_CLIP` and `SET_TEMPO_LEADER` are deliberately absent: a slot has
+ * no place on the timeline to be moved to, and a clip that is not on the
+ * timeline cannot drive the song's tempo.
+ */
+const SESSION_CLIP_ACTIONS = new Set([
+  'UPDATE_CLIP', 'REMOVE_CLIP',
+  'ADD_MIDI_NOTE', 'REMOVE_MIDI_NOTE', 'UPDATE_MIDI_NOTE', 'UPDATE_MIDI_NOTES', 'ADD_MIDI_NOTES',
+  'SPLICE_MIDI_NOTES', 'RESOLVE_NOTE_OVERLAPS', 'SET_CHANCE_GROUP',
+])
+
+/** Where a clip id sits in the session grid, if it does. */
+function findSessionSlot(project: DawProject, clipId: string): { trackId: string; sceneIndex: number; clip: DawClip } | null {
+  for (const [trackId, row] of Object.entries(project.sessionGrid ?? {})) {
+    const sceneIndex = (row ?? []).findIndex(c => c?.id === clipId)
+    if (sceneIndex >= 0) return { trackId, sceneIndex, clip: (row ?? [])[sceneIndex]! }
+  }
+  return null
+}
+
+function writeSessionSlot(project: DawProject, at: { trackId: string; sceneIndex: number }, clip: DawClip | null): DawProject {
+  const row = [...(project.sessionGrid[at.trackId] ?? [])]
+  row[at.sceneIndex] = clip
+  return { ...project, sessionGrid: { ...project.sessionGrid, [at.trackId]: row } }
+}
+
 export function reducer(project: DawProject, action: DawAction): DawProject {
+  // ⚠️ A SESSION SLOT IS A CLIP TOO. Slots live in `sessionGrid`, not in
+  // `arrangementClips`, so every clip-addressed action used to be a silent
+  // no-op on one: voice could name a slot and be told it had changed it while
+  // nothing happened. Rather than teach thirteen cases about the grid, the
+  // action is run against a project whose arrangement IS that one slot, and
+  // the answer is written back where it came from. The cases stay honest about
+  // one thing each, and anything that works on a clip works on a slot.
+  const clipId = (action as { clipId?: string }).clipId
+  if (clipId && SESSION_CLIP_ACTIONS.has(action.type) && !project.arrangementClips.some(c => c.id === clipId)) {
+    const at = findSessionSlot(project, clipId)
+    if (at) {
+      const inner = reducer({ ...project, arrangementClips: [at.clip] }, action)
+      return writeSessionSlot(project, at, inner.arrangementClips[0] ?? null)
+    }
+  }
+
   switch (action.type) {
 
     case 'ADD_TRACK': {
@@ -365,10 +419,18 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
     case 'SET_CLIPS_ACTIVE': {
       const ids = new Set(action.clipIds)
       if (!ids.size) return project
-      const clips = project.arrangementClips.map(c =>
-        ids.has(c.id) ? ({ ...c, active: action.active ? undefined : false } as DawClip) : c
-      )
-      return { ...project, arrangementClips: clips }
+      const park = (c: DawClip) => ({ ...c, active: action.active ? undefined : false } as DawClip)
+      const clips = project.arrangementClips.map(c => (ids.has(c.id) ? park(c) : c))
+      // Session slots park too — this action names a set of clips and says
+      // nothing about where they live (the wrapper above takes one id, not many).
+      let sessionGrid = project.sessionGrid
+      let touched = false
+      for (const [trackId, row] of Object.entries(sessionGrid ?? {})) {
+        if (!(row ?? []).some(c => c && ids.has(c.id))) continue
+        touched = true
+        sessionGrid = { ...sessionGrid, [trackId]: (row ?? []).map(c => (c && ids.has(c.id) ? park(c) : c)) }
+      }
+      return { ...project, arrangementClips: clips, ...(touched ? { sessionGrid } : {}) }
     }
 
     case 'MOVE_CLIP': {
@@ -410,6 +472,51 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       const grid = { ...project.sessionGrid }
       for (const id of Object.keys(grid)) grid[id] = [...(grid[id] ?? []), null]
       return { ...project, scenes: [...project.scenes, scene], sessionGrid: grid }
+    }
+
+    /**
+     * A scene put BETWEEN two others, rather than on the end — with the clips
+     * that belong in it, when they were captured from what is playing.
+     *
+     * Every track's row grows at the same index, or the grid and the scene
+     * list would drift apart and every slot below would belong to the wrong
+     * scene. `clips` is keyed by track and may name only some of them.
+     */
+    /**
+     * Insert Silence, Delete Time, Duplicate Time — across every track at
+     * once (lib/arrangement-time.ts). Clips, automation, markers and the tempo
+     * map all move together; anything left behind would be quietly wrong for
+     * the rest of the song.
+     */
+    case 'ARRANGEMENT_TIME': {
+      const from = Math.max(0, action.from)
+      if (action.op === 'insert') return insertArrangementTime(project, from, action.amount ?? 0)
+      const to = Math.max(from, action.to ?? from)
+      return action.op === 'delete'
+        ? deleteArrangementTime(project, from, to)
+        : duplicateArrangementTime(project, from, to, () => crypto.randomUUID())
+    }
+
+    case 'INSERT_SCENE': {
+      const at = Math.max(0, Math.min(project.scenes.length, action.sceneIndex))
+      const scene: Scene = { id: action.id ?? crypto.randomUUID(), name: action.name ?? `Scene ${project.scenes.length + 1}` }
+      const scenes = [...project.scenes.slice(0, at), scene, ...project.scenes.slice(at)]
+      const grid = { ...project.sessionGrid }
+      for (const id of Object.keys(grid)) {
+        const row = [...(grid[id] ?? [])]
+        while (row.length < project.scenes.length) row.push(null)
+        row.splice(at, 0, action.clips?.[id] ?? null)
+        grid[id] = row
+      }
+      // A track with no row yet still needs one, or a captured clip would have
+      // nowhere to land.
+      for (const id of Object.keys(action.clips ?? {})) {
+        if (grid[id]) continue
+        const row = Array(project.scenes.length).fill(null)
+        row.splice(at, 0, action.clips![id] ?? null)
+        grid[id] = row
+      }
+      return { ...project, scenes, sessionGrid: grid }
     }
 
     case 'REMOVE_SCENE': {
@@ -556,6 +663,23 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
 
     case 'SET_LOOP_ENABLED':
       return { ...project, loopEnabled: action.enabled }
+
+    // The grid recorded notes land on as they are played (lib/record-quantize.ts).
+    case 'SET_RECORD_QUANTIZE':
+      return { ...project, recordQuantize: action.grid }
+
+    // Global Quantization — when a session launch lands, for every slot that
+    // does not name its own (lib/launch.ts).
+    case 'SET_LAUNCH_QUANTIZATION':
+      return { ...project, launchQuantization: action.quantization }
+
+    // Punch in / out both hang off the loop brace (lib/punch.ts).
+    case 'SET_PUNCH':
+      return {
+        ...project,
+        ...(action.punchIn  !== undefined ? { punchIn:  action.punchIn  } : {}),
+        ...(action.punchOut !== undefined ? { punchOut: action.punchOut } : {}),
+      }
 
     case 'SET_MASTER_VOLUME':
       return { ...project, masterVolume: Math.max(0, Math.min(1, action.volume)) }
@@ -911,6 +1035,10 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
 
     case 'SET_CROSSFADER':
       return { ...project, crossfaderValue: Math.max(0, Math.min(1, action.value)) }
+
+    // The shape of the fade (lib/crossfader.ts).
+    case 'SET_CROSSFADER_CURVE':
+      return { ...project, crossfaderCurve: action.curve }
 
     case 'SET_WAVEFORM_ZOOM':
       return { ...project, waveformZoom: Math.max(1, Math.min(8, action.zoom)) }

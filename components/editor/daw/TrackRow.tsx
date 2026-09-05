@@ -1,6 +1,8 @@
 'use client'
 
 import { useDisplaySettings } from '@/lib/display-settings'
+import { autoNumber, isNumbered, nextToRename } from '@/lib/rename'
+import { insertShape, simplify, describeSimplify, ENVELOPE_SHAPES, type ShapeId } from '@/lib/envelope-shapes'
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import { useAppear } from '@/components/ui/Appear'
 import { nearestBarBeat, meterSegments } from '@/lib/tempo-map'
@@ -593,7 +595,7 @@ function AutoLaneHeader({ lane, track, choices, onPick }: {
   choices?: AutomationLane[]
   onPick?: (laneId: string) => void
 }) {
-  const { dispatch } = useDaw()
+  const { dispatch, project } = useDaw()
 
   /**
    * Brae: "Have a button on device chain item tracks that opens the effect
@@ -640,6 +642,42 @@ function AutoLaneHeader({ lane, track, choices, onPick }: {
           onMouseLeave={ev => { (ev.currentTarget as HTMLElement).style.color = 'var(--text-muted)' }}
         ><SlidersHorizontal size={10} /></button>
       )}
+      {/* Insert Shape (lib/envelope-shapes.ts): a known shape into the span you
+          are looping over, or the whole lane when nothing is looped. Drawing a
+          clean four-bar sine by hand is impossible and a rough one is
+          pointless, so a shape you can ask for is worth having. */}
+      <select
+        data-help-id="insert-shape"
+        aria-label="Insert shape"
+        value=""
+        title="Insert a shape across the song loop — or the whole lane when nothing is looped. What is outside the span is left alone."
+        onChange={e => {
+          const shape = e.target.value as ShapeId
+          if (!shape) return
+          e.target.value = ''
+          const from = project.loopEnabled ? project.loopStart : 0
+          const to = project.loopEnabled ? project.loopEnd : Math.max(16, ...lane.points.map(p => p.beat))
+          dispatch({ type: 'UPDATE_AUTOMATION_LANE', laneId: lane.id, patch: {
+            points: insertShape(lane.points, from, to, shape, () => crypto.randomUUID()),
+          } })
+        }}
+        style={{ width: 18, fontSize: 9, background: 'transparent', border: '1px solid var(--border)', borderRadius: 2, color: 'var(--text-muted)', cursor: 'pointer', padding: 0, flexShrink: 0 }}
+      >
+        <option value="">∿</option>
+        {ENVELOPE_SHAPES.map(sh => <option key={sh.id} value={sh.id} title={sh.hint}>{sh.label}</option>)}
+      </select>
+      {/* Simplify: a recorded gesture arrives as sixty points that read as a
+          line — worth having in the take, unbearable to edit. */}
+      <button
+        data-help-id="simplify-envelope"
+        onClick={() => {
+          const next = simplify(lane.points)
+          if (next.length < lane.points.length) dispatch({ type: 'UPDATE_AUTOMATION_LANE', laneId: lane.id, patch: { points: next } })
+        }}
+        disabled={simplify(lane.points).length >= lane.points.length}
+        title={describeSimplify(lane.points.length, simplify(lane.points).length)}
+        style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: '1px solid var(--border)', borderRadius: 2, color: 'var(--text-muted)', cursor: 'pointer', fontSize: 9, padding: 0, flexShrink: 0 }}
+      >⌁</button>
       <button onClick={() => dispatch({ type: 'CLEAR_AUTOMATION_LANE', laneId: lane.id })} title="Clear" style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: '1px solid var(--border)', borderRadius: 2, color: 'var(--text-muted)', cursor: 'pointer', fontSize: 9, padding: 0, flexShrink: 0 }}><Eraser size={10} /></button>
       <button onClick={() => dispatch({ type: 'REMOVE_AUTOMATION_LANE', laneId: lane.id })} title="Remove lane" style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: '1px solid var(--border)', borderRadius: 2, color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: 0, flexShrink: 0 }}><X size={11} /></button>
     </div>
@@ -721,6 +759,47 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   const [editing,    setEditing]    = useState(false)
   const [draft,      setDraft]      = useState(track.name)
   const cancelRenameRef = useRef(false)
+  // ── Renaming a run of tracks (lib/rename.ts) ────────────────────────────────
+  //
+  // ⌘R opens this track's name; Tab commits it and opens the next one. `#` in
+  // the name is the auto-number, so "Gtr #" down a run gives Gtr 1, Gtr 2, …
+  // The counter is per-run and resets when the run ends (blur, Enter, Escape).
+  const renameRunRef = useRef(0)
+  const applyName = (name: string) => {
+    const trimmed = name.trim()
+    if (!trimmed) return
+    const n = isNumbered(trimmed) ? (renameRunRef.current += 1) : 0
+    dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: n ? autoNumber(trimmed, n) : trimmed } })
+  }
+  const commitRename = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') { cancelRenameRef.current = true; setEditing(false); renameRunRef.current = 0; return }
+    if (e.key === 'Enter') { applyName(draft); setEditing(false); renameRunRef.current = 0; return }
+    if (e.key === 'Tab') {
+      // ⚠️ preventDefault, or focus walks out of the studio entirely — the one
+      // thing a rename run must not do halfway through.
+      e.preventDefault()
+      applyName(draft)
+      cancelRenameRef.current = true      // the blur that follows must not write again
+      setEditing(false)
+      const order = project.tracks.map(t => t.id)
+      const next = nextToRename(order, track.id)
+      // The run's counter travels with the event, so the next row carries on
+      // from where this one got to rather than starting again at 1.
+      if (next) window.dispatchEvent(new CustomEvent('100lights:rename-track', { detail: { trackId: next, draft, run: renameRunRef.current } }))
+      else renameRunRef.current = 0
+    }
+  }
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ trackId: string; draft?: string; run?: number }>).detail
+      if (d?.trackId !== track.id) return
+      renameRunRef.current = d.run ?? 0
+      setDraft(d.draft ?? track.name)
+      setEditing(true)
+    }
+    window.addEventListener('100lights:rename-track', on)
+    return () => window.removeEventListener('100lights:rename-track', on)
+  }, [track.id, track.name])
   const [croppingClipId, setCroppingClipId] = useState<string | null>(null)
   const [rollTall, setRollTall] = useState(false)  // expanded piano roll fills most of the viewport
   const rollResize = useResizable({ key: 'piano-roll', initial: 260, min: 150, max: 760, axis: 'y' })
@@ -1252,8 +1331,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             <span style={{ fontSize: 8, color: 'var(--text-muted)', flexShrink: 0 }}>▤</span>
             {editing ? (
               <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
-                onBlur={() => { if (!cancelRenameRef.current) dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); cancelRenameRef.current = false; setEditing(false) }}
-                onKeyDown={e => { if (e.key === 'Enter') { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); setEditing(false) } else if (e.key === 'Escape') { cancelRenameRef.current = true; setEditing(false) } e.stopPropagation() }}
+                onBlur={() => { if (!cancelRenameRef.current) applyName(draft); cancelRenameRef.current = false; setEditing(false); renameRunRef.current = 0 }}
+                onKeyDown={e => { commitRename(e); e.stopPropagation() }}
                 style={{ flex: 1, fontSize: 11, background: 'var(--bg-base)', border: '1px solid var(--accent)', color: 'var(--text-primary)', borderRadius: 3, padding: '1px 4px', outline: 'none', minWidth: 0 }} />
             ) : (
               <span onDoubleClick={() => { setEditing(true); setDraft(track.name) }} style={{ flex: 1, fontSize: 11, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', userSelect: 'none' }}>
@@ -1381,8 +1460,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               {trackNumber != null && <span data-help-id="track-number" title={`Track ${trackNumber}`} style={{ fontSize: 8, fontWeight: 700, color: 'var(--text-muted)', minWidth: 12, textAlign: 'right', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{trackNumber}</span>}
             {editing ? (
               <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
-                onBlur={() => { if (!cancelRenameRef.current) dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); cancelRenameRef.current = false; setEditing(false) }}
-                onKeyDown={e => { if (e.key === 'Enter') { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); setEditing(false) } else if (e.key === 'Escape') { cancelRenameRef.current = true; setEditing(false) } e.stopPropagation() }}
+                onBlur={() => { if (!cancelRenameRef.current) applyName(draft); cancelRenameRef.current = false; setEditing(false); renameRunRef.current = 0 }}
+                onKeyDown={e => { commitRename(e); e.stopPropagation() }}
                 style={{ flex: 1, fontSize: 11, background: 'var(--bg-base)', border: '1px solid var(--accent)', color: 'var(--text-primary)', borderRadius: 3, padding: '1px 4px', outline: 'none', minWidth: 0 }}
               />
             ) : (
@@ -1579,6 +1658,18 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                 <span>Flatten to Audio</span>
               </button>
             )}
+            {/* Bounce (lib/bounce.ts). Beside Freeze on purpose — they look
+                alike and are not: freeze is a cache that thaws back, a bounce is
+                audio you can then cut and warp. */}
+            <button data-help-id="bounce-track"
+              onClick={() => { window.dispatchEvent(new CustomEvent('100lights:bounce-track', { detail: { trackId: track.id, what: 'newTrack' } })); setTrackCtxMenu(null) }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: 'var(--text-secondary)', background: 'transparent', border: 'none', cursor: 'pointer' }}
+              onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
+              onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
+            >
+              <span style={{ width: 14, textAlign: 'center' }}>⤓</span>
+              <span>Bounce to New Track</span>
+            </button>
             <button onClick={() => { dispatch({ type: 'SET_TRACK_FROZEN', trackId: track.id, frozen: !frozen }); setTrackCtxMenu(null) }}
               style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: frozen ? '#60a5fa' : 'var(--text-secondary)', background: 'transparent', border: 'none', cursor: 'pointer' }}
               onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}

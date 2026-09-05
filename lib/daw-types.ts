@@ -3,6 +3,9 @@
 import type { FMPatch, FMAlgorithm, FMOperator } from './fm-synth'
 import type { WavetablePatch } from './wavetable-synth'
 import type { MidiPreset } from './midi-presets'   // type-only — no runtime cycle
+import type { FollowSettings } from './follow-actions'   // type-only, as above
+import type { CrossfaderCurve } from './crossfader'      // type-only, as above
+import type { RecordGrid } from './record-quantize'      // type-only, as above
 
 // Re-exported synth engine patch types, used as instrument params
 export type Fm4OpInstrumentParams     = FMPatch
@@ -882,6 +885,8 @@ export interface AudioClip {
   legatoLaunch?: boolean
   velocityAmount?: number
   followAction?: FollowAction
+  /** Two follow actions with a chance each, and when they fire (lib/follow-actions.ts). */
+  follow?: FollowSettings
   followActionTime?: number  // beats after which follow action fires
 }
 
@@ -1058,6 +1063,8 @@ export interface MidiClip {
   legatoLaunch?: boolean
   velocityAmount?: number
   followAction?: FollowAction
+  /** Two follow actions with a chance each, and when they fire (lib/follow-actions.ts). */
+  follow?: FollowSettings
   followActionTime?: number
 }
 
@@ -1127,6 +1134,16 @@ export interface DawProject {
   loopStart: number
   loopEnd: number
   loopEnabled: boolean
+  /** Wait for the loop brace before the recorder starts (lib/punch.ts). */
+  punchIn?: boolean
+  /** Stop the recorder at the end of the loop brace. */
+  punchOut?: boolean
+  /** Grid that recorded notes land on as they are played (lib/record-quantize.ts).
+   *  Absent = none: the take keeps its own timing. */
+  recordQuantize?: RecordGrid
+  /** Global Quantization: when a session slot names none of its own, this is
+   *  when its launch lands. Absent = the bar. */
+  launchQuantization?: LaunchQuantization
   masterVolume: number
   automationLanes: AutomationLane[]
   /** LFOs on tracks, driving parameters every tick (see Modulator). */
@@ -1141,6 +1158,8 @@ export interface DawProject {
   returnTracks: ReturnTrack[]
   takeLanes: TakeLane[]
   crossfaderValue: number   // 0–1 (0=A, 0.5=center, 1=B)
+  /** The shape of the crossfade (lib/crossfader.ts). Absent = equal power. */
+  crossfaderCurve?: CrossfaderCurve
   waveformZoom: number      // 1–8 vertical zoom multiplier for arrangement waveforms
   swing: number             // 0–1 (0 = straight, 0.5 = full swing)
   cueMarkers: CueMarker[]

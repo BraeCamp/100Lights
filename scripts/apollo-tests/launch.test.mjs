@@ -10,6 +10,7 @@ import { importTs } from '../lib/ts-import.mjs'
 const {
   LAUNCH_MODES, DEFAULT_LAUNCH_MODE, LAUNCH_MODE_LABEL, modeOf, onPress, onRelease, repeats, repeatBeats,
   velocityGain, legatoOffset, describeLaunch,
+  LAUNCH_QUANTIZATIONS, DEFAULT_LAUNCH_QUANTIZATION, launchQuantLabel, launchQuantShort,
 } = await importTs('lib/launch.ts')
 
 let passed = 0
@@ -99,6 +100,33 @@ ok('the settings read back in a line', () => {
   assert.equal(describeLaunch({ launchMode: 'repeat', velocityAmount: 0.5 }), 'Repeat, velocity 50%')
   assert.deepEqual(LAUNCH_MODES, ['trigger', 'gate', 'toggle', 'repeat'])
   assert.equal(LAUNCH_MODE_LABEL.gate, 'Gate')
+})
+
+console.log('\nglobal quantization')
+
+ok('every option has a distinct id, a label and a key', () => {
+  const ids = LAUNCH_QUANTIZATIONS.map(q => q.id)
+  assert.deepEqual(ids, ['none', 'beat', 'bar', '2bar', '4bar'])
+  assert.equal(new Set(LAUNCH_QUANTIZATIONS.map(q => q.key)).size, 5)
+  assert.ok(LAUNCH_QUANTIZATIONS.every(q => q.label.length > 0))
+})
+
+ok('the default is the bar — what the engine always hard-coded', () => {
+  // ⚠️ The slot menu offered "Use Global" from the start and there was no
+  // global; every such slot got this value from the engine and nothing could
+  // change it.
+  assert.equal(DEFAULT_LAUNCH_QUANTIZATION, 'bar')
+  assert.equal(launchQuantLabel(undefined), '1 Bar')
+})
+
+ok('the short form drops the parenthesis, for a control bar with no room', () => {
+  assert.equal(launchQuantLabel('none'), 'None (instant)')
+  assert.equal(launchQuantShort('none'), 'None')
+  assert.equal(launchQuantShort('4bar'), '4 Bars')
+})
+
+ok('and a value nobody recognises still reads as something', () => {
+  assert.equal(launchQuantLabel('nonsense'), '1 Bar')
 })
 
 console.log(`\n${passed} passed`)

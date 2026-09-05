@@ -123,7 +123,8 @@ import {
   startRecording, preferredTranscriber, setPreferredTranscriber, micProblemMessage,
   type Recording, type StopResult, type MicReport,
 } from '@/lib/voice/record'
-import { planVoiceCalls, planVoiceCallsEach, type VoiceCall } from '@/lib/voice/execute-music'
+import { planVoiceCalls, planVoiceCallsEach, sessionClips, type VoiceCall } from '@/lib/voice/execute-music'
+import { getProposal, setProposal, type Proposal } from '@/lib/voice/proposal'
 import { recallCommand, rememberCommand, forgetKey, mergeShared, shareableTemplate } from '@/lib/voice/learned'
 import { recordCommand } from '@/lib/voice/voice-ledger'
 import { macroNames } from '@/lib/voice/macros'
@@ -156,6 +157,8 @@ import { LUMENS_NAME } from '@/lib/credit-tiers'
 import { requestNoteSelection } from '@/lib/note-selection'
 import { validMarkers, warpStraight, quantizeTransients } from '@/lib/warp'
 import { landClip, setImportSettings, describeImportSettings, type ImportSettings } from '@/lib/import-settings'
+import { setMetronomeSettings, type MetronomeSettings } from '@/lib/metronome'
+import { setArmMode } from '@/lib/automation-record'
 import { sliceToNewTrack, convertToNewTrack } from '@/lib/audio-to-track'
 import type { AudioClip as VoiceAudioClip } from '@/lib/daw-types'
 import {
@@ -263,6 +266,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
    * only the unfinished part carried out. See continuesPrevious / notAlreadyRun.
    */
   const lastRunRef = useRef<{ text: string; calls: VoiceCall[]; at: number } | null>(null)
+  /** Which playback-of-a-change is current, so an older one does not stop a newer. */
+  const playSpanRef = useRef(0)
   useEffect(pullSharedCommands, [])
   // ⚠️ Warm the assistant's function while nobody is speaking yet. A serverless
   // route that has sat idle is reloaded on its next request, and that reload
@@ -1144,6 +1149,28 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       else engine?.play?.()
       return
     }
+    // ── HEARING WHAT JUST CHANGED ─────────────────────────────────────────
+    //
+    // "How does that sound?" is only a fair question if the answer plays. A
+    // change gets played back where it HAPPENS, with a couple of bars of
+    // run-up: a filter easing down means nothing heard on its own, and
+    // starting at the top of the song to reach bar 9 wastes everybody's time
+    // (lib/voice/proposal.ts playbackSpan).
+    //
+    // The transport, so it is studio state and nothing about it is saved. It
+    // stops itself at the end of the span unless somebody has taken over.
+    if (act.type === 'PLAY_SPAN') {
+      const a = act as unknown as { start: number; end: number }
+      if (!engine) return
+      engine.stop?.()
+      engine.seek?.(Math.max(0, a.start))
+      engine.play?.()
+      const ms = Math.max(200, (a.end - a.start) * (60_000 / (projectRef.current?.tempo || 120)))
+      const mine = ++playSpanRef.current
+      window.setTimeout(() => { if (playSpanRef.current === mine && engine.isPlaying) engine.stop?.() }, ms)
+      return
+    }
+
     // The click is studio state, not part of the song - same as transport, and
     // for the same reason: nothing about it belongs in the saved document.
     if (act.type === 'METRONOME') { setMetronome?.((act as { on?: boolean }).on !== false); return }
@@ -1531,6 +1558,33 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       return
     }
 
+    // Automation Arm (lib/automation-record.ts) — a workspace mode, like the
+    // click: it is about how you are working, not about the song.
+    if (act.type === 'AUTOMATION_ARM') {
+      setArmMode((act as unknown as { mode: 'off' | 'touch' | 'latch' }).mode)
+      return
+    }
+
+    // Bounce (lib/bounce.ts) — the render lives in the editor, which owns the
+    // undo group and the notice, so this hands it over rather than doing it
+    // twice. Fire-and-forget: it takes real seconds and Light has already said
+    // what it is about to do.
+    if (act.type === 'BOUNCE') {
+      const a = act as unknown as { trackId: string; what: 'newTrack' | 'inPlace' }
+      window.dispatchEvent(new CustomEvent('100lights:bounce-track', { detail: { trackId: a.trackId, what: a.what } }))
+      return
+    }
+
+    // What the click sounds like and how often (lib/metronome.ts) — also a
+    // workspace setting: the click is never in the render, so a project that
+    // carried it would be carrying something nobody could hear.
+    if (act.type === 'METRONOME') {
+      const { type: _t, ...patch } = act as unknown as { type: string } & Partial<MetronomeSettings>
+      void _t
+      setMetronomeSettings(patch)
+      return
+    }
+
     // Already applied by the planner - the shorthand lives in a module, not in
     // the project, and there is nothing for the reducer to do with it.
     if (act.type === 'VOCAB') return
@@ -1562,6 +1616,20 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     dispatch(act as never)
   }, [view, setView, setOverlay, setSoundPanel, dispatch, engine, setMetronome, setExpandedStepSeqClipId, setExpandedPianoRollClipId,
       setShowPads, setApolloRack, setShowAppearance, setSelectedTrackId, runBalance, undo, redo])
+
+  /**
+   * Run a plan: its actions, and then whatever it left on the table.
+   *
+   * ⚠️ THE PROPOSAL HAS TO BE STORED SOMEWHERE THE NEXT SENTENCE CAN SEE IT,
+   * and there are eleven places a plan gets run. Every one of them goes
+   * through here so none of them can forget — a proposal dropped in one path
+   * would turn "a little bit less of that" back into a volume command,
+   * silently, only on that path (lib/voice/proposal.ts).
+   */
+  const runPlan = useCallback((plan: { actions: unknown[]; proposal?: Proposal | null }) => {
+    for (const a of plan.actions) runAction(a)
+    if (plan.proposal !== undefined) setProposal(plan.proposal)
+  }, [runAction])
 
   /**
    * Record a spoken take: count in, listen, and write down what was said.
@@ -1725,7 +1793,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         const plan = planVoiceCalls(pending.calls, projectRef.current, voiceCtx())
         if (plan.problem) { setProblem(plan.problem); return }
         beginUndoGroup?.(pending.label)
-        for (const a of plan.actions) runAction(a)
+        runPlan(plan)
         endUndoGroup?.()
         setSaid(plan.say)
         respond(plan.say)
@@ -1927,7 +1995,13 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // So "Bass body 1" reads as one target — a track and an item said
       // together, which is the most specific thing anybody can say and was the
       // one form the rules could not see.
-      clips: (project.arrangementClips ?? []).map(c => ({
+      // What is still under discussion, so "a little bit less of that" is a
+      // sentence at all (lib/voice/proposal.ts). Only its presence is passed:
+      // the change itself stays here.
+      proposal: getProposal() ? { word: getProposal()!.word } : null,
+      // Session slots are clips too, and naming one is the only way to talk
+      // about it — the grid has no timeline to point at (lib/voice/execute-music).
+      clips: [...(project.arrangementClips ?? []), ...sessionClips(project)].map(c => ({
         // The kind, so "reverse the lead" (MIDI) and "reverse the vocal
         // take" (audio) are told apart before anything is planned.
         id: c.id, name: c.name, trackId: c.trackId, kind: c.kind,
@@ -2030,7 +2104,17 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // about the pad intro?" — which the speaker was about to answer anyway.
     // So it waits, quietly, for up to STITCH_MS. If nothing follows, THEN it is
     // asked about, once, with the words repeated so a mishearing is visible.
-    if (!readable && !heldFragment.current && looksIncomplete(text)) {
+    // ⚠️ NOT WHILE A QUESTION IS WAITING. An answer IS a fragment — "more
+    // muffled", "the second one", "the bass clip" — so every one of them was
+    // held here for three seconds and then asked about ("I heard 'more
+    // muffled' — what would you like to do with it?"), while the question it
+    // answered sat on screen unanswered. The studio asked, stopped listening
+    // for the reply, and then asked what the reply meant. Anything said while
+    // a question is up belongs to that question first; the handler below reads
+    // it, and hands it on as a fresh command if it turns out not to be an
+    // answer after all.
+    const questionWaiting = pendingAsk !== null || !!pendingAsk2 || !!pendingOffer || !!pendingName || !!pendingDoRef.current || !!askingRef.current
+    if (!readable && !questionWaiting && !heldFragment.current && looksIncomplete(text)) {
       const at = Date.now()
       heldFragment.current = { text, at }
       setBusy(false)
@@ -2157,7 +2241,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           if (collectingRef.current) {
             collected.push({ text: seg.text, say: plan.say, calls: seg.reading.calls })
           } else {
-            for (const a of plan.actions) runAction(a)
+            runPlan(plan)
             ran.push(plan.say)
           }
         }
@@ -2264,7 +2348,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         const plan = planVoiceCalls(option.calls, project, voiceCtx())
         setBusy(false)
         if (plan.problem) { respond(plan.problem, 'problem'); return }
-        for (const a of plan.actions) runAction(a)
+        runPlan(plan)
         // The offer comes after the thing they asked for, never instead of it.
         if (offer) {
           setPendingOffer(offer)
@@ -2320,7 +2404,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         voiceCtx(),
       )
       if (plan.problem) { respond(plan.problem, 'problem'); return }
-      for (const a of plan.actions) runAction(a)
+      runPlan(plan)
       respond(plan.say)
       return
     }
@@ -2368,6 +2452,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         const step = name === 'undo' ? undo : redo
         const did = step?.()
         setBusy(false)
+        // Whatever was under discussion has just been taken back, so it is no
+        // longer on the table — "a bit less" after an undo must not quietly
+        // rebuild it (lib/voice/proposal.ts).
+        setProposal(null)
         // Reports what actually happened. Saying "Undone." over an empty stack
         // is the kind of small lie that teaches someone to stop trusting the
         // read-back, and the read-back is the whole safety story here.
@@ -2414,7 +2502,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       }
       if (!plan.problem) {
         const before = project
-        for (const a of plan.actions) runAction(a)
+        runPlan(plan)
         remember({
           said: text, heard: heardConfidence, by: 'local',
           matched: local.matched, understood: local.confidence,
@@ -2505,7 +2593,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       const before = project
       const plan = planVoiceCalls(learned.calls, project, voiceCtx())
       if (!plan.problem && !plan.ask && plan.actions.length) {
-        for (const a of plan.actions) runAction(a)
+        runPlan(plan)
         remember({
           said: text, heard: heardConfidence, by: 'learned',
           matched: 'learned', understood: 1,
@@ -2768,7 +2856,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
               return
             }
             if (!plan.problem && !plan.ask) {
-              for (const a of plan.actions) runAction(a)
+              runPlan(plan)
               setBusy(false)
               respond(plan.say)
               lastRunRef.current = { text, calls: local.calls, at: Date.now() }
@@ -2931,7 +3019,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         allCalls.push(...calls)
 
         if (badAt < 0) {
-          for (const pl of plans) for (const a of pl.actions) runAction(a)
+          for (const pl of plans) runPlan(pl)
           lastSay = plans.map(pl => pl.say).filter(Boolean).join(' ')
           ranCalls = calls.map(c => ({ name: c.name, input: c.input }))
           lastProblem = ''
@@ -3086,7 +3174,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       if (confidentEnough(local, heardConfidence) && !local.destructive) {
         const plan = planVoiceCalls(local.calls, project, voiceCtx())
         if (!plan.problem && plan.actions.length) {
-          for (const a of plan.actions) runAction(a)
+          runPlan(plan)
           lastAcceptedAt.current = Date.now()
           respond(`${plan.say} (the assistant is unreachable, so I used what I understood myself.)`)
           markFailed(timedOut ? 'assistant timeout' : 'assistant unreachable')
@@ -3436,7 +3524,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     for (const item of items) {
       const plan = planVoiceCalls(item.calls, project, voiceCtx())
       if (plan.problem) { failed.push(plan.problem); continue }
-      for (const a of plan.actions) runAction(a)
+      runPlan(plan)
       done++
     }
     respond(reportRun(done, failed))
@@ -3753,7 +3841,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
                   setPendingDo(null)
                   if (plan.problem) { setProblem(plan.problem); return }
                   beginUndoGroup?.(pendingDo.label)
-                  for (const a of plan.actions) runAction(a)
+                  runPlan(plan)
                   endUndoGroup?.()
                   setSaid(plan.say)
                 }}
@@ -3797,7 +3885,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
                     const plan = planVoiceCalls(choice.calls, project, voiceCtx())
                     setChoices(null)
                     if (plan.problem) { setProblem(plan.problem); return }
-                    for (const a of plan.actions) runAction(a)
+                    runPlan(plan)
                     setSaid(plan.say)
                   }}
                   style={choiceStyle(i === 0)}

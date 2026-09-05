@@ -14,7 +14,7 @@ import { CHECKOUT_LS_KEY } from '@/lib/apollo/checkout'
 import { installDawDiagnose, type DiagnoseEngine } from '@/lib/daw-diagnose'
 import { sessionCaptureToClips } from '@/lib/daw-session'
 import dynamic from 'next/dynamic'
-import type { DawView, EditTarget, DawProject, DawTrack, DawClip, AudioClip, ApolloInstrumentParams } from '@/lib/daw-types'
+import type { DawView, EditTarget, DawProject, DawTrack, DawClip, AudioClip, ApolloInstrumentParams, LaunchQuantization, AutomationLane } from '@/lib/daw-types'
 import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects, clipLockedBy, isAudioClip, isMidiClip } from '@/lib/daw-types'
 import { legacyToBar } from '@/lib/effect-bar'
 import type { DawAction } from '@/lib/daw-state'
@@ -60,6 +60,17 @@ import { DevicePopoutHost } from './daw/DeviceChain'
 import SoundLibraryPanel from './SoundLibrary'
 import { useRegisterCommands } from '@/lib/commands'
 import { resolveKey, releasedMomentary, MomentaryLatch, keysFor } from '@/lib/keymap'
+import { bounceSpan, clipsInSpan, bounceName, bouncedTrack, describeBounce, type BounceWhat } from '@/lib/bounce'
+import { historyRows, type HistoryRow } from '@/lib/undo-history'
+import { requestArrangement } from '@/lib/daw-view'
+import { laneSpecFor } from '@/lib/daw-effect-params'
+import { insertShape, simplify, describeSimplify, shapeLabel, type ShapeId } from '@/lib/envelope-shapes'
+import {
+  recordTargetOf, writeMove, latchTail, latchWouldClear, normalizeForLane,
+  describeRecorded, useArmMode, setArmMode, ARM_MODES, armLabel, type ArmMode,
+} from '@/lib/automation-record'
+import { LAUNCH_QUANTIZATIONS, launchQuantShort, DEFAULT_LAUNCH_QUANTIZATION } from '@/lib/launch'
+import { describeAction } from '@/lib/voice/transcript'
 import { useDetail, toggleDetail, detailLabel } from '@/lib/detail-area'
 import { useDisplaySettings, setDisplay } from '@/lib/display-settings'
 import { applyUiScale, stepUiScale } from '@/lib/ui-scale'
@@ -128,6 +139,8 @@ const ArrangementMixer = dynamic(() => import('./daw/ArrangementMixer'), { ssr: 
 const StatusBar = dynamic(() => import('./daw/StatusBar'), { ssr: false })
 const ClipViewWindow = dynamic(() => import('./daw/DetailArea').then(m => ({ default: m.ClipViewWindow })), { ssr: false })
 const PadInput = dynamic(() => import('./daw/PadInput'), { ssr: false })
+// Everything you have done, and a way back to any of it (lib/undo-history.ts).
+const UndoHistory = dynamic(() => import('./daw/UndoHistory'), { ssr: false })
 // Liveblocks only loads for saved projects — keeps collab out of the main editor chunk
 const CollabLayer = dynamic(() => import('./daw/CollabLayer'), { ssr: false })
 const DawMixSync = dynamic(() => import('./DawMixSync'), { ssr: false })   // cross-project audio links (live)
@@ -1390,6 +1403,13 @@ export default function AudioEditor(props: AudioEditorProps) {
     return eng && eng.isPlaying ? eng.currentBeat : null
   })
 
+  // Automation recording (lib/automation-record.ts). The mode lives in the
+  // workspace; refs so the dispatch wrapper reads it without re-creating.
+  const armMode = useArmMode()
+  const armRef = useRef<ArmMode>(armMode)
+  armRef.current = armMode
+  const recordAutomationRef = useRef<(t: { trackId: string; parameter: string; value: number }) => void>(() => {})
+
   const dispatch = useCallback((action: DawAction) => {
     // View-only collaborators: their room access is read-only server-side, so
     // local edits would silently diverge from the real project. Drop them here
@@ -1436,6 +1456,21 @@ export default function AudioEditor(props: AudioEditorProps) {
       }
     }
     rawDispatch(action)
+    // ── Automation recording (lib/automation-record.ts) ──────────────────────
+    //
+    // ⚠️ HERE, not at the controls. There are several ways to move a track's
+    // volume — the fader, the mixer strip, voice, a learned command — and
+    // several to change an effect parameter; a recorder wired to the fader
+    // would look like it worked until somebody used the mixer. This is the one
+    // place all of them pass through.
+    //
+    // Only while the transport is actually recording: an armed studio that
+    // wrote points every time you touched a knob with the transport stopped
+    // would fill lanes with things nobody performed.
+    if (armRef.current !== 'off' && engineRef.current?.isRecording && engineRef.current.isPlaying) {
+      const target = recordTargetOf(action as unknown as { type: string } & Record<string, unknown>)
+      if (target) recordAutomationRef.current(target)
+    }
     // The project's real content has arrived — cross-project links can resolve.
     if (action.type === 'LOAD_PROJECT') setProjectLoaded(true)
     // Suggestions stay local — never broadcast a proposal into the shared room.
@@ -1936,6 +1971,10 @@ export default function AudioEditor(props: AudioEditorProps) {
   useEffect(() => { collabPeersRef.current = collabPeers }, [collabPeers])
   // Collab lock: "X is editing this clip" notice, shown when an edit is blocked.
   const [lockNotice, setLockNotice] = useState<string | null>(null)
+  // What a bounce did, or why it could not. It says the bars and how many clips
+  // were parked, because a command that prints audio somewhere else has to tell
+  // you where it went (lib/bounce.ts).
+  const [bounceNotice, setBounceNotice] = useState<string | null>(null)
   const notifyLocked = useCallback((byName: string) => {
     setLockNotice(byName)
     window.setTimeout(() => setLockNotice(cur => cur === byName ? null : cur), 2600)
@@ -2295,11 +2334,17 @@ export default function AudioEditor(props: AudioEditorProps) {
   // The library key (⌘⌥B, Live's browser chord — `B` itself is Draw Mode's)
   // lives in lib/keymap.ts too.
   const [showPads,  setShowPads]  = useState(false)
+  // The undo stacks are refs (they must not re-render the studio on every
+  // edit), so the panel takes a SNAPSHOT: opening it reads them once, and each
+  // step re-reads them. A live view would need the stacks in state, which is
+  // the thing they are deliberately not.
+  const [historySnap, setHistorySnap] = useState<{ rows: HistoryRow[]; redoRows: HistoryRow[] } | null>(null)
   const [isSaving,  setIsSaving]  = useState(false)
   const [saveStatus, setSaveStatus] = useState<'saved' | 'error' | null>(null)
   const [saveError,  setSaveError]  = useState('')
   // The words a toast shows while it fades out are the words it was showing.
   const lockNoticeS = useSticky(lockNotice)
+  const bounceNoticeS = useSticky(bounceNotice)
   const syncMsgS = useSticky(syncMsg)
   const saveStatusS = useSticky(saveStatus === 'saved' || saveStatus === 'error' ? saveStatus : null)
   const [expandedPianoRollClipId, setExpandedPianoRollClipId] = useState<string | null>(null)
@@ -2522,35 +2567,53 @@ export default function AudioEditor(props: AudioEditorProps) {
   // its un-reverted value (seen on the real path: "undo" after "mute the pad
   // and mute the drums" un-muted the pad and left the drums muted). The
   // running state is stepped through the reducer between patches instead.
-  const doUndo = useCallback((): number => {
-    const taken = takeUndoGroup(historyRef.current)
-    // Reports whether it actually did anything. A caller that says "Undone."
-    // when the stack was empty is lying, and voice is the caller most likely to
-    // be believed without looking.
-    if (!taken.length) return 0
+  //
+  // ⚠️ `groups` IS NOT A CONVENIENCE. Calling this twice in one tick used to
+  // corrupt the redo stack: `cur` starts from projectRef.current, and that ref
+  // is only refreshed by an effect AFTER a render, so the second call in a tick
+  // began from the state before the first one. Every redo entry it wrote then
+  // remembered the same "before", and redoing any one of them restored ALL the
+  // undone edits at once. Nothing hit it while the only callers undid once (a
+  // grouped request comes off in a single call), and the Undo History panel —
+  // the first caller that walks back several steps — hit it immediately. So the
+  // walking happens INSIDE one call, with `cur` threaded through.
+  const doUndo = useCallback((groups = 1): number => {
     let cur = projectRef.current
-    for (const entry of taken) {
-      redoRef.current = [...redoRef.current.slice(-(UNDO_LIMIT - 1)), { before: cur, action: entry.action, group: entry.group, label: entry.label }]
-      const patchAction: DawAction = { type: 'PATCH_PROJECT', patch: computeRevertPatch(entry.before, cur, entry.action) }
-      rawDispatch(patchAction)
-      if (!isRemoteRef.current) broadcastRef.current?.(patchAction)
-      cur = undoReducer(cur, patchAction)
+    let done = 0
+    for (let g = 0; g < groups; g++) {
+      const taken = takeUndoGroup(historyRef.current)
+      // Reports whether it actually did anything. A caller that says "Undone."
+      // when the stack was empty is lying, and voice is the caller most likely
+      // to be believed without looking.
+      if (!taken.length) break
+      for (const entry of taken) {
+        redoRef.current = [...redoRef.current.slice(-(UNDO_LIMIT - 1)), { before: cur, action: entry.action, group: entry.group, label: entry.label }]
+        const patchAction: DawAction = { type: 'PATCH_PROJECT', patch: computeRevertPatch(entry.before, cur, entry.action) }
+        rawDispatch(patchAction)
+        if (!isRemoteRef.current) broadcastRef.current?.(patchAction)
+        cur = undoReducer(cur, patchAction)
+        done++
+      }
     }
-    return taken.length
+    return done
   }, [rawDispatch])
 
-  const doRedo = useCallback((): number => {
-    const taken = takeUndoGroup(redoRef.current)
-    if (!taken.length) return 0
+  const doRedo = useCallback((groups = 1): number => {
     let cur = projectRef.current
-    for (const entry of taken) {
-      historyRef.current = [...historyRef.current.slice(-(UNDO_LIMIT - 1)), { before: cur, action: entry.action, group: entry.group, label: entry.label }]
-      const patchAction: DawAction = { type: 'PATCH_PROJECT', patch: computeRevertPatch(entry.before, cur, entry.action) }
-      rawDispatch(patchAction)
-      if (!isRemoteRef.current) broadcastRef.current?.(patchAction)
-      cur = undoReducer(cur, patchAction)
+    let done = 0
+    for (let g = 0; g < groups; g++) {
+      const taken = takeUndoGroup(redoRef.current)
+      if (!taken.length) break
+      for (const entry of taken) {
+        historyRef.current = [...historyRef.current.slice(-(UNDO_LIMIT - 1)), { before: cur, action: entry.action, group: entry.group, label: entry.label }]
+        const patchAction: DawAction = { type: 'PATCH_PROJECT', patch: computeRevertPatch(entry.before, cur, entry.action) }
+        rawDispatch(patchAction)
+        if (!isRemoteRef.current) broadcastRef.current?.(patchAction)
+        cur = undoReducer(cur, patchAction)
+        done++
+      }
     }
-    return taken.length
+    return done
   }, [rawDispatch])
 
   const beginUndoGroup = useCallback((label?: string): string => {
@@ -2559,6 +2622,174 @@ export default function AudioEditor(props: AudioEditorProps) {
     return id
   }, [])
   const endUndoGroup = useCallback(() => { undoGroupRef.current = null }, [])
+
+  // ── Automation recording (lib/automation-record.ts) ───────────────────────
+  //
+  // Called from the dispatch wrapper for every parameter move while the arm is
+  // on and the transport is recording. It finds the lane, or makes one — a
+  // control you have never automated should still record, and demanding that
+  // you create the lane first would make the feature useless exactly when you
+  // reach for it, which is mid-performance.
+  recordAutomationRef.current = (target) => {
+    const mode = armRef.current
+    const engine = engineRef.current
+    if (mode === 'off' || !engine) return
+    const project = projectRef.current
+    const beat = engine.currentBeat
+    const lane = project.automationLanes.find(l => l.trackId === target.trackId && l.parameter === target.parameter)
+    // No lane yet: make one whose units match the parameter, taking them from
+    // the same table the lane menu uses, so a recorded filter lane is 200–18000
+    // Hz and not 0–1 (which would set the cutoff to a fraction of a Hertz).
+    if (!lane) {
+      const track = project.tracks.find(t => t.id === target.trackId)
+      const opt = track ? laneSpecFor(track, target.parameter) : null
+      if (!opt) return
+      const fresh: AutomationLane = {
+        id: crypto.randomUUID(), trackId: target.trackId, parameter: target.parameter,
+        label: opt.label, min: opt.min, max: opt.max, defaultValue: opt.def,
+        points: writeMove([], beat, normalizeForLane(opt, target.value), () => crypto.randomUUID()),
+        expanded: true, ...(opt.curve ? { curve: opt.curve } : {}),
+      }
+      dispatch({ type: 'ADD_AUTOMATION_LANE', lane: fresh })
+      setNotice(describeRecorded(mode, opt.label, beat, project.timeSignatureNum, 0))
+      return
+    }
+    const v = normalizeForLane(lane, target.value)
+    const cleared = mode === 'latch' ? latchWouldClear(lane.points, beat) : 0
+    const points = mode === 'latch'
+      ? latchTail(lane.points, beat, v, () => crypto.randomUUID())
+      : writeMove(lane.points, beat, v, () => crypto.randomUUID())
+    // ⚠️ Recording puts the lane back IN CHARGE. Moving a control normally
+    // overrides its lane (you are taking manual control); recording is the
+    // opposite gesture — you are telling the lane what to say — so an
+    // overridden lane that gets recorded into has to come back on, or the
+    // points you just performed would be there and silent.
+    dispatch({ type: 'UPDATE_AUTOMATION_LANE', laneId: lane.id, patch: { points, overridden: false } })
+    // Latch destroys; touch does not. Only the destructive one speaks up.
+    if (cleared > 0) setNotice(describeRecorded(mode, lane.label, beat, project.timeSignatureNum, cleared))
+  }
+
+  // ── Insert Shape / Simplify across a track's lanes (lib/envelope-shapes.ts) ─
+  //
+  // The span is the song loop when there is one, else the whole lane — the same
+  // answer to "which part of the song" that every other time command gives.
+  const envSpan = useCallback((points: { beat: number }[]) => {
+    const p = projectRef.current
+    if (p.loopEnabled && p.loopEnd > p.loopStart) return { from: p.loopStart, to: p.loopEnd }
+    return { from: 0, to: Math.max(16, ...points.map(x => x.beat)) }
+  }, [])
+  const insertShapeInto = useCallback((trackId: string, shape: ShapeId) => {
+    const lanes = projectRef.current.automationLanes.filter(l => l.trackId === trackId)
+    // ⚠️ One lane, not all of them. Putting a sine into a track's volume AND
+    // its filter AND its pan because they were all open is not what anybody
+    // means by "insert a shape" — the first lane is the one on screen.
+    const lane = lanes[0]
+    if (!lane) return
+    const { from, to } = envSpan(lane.points)
+    dispatch({ type: 'UPDATE_AUTOMATION_LANE', laneId: lane.id, patch: {
+      points: insertShape(lane.points, from, to, shape, () => crypto.randomUUID()),
+    } })
+    setNotice(`${shapeLabel(shape)} into ${lane.label}, bars ${Math.floor(from / (projectRef.current.timeSignatureNum || 4)) + 1} to ${Math.ceil(to / (projectRef.current.timeSignatureNum || 4))}.`)
+  }, [dispatch, envSpan])
+  const simplifyLanes = useCallback((trackId: string) => {
+    const lanes = projectRef.current.automationLanes.filter(l => l.trackId === trackId)
+    let before = 0, after = 0
+    for (const lane of lanes) {
+      const next = simplify(lane.points)
+      before += lane.points.length
+      after += next.length
+      if (next.length < lane.points.length) dispatch({ type: 'UPDATE_AUTOMATION_LANE', laneId: lane.id, patch: { points: next } })
+    }
+    setNotice(describeSimplify(before, after))
+  }, [dispatch])
+
+  // ── Undo History (lib/undo-history.ts) ─────────────────────────────────────
+  //
+  // The rows say what a REQUEST was, not what its last action did — the group
+  // label when there is one, else the same sentence the voice transcript uses
+  // for that action, so the two never describe one edit two ways.
+  const readHistory = useCallback(() => {
+    const names = {
+      track: (id: string) => projectRef.current.tracks.find(t => t.id === id)?.name ?? 'a track',
+      clip: (id: string) => projectRef.current.arrangementClips.find(c => c.id === id)?.name ?? 'a clip',
+      beatsPerBar: projectRef.current.timeSignatureNum,
+    }
+    const describe = (a: unknown) => describeAction(a, names)
+    return {
+      rows: historyRows(historyRef.current, describe),
+      redoRows: historyRows(redoRef.current, describe),
+    }
+  }, [])
+  const openHistory = useCallback(() => setHistorySnap(readHistory()), [readHistory])
+  const stepHistory = useCallback((times: number, dir: 'undo' | 'redo') => {
+    // One call, `times` groups — see the warning on doUndo.
+    if (dir === 'undo') doUndo(times); else doRedo(times)
+    setHistorySnap(readHistory())
+  }, [doUndo, doRedo, readHistory])
+
+  // ── Bounce: a track's sound printed as audio (lib/bounce.ts) ───────────────
+  //
+  // The render is faster than real time and still takes seconds on a long
+  // track, so the whole thing is ONE undo group: a bounce that had to be undone
+  // three times — the clip, the track, the parked originals — would be worse
+  // than the mistake it was undoing.
+  const [bouncing, setBouncing] = useState<string | null>(null)
+  const setNotice = useCallback((msg: string) => {
+    setBounceNotice(msg)
+    window.setTimeout(() => setBounceNotice(n => (n === msg ? null : n)), 9000)
+  }, [])
+  const runBounce = useCallback(async (trackId: string, what: BounceWhat) => {
+    const project = projectRef.current
+    const source = project.tracks.find(t => t.id === trackId)
+    if (!source || bouncing) return
+    // The selected clips if any are on this track, else everything it plays.
+    const selected = [...selectedClipIdsRef.current].filter(id =>
+      project.arrangementClips.some(c => c.id === id && c.trackId === trackId))
+    const span = bounceSpan(project, trackId, selected)
+    if (!span) { setNotice(`"${source.name}" has nothing to bounce — it has no active clips.`); return }
+    const covered = clipsInSpan(project, trackId, span, selected)
+    const name = bounceName(source.name)
+    setBouncing(trackId)
+    try {
+      const { bounceTrackToLibrary } = await import('@/lib/bounce-render')
+      const { libraryId, durationSec } = await bounceTrackToLibrary(project, trackId, span, name)
+      const beats = Math.max(0.25, span.endBeat - span.startBeat)
+      beginUndoGroup(`Bounce ${source.name}`)
+      const targetId = what === 'newTrack' ? crypto.randomUUID() : trackId
+      if (what === 'newTrack') dispatch({ type: 'ADD_TRACK', id: targetId, name })
+      const clip = makeAudioClip(targetId, name, span.startBeat, beats, { libraryId, bufferDuration: durationSec })
+      dispatch({ type: 'ADD_CLIP', clip })
+      if (what === 'newTrack') {
+        // The mixer position comes with it, so the bounce sounds like the source
+        // rather than like the source at full volume (lib/bounce.ts).
+        const t = bouncedTrack(source, targetId, name)
+        dispatch({ type: 'UPDATE_TRACK', trackId: targetId, patch: { color: t.color, volume: t.volume, pan: t.pan, height: t.height, groupId: t.groupId, sendAmounts: t.sendAmounts, sendModes: t.sendModes, crossfader: t.crossfader } })
+        // Parked, not deleted: you can hear the difference and bring them back.
+        dispatch({ type: 'SET_CLIPS_ACTIVE', clipIds: covered.map(c => c.id), active: false })
+      } else {
+        for (const c of covered) dispatch({ type: 'REMOVE_CLIP', clipId: c.id })
+      }
+      endUndoGroup()
+      setNotice(describeBounce(what, source.name, span, project.timeSignatureNum, covered.length))
+    } catch (err) {
+      endUndoGroup()
+      setNotice(err instanceof Error ? err.message : 'The bounce failed.')
+    } finally {
+      setBouncing(null)
+    }
+  }, [bouncing, dispatch, beginUndoGroup, endUndoGroup, setNotice])
+
+  // The track menu's Bounce (TrackRow.tsx) — an event rather than a prop chain,
+  // for the same reason the desktop menu below uses one: the row is deep in the
+  // tree and the render lives here.
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ trackId: string; what: BounceWhat }>).detail
+      if (d?.trackId) void runBounceRef.current(d.trackId, d.what ?? 'newTrack')
+    }
+    window.addEventListener('100lights:bounce-track', on)
+    return () => window.removeEventListener('100lights:bounce-track', on)
+  }, [])
 
   // ── What the desktop menu bar and the global shortcuts reach ─────────────
   //
@@ -2599,6 +2830,14 @@ export default function AudioEditor(props: AudioEditorProps) {
   // The runner is re-pointed every render so it always sees fresh state.
   const keyLatchRef = useRef(new MomentaryLatch())
   const runKeyRef = useRef<(id: string, e: KeyboardEvent) => boolean>(() => false)
+  // ⌘B reaches the bouncer through a ref: runBounce is defined above the key
+  // runner but re-created on every render, and the runner is re-pointed each
+  // render too, so a direct call would be fine — the ref is here so the switch
+  // reads the same as its neighbours and cannot capture a stale closure.
+  const runBounceRef = useRef(runBounce)
+  runBounceRef.current = runBounce
+  const openHistoryRef = useRef(openHistory)
+  openHistoryRef.current = openHistory
   runKeyRef.current = (id, e) => {
     const engine = engineRef.current!
     switch (id) {
@@ -2615,9 +2854,48 @@ export default function AudioEditor(props: AudioEditorProps) {
       case 'transport.metronome':
         setMetronome(prev => { const next = !prev; engine.setMetronome(next); return next })
         return true
+      // Punch in / out (lib/punch.ts) — project state, so it goes through the
+      // reducer here rather than through the transport's record flow.
+      // Rename the selected track in place (lib/rename.ts) — Tab walks the run.
+      case 'track.rename': {
+        const id = selectedTrackIdRef.current
+        if (!id) return false
+        window.dispatchEvent(new CustomEvent('100lights:rename-track', { detail: { trackId: id } }))
+        return true
+      }
+      // Bounce the selected track (lib/bounce.ts). Nothing selected is not an
+      // error — it just has no track to print.
+      case 'track.bounce': {
+        const id = selectedTrackIdRef.current
+        if (!id) return false
+        void runBounceRef.current(id, 'newTrack')
+        return true
+      }
+      // The snap grid, from anywhere (Live's ⌘1…5). The arrangement owns the
+      // value; this asks it through the channel voice already uses, rather than
+      // lifting the state up for five keys.
+      case 'grid.off': case 'grid.16th': case 'grid.8th': case 'grid.beat': case 'grid.bar': {
+        const snap = ({ 'grid.off': 'off', 'grid.16th': '1/16', 'grid.8th': '1/8', 'grid.beat': 'beat', 'grid.bar': 'bar' } as const)[id as 'grid.off']
+        requestArrangement({ snap })
+        return true
+      }
+      // Global Quantization (lib/launch.ts) — when a session launch lands, for
+      // every slot that names none of its own.
+      case 'launch.none': case 'launch.beat': case 'launch.bar': case 'launch.2bar': case 'launch.4bar': {
+        const q = id.slice('launch.'.length) as LaunchQuantization
+        dispatch({ type: 'SET_LAUNCH_QUANTIZATION', quantization: q })
+        return true
+      }
+      case 'transport.punchIn':
+        dispatch({ type: 'SET_PUNCH', punchIn: !projectRef.current.punchIn })
+        return true
+      case 'transport.punchOut':
+        dispatch({ type: 'SET_PUNCH', punchOut: !projectRef.current.punchOut })
+        return true
       case 'transport.back': setPosition(Math.max(0, engine.currentBeat - 1)); return true
       case 'transport.forward': setPosition(engine.currentBeat + 1); return true
       case 'edit.undo': doUndo(); return true
+      case 'edit.history': openHistoryRef.current(); return true
       case 'edit.redo': doRedo(); return true
       case 'edit.deleteClip': {
         // The clip open in the piano roll is off-limits — pressing Delete
@@ -2822,6 +3100,19 @@ export default function AudioEditor(props: AudioEditorProps) {
   ])
 
   // ── Command palette (⌘K): existing audio actions only ────────
+  /**
+   * What span a time command works on: the song loop when one is set, else a
+   * bar at the playhead. Asking somebody to select a range before they can
+   * insert a bar would make the commonest case the slowest one.
+   */
+  const timeSpan = useCallback(() => {
+    const p = projectRef.current
+    if (p?.loopEnabled && (p.loopEnd ?? 0) > (p.loopStart ?? 0)) return { from: p.loopStart, to: p.loopEnd }
+    const bar = p?.timeSignatureNum || 4
+    const at = engineRef.current?.currentBeat ?? 0
+    return { from: at, to: at + bar }
+  }, [])
+
   useRegisterCommands([
     {
       id: 'audio.save', group: 'Audio', label: 'Save', keywords: 'cloud persist', shortcut: keysFor('file.save'),
@@ -2875,6 +3166,29 @@ export default function AudioEditor(props: AudioEditorProps) {
     { id: 'audio.import.autoWarpLong', group: 'Audio', label: importSettings.autoWarpLong ? 'Stop auto-warping long samples on import' : 'Auto-warp long samples on import',
       keywords: 'import long samples auto-warp auto warp song stem straight follow tempo land',
       run: () => setImportSettings({ autoWarpLong: !importSettings.autoWarpLong }) },
+    // Time commands across the whole song (lib/arrangement-time.ts). The span
+    // is the song loop when there is one, else a bar at the playhead.
+    { id: 'audio.time.insert', group: 'Arrangement', label: 'Insert silence — open a gap across every track',
+      keywords: 'insert silence time gap push everything later arrangement all tracks',
+      run: () => { const s = timeSpan(); dispatch({ type: 'ARRANGEMENT_TIME', op: 'insert', from: s.from, amount: s.to - s.from }) } },
+    { id: 'audio.time.delete', group: 'Arrangement', label: 'Delete time — take the span out and close the gap',
+      keywords: 'delete time remove span close gap cut arrangement all tracks',
+      run: () => { const s = timeSpan(); dispatch({ type: 'ARRANGEMENT_TIME', op: 'delete', from: s.from, to: s.to }) } },
+    { id: 'audio.time.duplicate', group: 'Arrangement', label: 'Duplicate time — the span happens twice',
+      keywords: 'duplicate time repeat span twice copy section arrangement all tracks',
+      run: () => { const s = timeSpan(); dispatch({ type: 'ARRANGEMENT_TIME', op: 'duplicate', from: s.from, to: s.to }) } },
+    // The shape of the crossfade (lib/crossfader.ts). Spelled out rather than
+    // mapped: the discoverability check reads these literally.
+    { id: 'audio.xfade.equalPower', group: 'Mixer', label: 'Crossfader curve: Equal power — two sources at the centre are as loud as one at an end',
+      keywords: 'crossfader curve equal power fade shape a b dj', run: () => dispatch({ type: 'SET_CROSSFADER_CURVE', curve: 'equal-power' }) },
+    { id: 'audio.xfade.linear', group: 'Mixer', label: 'Crossfader curve: Linear — the levels add, so the middle sounds louder',
+      keywords: 'crossfader curve linear constant gain fade shape a b', run: () => dispatch({ type: 'SET_CROSSFADER_CURVE', curve: 'linear' }) },
+    { id: 'audio.xfade.slowFade', group: 'Mixer', label: 'Crossfader curve: Slow fade — a long overlap between the sides',
+      keywords: 'crossfader curve slow fade long overlap shape a b', run: () => dispatch({ type: 'SET_CROSSFADER_CURVE', curve: 'slow-fade' }) },
+    { id: 'audio.xfade.fastCut', group: 'Mixer', label: 'Crossfader curve: Fast cut — the outgoing side drops away quickly',
+      keywords: 'crossfader curve fast cut sharp scratch shape a b', run: () => dispatch({ type: 'SET_CROSSFADER_CURVE', curve: 'fast-cut' }) },
+    { id: 'audio.xfade.hardCut', group: 'Mixer', label: 'Crossfader curve: Hard cut — a switch, not a fade',
+      keywords: 'crossfader curve hard cut switch shape a b', run: () => dispatch({ type: 'SET_CROSSFADER_CURVE', curve: 'hard-cut' }) },
     { id: 'audio.view.info', group: 'Audio', label: `${display.infoView ? 'Hide' : 'Show'} the status bar (Info View)`,
       keywords: 'info view status bar help text hover selection readout', shortcut: keysFor('view.info'),
       run: () => setDisplay({ infoView: !display.infoView }) },
@@ -3113,6 +3427,27 @@ export default function AudioEditor(props: AudioEditorProps) {
       shortcut: keysFor('edit.undo'), when: () => editable, run: doUndo },
     { id: 'audio.edit.redo', group: 'Edit', label: 'Redo', keywords: 'forward again reapply',
       shortcut: keysFor('edit.redo'), when: () => editable, run: doRedo },
+    // Global Quantization (lib/launch.ts). One per option: you pick a value,
+    // you do not step through five, and the labels are read literally by the
+    // discoverability check.
+    { id: 'audio.launch.none', group: 'Session', label: 'Global launch quantization: None — clips start the instant you press',
+      keywords: 'global quantization launch session clip start when lands none instant free', shortcut: keysFor('launch.none'),
+      run: () => dispatch({ type: 'SET_LAUNCH_QUANTIZATION', quantization: 'none' }) },
+    { id: 'audio.launch.beat', group: 'Session', label: 'Global launch quantization: 1 Beat — clips start on the next beat',
+      keywords: 'global quantization launch session clip start when lands beat', shortcut: keysFor('launch.beat'),
+      run: () => dispatch({ type: 'SET_LAUNCH_QUANTIZATION', quantization: 'beat' }) },
+    { id: 'audio.launch.bar', group: 'Session', label: 'Global launch quantization: 1 Bar — clips start on the next bar',
+      keywords: 'global quantization launch session clip start when lands bar default', shortcut: keysFor('launch.bar'),
+      run: () => dispatch({ type: 'SET_LAUNCH_QUANTIZATION', quantization: 'bar' }) },
+    { id: 'audio.launch.2bar', group: 'Session', label: 'Global launch quantization: 2 Bars — clips wait for a two-bar line',
+      keywords: 'global quantization launch session clip start when lands two bars', shortcut: keysFor('launch.2bar'),
+      run: () => dispatch({ type: 'SET_LAUNCH_QUANTIZATION', quantization: '2bar' }) },
+    { id: 'audio.launch.4bar', group: 'Session', label: 'Global launch quantization: 4 Bars — clips wait for a four-bar line',
+      keywords: 'global quantization launch session clip start when lands four bars phrase', shortcut: keysFor('launch.4bar'),
+      run: () => dispatch({ type: 'SET_LAUNCH_QUANTIZATION', quantization: '4bar' }) },
+    { id: 'audio.edit.history', group: 'Edit', label: 'Undo History — everything you have done, and a way back to any of it',
+      keywords: 'undo history list steps timeline back revert what did i do requests',
+      shortcut: keysFor('edit.history'), run: openHistory },
     { id: 'audio.edit.selectAll', group: 'Edit', label: 'Select every clip', keywords: 'all everything',
       run: () => setSelectedClipIds(new Set(projectRef.current.arrangementClips.map(c => c.id))) },
     { id: 'audio.edit.deselect', group: 'Edit', label: 'Deselect everything', keywords: 'none clear selection',
@@ -3233,18 +3568,24 @@ export default function AudioEditor(props: AudioEditorProps) {
 
     // ── Track ────────────────────────────────────────────────────────────────
     ...(paletteTrack ? [
+      { id: 'audio.track.bounce', group: 'Track', label: `Bounce ${paletteTrack.name} to a new track`,
+        keywords: 'bounce render print commit freeze flatten audio devices new track', shortcut: keysFor('track.bounce'), when: () => editable,
+        run: () => { void runBounce(paletteTrack.id, 'newTrack') } },
+      { id: 'audio.track.bounceInPlace', group: 'Track', label: `Bounce ${paletteTrack.name} in place`,
+        keywords: 'bounce in place render print commit flatten replace audio devices same track', when: () => editable,
+        run: () => { void runBounce(paletteTrack.id, 'inPlace') } },
       { id: 'audio.track.duplicate', group: 'Track', label: `Duplicate ${paletteTrack.name}`,
         keywords: 'copy clone track', when: () => editable,
         run: () => dispatch({ type: 'DUPLICATE_TRACK', trackId: paletteTrack.id, seed: crypto.randomUUID() }) },
       { id: 'audio.track.remove', group: 'Track', label: `Delete ${paletteTrack.name}`,
         keywords: 'remove track erase', when: () => editable,
         run: () => { if (window.confirm(`Delete "${paletteTrack.name}" and its clips?`)) dispatch({ type: 'REMOVE_TRACK', trackId: paletteTrack.id }) } },
-      { id: 'audio.track.rename', group: 'Track', label: `Rename ${paletteTrack.name}`,
-        keywords: 'name title label track', when: () => editable,
-        run: () => {
-          const name = window.prompt('Track name', paletteTrack.name)
-          if (name) dispatch({ type: 'UPDATE_TRACK', trackId: paletteTrack.id, patch: { name } })
-        } },
+      // ⚠️ The inline editor, not a prompt(). ⌘R and this have to be the same
+      // gesture or Tab-to-the-next-track exists in one of them and not the
+      // other — and a browser prompt cannot chain at all. `#` numbers the run.
+      { id: 'audio.track.rename', group: 'Track', label: `Rename ${paletteTrack.name} (Tab for the next track, # numbers them)`,
+        keywords: 'name title label track number numbering run', shortcut: keysFor('track.rename'), when: () => editable,
+        run: () => window.dispatchEvent(new CustomEvent('100lights:rename-track', { detail: { trackId: paletteTrack.id } })) },
       { id: 'audio.track.arm', group: 'Track', label: `${paletteTrack.armed ? 'Disarm' : 'Arm'} ${paletteTrack.name} for recording`,
         keywords: 'record input enable ready', when: () => editable,
         run: () => dispatch({ type: 'UPDATE_TRACK', trackId: paletteTrack.id, patch: { armed: !paletteTrack.armed } }) },
@@ -3324,6 +3665,39 @@ export default function AudioEditor(props: AudioEditorProps) {
         },
       }),
     }] : []),
+
+    // ── Insert Shape and Simplify (lib/envelope-shapes.ts) ───────────────────
+    //
+    // These act on the lanes of the selected track over the song loop (or the
+    // whole lane when nothing is looped) — the same span every other time
+    // command uses, so there is one answer to "which part of the song".
+    // Spelled out per shape: the discoverability check reads the labels.
+    ...(paletteTrack && project.automationLanes?.some(l => l.trackId === paletteTrack.id) ? [
+      { id: 'audio.env.sine', group: 'Track', label: `Insert shape: Sine into ${paletteTrack.name}'s automation`,
+        keywords: 'insert shape automation envelope lane sine wave lfo curve smooth', when: () => editable,
+        run: () => insertShapeInto(paletteTrack.id, 'sine') },
+      { id: 'audio.env.triangle', group: 'Track', label: `Insert shape: Triangle into ${paletteTrack.name}'s automation`,
+        keywords: 'insert shape automation envelope lane triangle curve even', when: () => editable,
+        run: () => insertShapeInto(paletteTrack.id, 'triangle') },
+      { id: 'audio.env.saw', group: 'Track', label: `Insert shape: Saw into ${paletteTrack.name}'s automation`,
+        keywords: 'insert shape automation envelope lane saw ramp build reset', when: () => editable,
+        run: () => insertShapeInto(paletteTrack.id, 'saw') },
+      { id: 'audio.env.square', group: 'Track', label: `Insert shape: Square into ${paletteTrack.name}'s automation`,
+        keywords: 'insert shape automation envelope lane square gate on off step', when: () => editable,
+        run: () => insertShapeInto(paletteTrack.id, 'square') },
+      { id: 'audio.env.rampUp', group: 'Track', label: `Insert shape: Ramp up into ${paletteTrack.name}'s automation`,
+        keywords: 'insert shape automation envelope lane ramp up rise line', when: () => editable,
+        run: () => insertShapeInto(paletteTrack.id, 'rampUp') },
+      { id: 'audio.env.rampDown', group: 'Track', label: `Insert shape: Ramp down into ${paletteTrack.name}'s automation`,
+        keywords: 'insert shape automation envelope lane ramp down fall line', when: () => editable,
+        run: () => insertShapeInto(paletteTrack.id, 'rampDown') },
+      { id: 'audio.env.adsr', group: 'Track', label: `Insert shape: ADSR into ${paletteTrack.name}'s automation`,
+        keywords: 'insert shape automation envelope lane adsr attack decay sustain release', when: () => editable,
+        run: () => insertShapeInto(paletteTrack.id, 'adsr') },
+      { id: 'audio.env.simplify', group: 'Track', label: `Simplify envelope — fewest points that draw ${paletteTrack.name}'s same shape`,
+        keywords: 'simplify envelope automation points reduce tidy clean recorded gesture', when: () => editable,
+        run: () => simplifyLanes(paletteTrack.id) },
+    ] : []),
 
     // Importing audio was drag-and-drop ONLY — there was no button, no menu item
     // and no file picker anywhere in the studio. If you didn't happen to try
@@ -4117,6 +4491,27 @@ export default function AudioEditor(props: AudioEditorProps) {
             border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', whiteSpace: 'nowrap',
           }}>Discard</button>
         </div>
+      )}</Appear>
+
+      {/* Undo History (lib/undo-history.ts) */}
+      {historySnap && (
+        <UndoHistory
+          rows={historySnap.rows}
+          redoRows={historySnap.redoRows}
+          onUndo={n => stepHistory(n, 'undo')}
+          onRedo={n => stepHistory(n, 'redo')}
+          onClose={() => setHistorySnap(null)}
+        />
+      )}
+
+      {/* What the bounce did */}
+      <Appear show={!!bounceNotice} kind="rise">{cls => (
+        <div role="status" className={`${cls} appear-centered`} style={{
+          position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 1200,
+          display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: 12,
+          background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)',
+          fontSize: 12.5, fontWeight: 500, boxShadow: '0 8px 30px rgba(0,0,0,0.5)', maxWidth: 460, textAlign: 'center',
+        }}>{bounceNoticeS}</div>
       )}</Appear>
 
       {/* Collab lock notice */}

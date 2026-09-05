@@ -1,17 +1,30 @@
-# Apollo (Helios engine) regression suite — pure-Node worklet harness, no
-# browser. Runs the smoke test, the 115-check FX/filter A/B audit, and the
-# completion audit on every push that touches the engine or its libraries,
-# plus a repo-wide typecheck.
+# The studio's regression suite — pure-Node, no browser. Runs the Apollo smoke
+# test, the FX/filter A/B audit, the completion audit and every lib test in the
+# `test:apollo` chain, plus a repo-wide typecheck.
+#
+# ⚠️ THE PATH FILTER USED TO BE APOLLO-ONLY, and the chain had long since grown
+# past that: tests for the note editor, the warp modes, the session view, the
+# voice rules and the reducer all ran only if a commit happened to touch
+# `scripts/apollo-tests/` as well. Two commits went red for a fault the chain
+# catches in a second, and two more changed `lib/` and `components/` and were
+# never tested at all. What the suite covers and what triggers it now match.
 name: apollo-tests
 
 on:
   push:
     paths:
+      # The engine and its worklet.
       - 'public/apollo/**'
       - 'lib/apollo/**'
       - 'components/apps/apollo/**'
       - 'components/apps/Apollo.tsx'
-      - 'scripts/apollo-tests/**'
+      # Everything else the chain actually tests.
+      - 'lib/**'
+      - 'components/**'
+      - 'app/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'tsconfig.json'
       - '.github/workflows/apollo-tests.yml'
   workflow_dispatch:
 

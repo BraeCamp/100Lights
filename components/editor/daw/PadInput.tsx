@@ -8,6 +8,7 @@ import { TbMetronome } from 'react-icons/tb'
 import { useDaw, makeAudioClip, makeMidiClip } from '@/lib/daw-state'
 import { defaultReverb, defaultDelay, defaultFilter, defaultEq3, defaultCompressor, type EffectType } from '@/lib/daw-types'
 import { playInstrumentNote } from '@/lib/daw-instruments'
+import { snapRecorded, recordGridLabel, RECORD_GRIDS, DEFAULT_RECORD_GRID, type RecordGrid } from '@/lib/record-quantize'
 import { libraryGetAll } from '@/lib/sound-library'
 import type { LibraryEntry } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
@@ -872,12 +873,16 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
   const [padRecording,  setPadRecording]  = useState(false)
   const [countdown,     setCountdown]     = useState<number | null>(null)
   const countdownIvRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const [quantizeEnabled, setQuantizeEnabled] = useState(false)
   const [midiDevices, setMidiDevices] = useState<string[]>([])
   const [captureCount, setCaptureCount] = useState(() => _midiCapture.length)
-  const [quantizeGrid,    setQuantizeGrid]    = useState<'1/1'|'1/2'|'1/4'|'1/8'|'1/16'>('1/8')
-  const quantizeEnabledRef = useRef(false)
-  const quantizeGridRef    = useRef<'1/1'|'1/2'|'1/4'|'1/8'|'1/16'>('1/8')
+  // ⚠️ The panel used to keep its own quantize-as-you-play here, which meant the
+  // studio had TWO settings doing one job — this one, and nothing anywhere else.
+  // It now reads and writes the project's Record Quantization
+  // (lib/record-quantize.ts), so the pad panel, the record setup box, ⌘K and
+  // Light are all the same switch. Its 1/2 and 1/1 came with it.
+  const recordGridId: RecordGrid = project.recordQuantize ?? DEFAULT_RECORD_GRID
+  // Q switches back to the grid you last used, not to a default you never picked.
+  const lastGridRef = useRef<RecordGrid>('eighth')
   const [winSize,      setWinSize]      = useState<{ w: number; h: number | null }>({ w: 520, h: null })
   const [pos, setPos] = useState(() => ({
     x: typeof window !== 'undefined' ? Math.max(0, window.innerWidth  / 2 - 260) : 200,
@@ -905,10 +910,10 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
   useEffect(() => () => { if (countdownIvRef.current) clearInterval(countdownIvRef.current) }, [])
   const projectRef = useRef(project)
   useEffect(() => { projectRef.current = project }, [project])
+  useEffect(() => { if (recordGridId !== 'none') lastGridRef.current = recordGridId }, [recordGridId])
   useEffect(() => { padsRef.current           = pads           }, [pads])
   useEffect(() => { tabRef.current            = tab            }, [tab])
   useEffect(() => { remapIdRef.current        = remapId        }, [remapId])
-  useEffect(() => { quantizeEnabledRef.current = quantizeEnabled }, [quantizeEnabled])
 
   // While the pad window is active, every keystroke is potential performance
   // input — global single-key shortcuts (like H for help) check this flag.
@@ -936,7 +941,6 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
     })
     return () => { cancelled = true; unsubNote?.(); unsubDev?.() }
   }, [])
-  useEffect(() => { quantizeGridRef.current    = quantizeGrid    }, [quantizeGrid])
 
   const track      = project.tracks.find(t => t.id === trackId)
   const instrument = track?.instrument
@@ -1113,10 +1117,9 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
 
     if (padRecording && engine.isPlaying) {
       const pad = padsRef.current.find(p => p.pitch === pitch)
-      const QBEATS: Record<string, number> = { '1/1': 4, '1/2': 2, '1/4': 1, '1/8': 0.5, '1/16': 0.25 }
-      const rawBeat = engine.currentBeat
-      const g = QBEATS[quantizeGridRef.current] ?? 1
-      const beat = quantizeEnabledRef.current ? Math.round(rawBeat / g) * g : rawBeat
+      // Record Quantization (lib/record-quantize.ts) — the one setting, shared
+      // with the record setup box, ⌘K and Light.
+      const beat = snapRecorded(engine.currentBeat, projectRef.current.recordQuantize)
       noteStarts.current.set(pitch, { beat, sounds: pad?.customSounds ?? [], velocity })
     }
   }, [instrument, engine, padRecording])
@@ -1183,7 +1186,11 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
     // piano roll can edit afterwards. Sample pads keep the audio-bounce below.
     if (sounds.length === 0) {
       const target = getOrCreateMidiClip(started.beat)
-      const rel = started.beat - target.startBeat
+      // Record Quantization (lib/record-quantize.ts) — the note lands on the
+      // grid as it is played, keeping the length it was held for. Snapped
+      // WITHIN the clip: a note played a hair before a bar line stays in the
+      // clip it was played into rather than jumping to the next one.
+      const rel = snapRecorded(started.beat - target.startBeat, projectRef.current.recordQuantize)
       const durationBeats = Math.max(0.125, engine.currentBeat - started.beat)
       const note: MidiNote = {
         id: crypto.randomUUID(),
@@ -1228,6 +1235,15 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
     pruneCapture()
     if (_midiCapture.length === 0) return
     const bar = projectRef.current.timeSignatureNum || 4
+    // Record Quantization (lib/record-quantize.ts): the take lands on the grid
+    // as it is played. Only the starts move — the lengths are the part of a
+    // performance that still reads as playing once the timing is gone.
+    const grid = projectRef.current.recordQuantize
+    for (const n of _midiCapture) {
+      const snapped = snapRecorded(n.startBeat, grid)
+      n.endBeat = snapped + (n.endBeat - n.startBeat)
+      n.startBeat = snapped
+    }
     const minStart = Math.min(..._midiCapture.map(n => n.startBeat))
     const maxEnd   = Math.max(..._midiCapture.map(n => n.endBeat))
     const clipStart = Math.floor(minStart / bar) * bar
@@ -1416,20 +1432,25 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
             : <span style={{ fontSize: 10, color: C.muted }}>click to activate</span>
           }
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5 }}>
-            {/* Quantize */}
+            {/* Record Quantization — the project's, not a second copy of it.
+                Q switches it on and off; the grids are Live's list plus the two
+                this panel always had (lib/record-quantize.ts). */}
             <div style={{ display: 'flex', gap: 2, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
               <button
-                onClick={() => setQuantizeEnabled(v => !v)}
-                title="Quantize note starts to grid"
-                style={{ padding: '2px 7px', borderRadius: 4, fontSize: 9, fontWeight: 800, border: `1px solid ${quantizeEnabled ? 'var(--accent)' : C.border}`, background: quantizeEnabled ? 'rgb(var(--accent-rgb) / 0.12)' : 'transparent', color: quantizeEnabled ? 'var(--accent-light)' : C.muted, cursor: 'pointer', letterSpacing: '0.04em' }}>
+                data-help-id="pad-record-quantize"
+                aria-pressed={recordGridId !== 'none'}
+                onClick={() => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: recordGridId === 'none' ? lastGridRef.current : 'none' })}
+                title={`Land notes on the grid as you play them. Only the starts move — the lengths stay as you hold them. Now: ${recordGridLabel(recordGridId)}.`}
+                style={{ padding: '2px 7px', borderRadius: 4, fontSize: 9, fontWeight: 800, border: `1px solid ${recordGridId !== 'none' ? 'var(--accent)' : C.border}`, background: recordGridId !== 'none' ? 'rgb(var(--accent-rgb) / 0.12)' : 'transparent', color: recordGridId !== 'none' ? 'var(--accent-light)' : C.muted, cursor: 'pointer', letterSpacing: '0.04em' }}>
                 Q
               </button>
-              {quantizeEnabled && (
+              {recordGridId !== 'none' && (
                 <div style={{ display: 'flex', gap: 2 }}>
-                  {(['1/16', '1/8', '1/4', '1/2', '1/1'] as const).map(g => (
-                    <button key={g} onClick={() => setQuantizeGrid(g)}
-                      style={{ padding: '2px 5px', borderRadius: 3, fontSize: 8, fontWeight: 700, border: `1px solid ${quantizeGrid === g ? 'var(--accent)' : '#222'}`, background: quantizeGrid === g ? 'rgb(var(--accent-rgb) / 0.15)' : '#111', color: quantizeGrid === g ? 'var(--accent-light)' : 'var(--text-muted)', cursor: 'pointer' }}>
-                      {g}
+                  {RECORD_GRIDS.filter(g => g.id !== 'none').map(g => (
+                    <button key={g.id} onClick={() => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: g.id })}
+                      title={g.both ? 'Whichever of the straight or triplet line is nearer' : undefined}
+                      style={{ padding: '2px 5px', borderRadius: 3, fontSize: 8, fontWeight: 700, border: `1px solid ${recordGridId === g.id ? 'var(--accent)' : '#222'}`, background: recordGridId === g.id ? 'rgb(var(--accent-rgb) / 0.15)' : '#111', color: recordGridId === g.id ? 'var(--accent-light)' : 'var(--text-muted)', cursor: 'pointer' }}>
+                      {g.label}
                     </button>
                   ))}
                 </div>

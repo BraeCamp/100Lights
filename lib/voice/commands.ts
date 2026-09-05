@@ -50,6 +50,8 @@ import { parseFilter } from '../find-notes'
 import { parseLoopLength } from '../clip-time'
 import { parseTrackAddress } from '../track-address'
 import { viewOf, snapOf, overlayOf, matchCommand } from './workspace'
+import { plainWordIn } from './plain-words'
+import { readAdjust, isBareAdjustment } from './proposal'
 
 const SECTION_WORDS = ['chorus', 'verse', 'bridge', 'intro', 'outro', 'drop', 'breakdown', 'hook', 'refrain', 'solo', 'build', 'pre-chorus', 'prechorus', 'interlude', 'coda', 'ending']
 /** Section names a sentence can use as places: the song's own markers, plus the usual words. */
@@ -171,6 +173,13 @@ export interface InterpretContext {
    * "this" or "it". A sentence that names a track always means that track.
    */
   selectedTrackName?: string
+  /**
+   * A change still under discussion (lib/voice/proposal.ts), if there is one.
+   *
+   * Only its presence matters here: it is what makes "a little bit less"
+   * a sentence at all. The studio holds the change itself.
+   */
+  proposal?: { word: string } | null
   /**
    * The clip currently selected, if any.
    *
@@ -2384,27 +2393,118 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
   {
+    id: 'sound_like',
+    tool: 'sound_like',
+    group: 'Mixer',
+    what: 'Ask for a sound by how it feels — fuzzier, wiggly, dreamy, bigger',
+    // Single-sense words here on purpose: these examples have to DO something,
+    // and "fuzzier" rightly asks first. The asking path is driven in
+    // .claude/light-check.mjs, where there is somebody to answer.
+    say: ['make the pad sound muffled', 'make the bass crunchy', 'make the pad echoey'],
+    match(w, ctx) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      // ⚠️ A NAMED CONTROL IS NEVER A FEELING. "Low-pass to 800" and "reverb at
+      // 40%" are exact requests and must go to the exact rules, however
+      // descriptive the rest of the sentence is.
+      if (/\b(?:hz|hertz|khz|db|decibels?)\b|\b\d+\s*%/.test(raw)) return null
+      if (/\blow-?pass\b|\bhigh-?pass\b|\bcutoff\b|\bfilter\b.*\bat\b|\bset\b.*\bto\s+\d/.test(raw)) return null
+      // "Play harder" is how the notes are struck, not how the track sounds.
+      if (/\bplay(?:s|ed|ing)?\b|\bvelocit|\bnotes?\b|\bchords?\b/.test(raw)) return null
+      // The name is taken out before the word is looked for, so a track called
+      // "Big Muff" does not make every sentence about it a request for bigger.
+      const names = [...(ctx.tracks ?? []), ...(ctx.clips ?? [])].map(x => (x as { name?: string }).name ?? '').filter(Boolean)
+      let rest = raw
+      for (const n of names.sort((a, b) => b.length - a.length)) rest = rest.replace(n.toLowerCase(), ' ')
+      const word = plainWordIn(rest)
+      if (!word) return null
+      const hit = clipOrSelected(w, ctx, ['make', 'makes', 'let', 'lets', 'i', 'want', 'it', 'to', 'the', 'a', 'an', 'be', 'sound', 'sounds', 'sounding',
+        'can', 'could', 'should', 'more', 'less', 'bit', 'little', 'please', 'and', 'of', 'this', 'that', 'my', 'is', 'feel', 'feels', ...word.said], { dropNums: true })
+      const target = hit?.name ?? ctx.selectedTrackName ?? null
+      if (!target) return null
+      for (const word2 of w.all) w.markWord(word2, 0)
+      // ⚠️ 0.95, NOT 0.90. The studio's own commands are matched by name at
+      // 0.86, and a live project has about 190 of them — several with the word
+      // "sound" in the label. Inside the 0.05 ambiguity margin the sentence
+      // counts as two readings, and with the assistant on that means it is
+      // handed to the model rather than answered, which for a beginner reads
+      // as "sign in to use the assistant" when the studio knew the answer.
+      return { calls: [{ name: 'sound_like', input: { target, like: word.word } }], confidence: 0.95, needsName: !hit }
+    },
+  },
+  {
+    id: 'adjust_it',
+    tool: 'adjust_it',
+    group: 'Mixer',
+    what: 'Bend the change still under discussion — less, more, over time, undo',
+    say: ['a little bit less of that', 'a bit more', 'start that way then come down'],
+    match(w, ctx) {
+      // ⚠️ These words mean NOTHING on their own. "Less" is only a command
+      // while something is on the table to be less of, and offering this
+      // reading otherwise would have it competing with every real sentence.
+      if (!ctx.proposal) return null
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      // ⚠️ Nothing but adjustment words. Anything else in the sentence — a
+      // track, a marker, an octave — makes it a new request that happens to
+      // contain the word "up" (lib/voice/proposal.ts ADJUST_WORDS).
+      if (!isBareAdjustment(w.all)) return null
+      const adjust = readAdjust(raw)
+      if (!adjust) return null
+      // ⚠️ UNDO IS THE STUDIO'S, NOT THIS ONE'S. "Undo that" and "take that
+      // back" already mean something exact, and the last edit IS the change
+      // under discussion — so claiming them here would only give the studio a
+      // second undo that does the same thing less well, and it stole the word
+      // from the real one for every sentence while a proposal was live.
+      if (adjust.kind === 'undo') return null
+      for (const word of w.all) w.markWord(word, 0)
+      // Clear of the palette-by-name rule for the same reason as sound_like.
+      return { calls: [{ name: 'adjust_it', input: { how: adjust.kind, size: adjust.size } }], confidence: 0.95 }
+    },
+  },
+  {
     id: 'set_launch',
     tool: 'set_launch',
     group: 'Arrangement',
     what: 'How a session slot answers a press: trigger, gate, toggle, repeat, legato',
-    say: ['put the session take slot in gate mode', 'make the session take slot legato', 'launch the session take slot on the bar'],
+    say: ['put the session take slot in gate mode', 'make the session take slot legato', 'launch the session take slot on the bar',
+      'when the session take clip ends play the next one'],
     match(w, ctx) {
       const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
-      // The word "slot" or "launch" is what makes this the session's; a clip in
-      // the arrangement has no launch settings at all.
-      if (!/\bslots?\b|\blaunch/.test(raw)) return null
-      const modeM = /\b(trigger|gate|toggle|repeat)\b/.exec(raw)
-      const legato = /\blegato\b/.test(raw)
-      const velM = /\bvelocity\b[^%\d]*(\d{1,3})\s*(?:%|percent)/.exec(raw)
-      const quantM = /\bon (?:the )?(beat|bar)\b|\bevery (\d) bars?\b|\bno quantiz|\binstant/.exec(raw)
-      if (!modeM && !legato && !velM && !quantM) return null
+      // ⚠️ "Slot" reads as "clip" by the time a rule sees it (lib/voice/interpret
+      // aliasSlot), so this cannot key off that word. What makes a sentence the
+      // session's is what it asks for: a launch mode, legato, a velocity
+      // amount, or when the thing launches. None of those mean anything to a
+      // clip on the timeline.
+      //
+      // ⚠️ And each of these words means something else on its own. "Repeat the
+      // drums twice" is duplicate_clip, not Repeat mode. "Put a C on beat 3 of
+      // the bass" is a note, not a launch quantization. "Make the strings
+      // legato" is how they are played. So every branch below needs the
+      // sentence to be about LAUNCHING as well as about the thing.
+      // What it does when its turn is over. "When it ends", "after it plays",
+      // "then" — the words people use for a follow action without knowing the
+      // name (lib/follow-actions.ts).
+      const aboutEnd = /\bwhen it ends\b|\bwhen (?:the|it)[\w\s]*\bends\b|\bafter it plays\b|\bfollow action\b|\bwhen it(?:'s| is) done\b|\bthen play\b/.test(raw)
+      const followM = aboutEnd ? /\b(stop|play again|again|next|previous|the first|the last|any other|another|any)\b/.exec(raw) : null
+      const aboutLaunch = /\blaunch/.test(raw)
+      const modeM = aboutLaunch || /\bmode\b/.test(raw) ? /\b(trigger|gate|toggle|repeat)\b/.exec(raw) : null
+      const legato = /\blegato\b/.test(raw) && (aboutLaunch || /\bclips?\b/.test(raw))
+      const velM = aboutLaunch || /\bvelocity\s+amount\b/.test(raw) ? /(\d{1,3})\s*(?:%|percent)/.exec(raw) : null
+      const quantM = aboutLaunch ? /\bon (?:the )?(beat|bar)\b|\bevery (\d) bars?\b|\bno quantiz|\binstant/.exec(raw) : null
+      if (!modeM && !legato && !velM && !quantM && !followM) return null
+      // ⚠️ A sentence about EVERY launch is the global setting, not this slot's
+      // (set_global_quantization). "Launch clips instantly" named no slot and
+      // still landed here, because "instantly" survived the word-stripping
+      // below and read as a clip called "instantly".
+      if (/\b(?:every|everything|all|globally|global)\b/.test(raw)) return null
+      if (/\blaunch\w*\s+clips?\b/.test(raw) && !/\bslot\b/.test(raw)) return null
       // ⚠️ A session slot is NOT in ctx.clips — that list is the arrangement's,
       // and the grid is a different place entirely. So the name is not resolved
       // here at all: whatever is left once the command's own words are taken
       // out is handed to the planner, which owns the grid and looks it up there.
       const target = raw
-        .replace(/\b(?:put|set|sets|make|makes|launch|launches|launching|the|a|an|its|it|this|that|slots?|clips?|in|into|on|off|to|at|mode|amount|percent|quantize|quantization|every|no|instant|trigger|gate|toggle|repeat|legato|velocity|beats?|bars?)\b/g, ' ')
+        .replace(/\b(?:put|set|sets|make|makes|launch|launches|launching|the|a|an|its|it|this|that|slots?|clips?|in|into|on|off|to|at|mode|amount|percent|quantize|quantization|every|no|instant|instantly|immediately|trigger|gate|toggle|repeat|legato|velocity|beats?|bars?)\b/g, ' ')
+        // The follow-action words too — they say what to do, never which clip.
+        .replace(/\b(?:when|ends?|ended|after|then|done|follow|action|play|plays|played|again|next|previous|prev|first|last|any|other|another|one|stop|stops|nothing|none)\b/g, ' ')
         .replace(/\d+\s*%?/g, ' ')
         .replace(/\s+/g, ' ')
         .trim()
@@ -2415,8 +2515,248 @@ const COMMANDS: VoiceCommand[] = [
       if (legato) input.legato = !/\b(?:no|not|stop|off|un-?set)\s+legato\b|\blegato\s+off\b/.test(raw)
       if (velM) input.velocity = `${velM[1]}%`
       if (quantM) input.quantize = quantM[2] ? `${quantM[2]}bar` : quantM[1] ? quantM[1] : 'none'
+      if (followM) input.follow = /another|any other/.test(followM[1]) ? 'other' : followM[1].replace(/^the /, '').replace('play ', '')
       for (const word of w.all) w.markWord(word, 0)
       return { calls: [{ name: 'set_launch', input }], confidence: 0.94, needsName: true }
+    },
+  },
+  {
+    id: 'envelope_shape',
+    tool: 'envelope_shape',
+    group: 'Arrangement',
+    what: 'A known shape into an automation lane, or the points back out of one',
+    say: ['put a sine into the pad automation', 'insert a square shape on the bass 2 automation', 'simplify the pad automation'],
+    match(w, ctx) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      // ⚠️ The sentence has to be about the LANE. "Make the pad wobble" is an
+      // LFO and "open the filter over 8 bars" is a sweep — both far commoner,
+      // and both would be wrong here.
+      if (!/\bautomation\b|\benvelope\b|\blane\b/.test(raw)) return null
+      const simplifying = /\bsimplif|\btidy\b|\bfewer points\b|\bclean up\b/.test(raw)
+      const shapeWord = /\b(sine|triangle|saw|square|ramp|adsr|shape)\b/.exec(raw)
+      if (!simplifying && !shapeWord) return null
+      const cyclesM = /(\d+)\s*(?:cycles?|times|repeats?)/.exec(raw)
+      const target = nameOrSelected(w, ctx,
+        ['put', 'puts', 'insert', 'inserts', 'add', 'adds', 'simplify', 'simplifies', 'tidy', 'clean', 'up',
+         'automation', 'envelope', 'lane', 'shape', 'into', 'onto', 'on', 'of', 'points', 'fewer',
+         'sine', 'triangle', 'saw', 'square', 'ramp', 'adsr', 'inverse', 'cycles', 'times', 'repeats'])
+      if (!target) return null
+      const input: Record<string, unknown> = { target: target.name, op: simplifying ? 'simplify' : 'insert' }
+      // ⚠️ The shape is named HERE, not by handing the planner a window of the
+      // sentence around the shape word. That window cut "ramp up" down to
+      // "ramp", which the planner reads as a saw — so asking for a ramp up got
+      // a seventeen-point sawtooth. The whole sentence is what says which shape
+      // it is, and the order below is most-specific first.
+      if (!simplifying) {
+        input.shape =
+          /\binverse\s+saw|\bsaw\s+(?:inverted|inverse|backwards)|\breverse\s+saw/.test(raw) ? 'inverse saw'
+          : /\badsr\b|\battack.*decay|\benvelope shape\b/.test(raw) ? 'adsr'
+          : /\bramp\s*(?:it\s*)?up\b|\brise\b|\bfade\s*in\b/.test(raw) ? 'ramp up'
+          : /\bramp\s*(?:it\s*)?down\b|\bfall\b|\bfade\s*out\b/.test(raw) ? 'ramp down'
+          : /\bsquare\b|\bgate\b/.test(raw) ? 'square'
+          : /\btriangle\b/.test(raw) ? 'triangle'
+          : /\bsaw\b/.test(raw) ? 'saw'
+          : /\bsine\b|\bsin\b|\bwave\b/.test(raw) ? 'sine'
+          : ''
+        if (!input.shape) return null
+      }
+      if (cyclesM) input.cycles = Number(cyclesM[1])
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'envelope_shape', input }], confidence: 0.94, needsName: true }
+    },
+  },
+  {
+    id: 'set_automation_arm',
+    tool: 'set_automation_arm',
+    group: 'Arrangement',
+    what: 'Whether moving a control while recording writes the move into its lane',
+    say: ['record my knob moves', 'latch automation', 'stop recording automation'],
+    match(w) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      // ⚠️ NOT "automate the pad's filter over 8 bars" — that is a shape you
+      // ASK for (automate_parameter), and it is the far commoner sentence. This
+      // one is about the recorder: knob moves, arming, latching.
+      const aboutRecording = /\b(?:record|recording|arm|armed|latch)\b/.test(raw)
+      const aboutAutomation = /\bautomation\b|\bknob moves?\b|\bmy moves?\b|\bfader moves?\b/.test(raw)
+      if (!aboutRecording || !aboutAutomation) return null
+      const mode = /\blatch\b/.test(raw) ? 'latch'
+        : /\b(?:stop|off|no longer|don'?t)\b/.test(raw) ? 'off'
+        : 'touch'
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'set_automation_arm', input: { mode } }], confidence: 0.95 }
+    },
+  },
+  {
+    id: 'set_global_quantization',
+    tool: 'set_global_quantization',
+    group: 'Arrangement',
+    what: 'When a session launch lands, for every slot that names none of its own',
+    say: ['launch everything on the bar', 'quantize launches to a beat', 'launch clips instantly'],
+    match(w) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      // ⚠️ Global, so no target — and that is exactly what tells it apart from
+      // set_launch, which is about ONE slot. The sentence has to say everything,
+      // or say launches in general.
+      // "Launch clips instantly" names no slot, so it is about all of them.
+      const everything = /\b(?:every|everything|all|globally|global)\b/.test(raw)
+        || /\blaunch\w*\s+clips?\b/.test(raw)
+      const aboutLaunch = /\blaunch(?:es|ing)?\b|\bclips? (?:come|start)\b/.test(raw)
+      if (!aboutLaunch || !(everything || /\bquanti[sz]e launch|launch quanti[sz]/.test(raw))) return null
+      // A named slot means the other rule owns it.
+      if (/\bslot\b/.test(w.raw.toLowerCase())) return null
+      const q = /\binstant\w*\b|\bimmediat\w*\b|\bstraight ?away\b|\bno quantiz|\bnone\b|\boff\b/.test(raw) ? 'none'
+        : /\bfour bars?\b|\b4 bars?\b/.test(raw) ? '4bar'
+        : /\btwo bars?\b|\b2 bars?\b/.test(raw) ? '2bar'
+        : /\bbars?\b/.test(raw) ? 'bar'
+        : /\bbeat\b/.test(raw) ? 'beat'
+        : null
+      if (!q) return null
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'set_global_quantization', input: { quantization: q } }], confidence: 0.95 }
+    },
+  },
+  {
+    id: 'bounce_track',
+    tool: 'bounce_track',
+    group: 'Arrangement',
+    what: 'A track\'s devices printed as audio, on a new track or over itself',
+    say: ['bounce the drums to a new track', 'print the pad as audio', 'bounce the bass in place'],
+    match(w, ctx) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      // ⚠️ "Bounce" alone is not enough — a bouncing bassline is a sound, and
+      // "print" is a word for a lot of things. The sentence has to be about
+      // making audio out of a track.
+      const verb = /\b(?:bounce|print|render|commit|freeze and flatten)\b/.test(raw)
+      const audio = /\bas audio\b|\bto audio\b|\bnew track\b|\bin ?place\b|\bto a track\b|\bdown\b/.test(raw)
+      if (!verb || !audio) return null
+      const where = /\bin ?place\b|\bover it(?:self)?\b|\bsame track\b/.test(raw) ? 'in place' : 'new track'
+      // The track by name, or whatever is selected — the command's own words go
+      // first, so "bounce the drums to a new track" does not read "new track"
+      // as the name.
+      const target = nameOrSelected(w, ctx,
+        ['bounce', 'bounces', 'print', 'prints', 'render', 'renders', 'commit', 'commits', 'freeze', 'flatten',
+         'to', 'as', 'down', 'new', 'track', 'tracks', 'audio', 'in', 'place', 'over', 'it', 'itself', 'same', 'please'])
+      if (!target) return null
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'bounce_track', input: { target: target.name, where } }], confidence: 0.94, needsName: true }
+    },
+  },
+  {
+    id: 'set_metronome',
+    tool: 'set_metronome',
+    group: 'Transport',
+    what: 'What the click sounds like, how often it clicks, and the count-in',
+    say: ['use a cowbell for the metronome', 'click on eighths', 'only click while I am recording', 'count me in two bars'],
+    match(w) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      // ⚠️ NOT the on/off switch. "Turn the metronome on" is transport, and it
+      // is the far commoner sentence — so this rule needs a sentence that names
+      // a sound, a rhythm, the recording-only rule, or a count-in.
+      const aboutClick = /\b(?:metronome|click)\b/.test(raw)
+      const input: Record<string, unknown> = {}
+
+      const soundM = /\b(cowbell|bell|rim ?shot|rim|wood ?block|wood|stick|beep|click)\b/.exec(raw)
+      if (aboutClick && soundM && /\b(?:use|make|give|switch|change|set|to|as|with)\b/.test(raw)) {
+        const s = /cowbell|bell/.test(soundM[1]) ? 'cowbell'
+          : /rim/.test(soundM[1]) ? 'rimshot'
+          : /wood/.test(soundM[1]) ? 'wood'
+          : /stick/.test(soundM[1]) ? 'stick'
+          : /beep/.test(soundM[1]) ? 'beep'
+          : null            // bare "click" is the word for the metronome itself
+        if (s) input.sound = s
+      }
+
+      // "Click on eighths", "metronome every sixteenth" — how often, not what.
+      if (aboutClick && /\b(?:on|every|to|at)\b/.test(raw)) {
+        const triplet = /triplet/.test(raw)
+        const r = /\bauto\b/.test(raw) ? 'auto'
+          : /16|sixteen/.test(raw) ? (triplet ? '1/16T' : '1/16')
+          : /eighth|\b1\/8\b|8th/.test(raw) ? (triplet ? '1/8T' : '1/8')
+          : /quarter|\b1\/4\b|\bbeat\b/.test(raw) ? '1/4'
+          : null
+        if (r) input.rhythm = r
+      }
+
+      // "Only click while I'm recording" / "click for playback too".
+      if (aboutClick && /\bonly\b[\w\s']*\b(?:record|take)/.test(raw)) input.onlyWhileRecording = true
+      if (aboutClick && /\b(?:playback|play) too\b|\ball the time\b/.test(raw)) input.onlyWhileRecording = false
+
+      // "Count me in two bars", "no count-in".
+      const countM = /\bcount(?:\s*(?:me|us))?\s*(?:-|\s)?in\b|\bcount me in\b|\bcount-in\b/.test(raw)
+      if (countM) {
+        const n = /\bno\b|\boff\b|\bnone\b/.test(raw) ? 0
+          : /\bfour\b|\b4\b/.test(raw) ? 4
+          : /\btwo\b|\b2\b/.test(raw) ? 2
+          : /\bone\b|\b1\b|\ba bar\b/.test(raw) ? 1
+          : null
+        if (n !== null) input.countInBars = n
+      }
+
+      if (!Object.keys(input).length) return null
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'set_metronome', input }], confidence: 0.95 }
+    },
+  },
+  {
+    id: 'set_record_quantize',
+    tool: 'set_record_quantize',
+    group: 'Transport',
+    what: 'The grid recorded notes land on as they are played',
+    say: ['quantize what I record to sixteenths', 'record quantization to eighth triplets', 'turn record quantization off'],
+    match(w) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      // ⚠️ This has to be told apart from quantizing a clip AFTERWARDS, which
+      // is the far commoner request and a different tool. The difference is
+      // always in the tense: what I RECORD, what I PLAY, as I play — never a
+      // clip that already exists. A sentence naming a clip is not this.
+      const aboutRecording = /\brecord(?:ing|ed)? quanti[sz]/.test(raw)
+        || /quanti[sz]e?\b[\w\s]*\b(?:what|whatever) (?:i|we) (?:record|play|am playing)\b/.test(raw)
+        || /\bsnap\b[\w\s]*\b(?:what|whatever) (?:i|we) (?:record|play)\b/.test(raw)
+        || /\bquanti[sz]e?\b[\w\s]*\bas (?:i|we|you) (?:record|play)\b/.test(raw)
+      if (!aboutRecording) return null
+      const off = /\b(?:off|none|no|not|don'?t|stop|disable)\b/.test(raw)
+      const grid = off ? 'none'
+        : /32|thirty/.test(raw) ? (/triplet/.test(raw) ? '1/32' : '1/32')
+        : /16|sixteen/.test(raw) ? (/triplet/.test(raw) ? '1/16T' : '1/16')
+        : /eighth|\b1\/8\b|\b8th/.test(raw) ? (/triplet/.test(raw) ? '1/8T' : '1/8')
+        : /quarter|\b1\/4\b|\bbeat\b/.test(raw) ? '1/4'
+        : null
+      if (!grid) return null
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'set_record_quantize', input: { grid } }], confidence: 0.95 }
+    },
+  },
+  {
+    id: 'set_punch',
+    tool: 'set_punch',
+    group: 'Transport',
+    what: 'Recording that starts and stops at the loop brace by itself',
+    say: ['punch in at the loop', 'stop recording at the end of the loop', 'record only inside the loop', 'turn punch in off'],
+    match(w) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      // ⚠️ "Punch" on its own is not enough — "punch up the drums" is a mix
+      // note, and "punchy" is a sound. What makes this the transport's is the
+      // in/out word, or a sentence about recording bounded by the loop.
+      const punchIn  = /\bpunch(?:ing|es)?[- ]?in\b/.test(raw)
+      const punchOut = /\bpunch(?:ing|es)?[- ]?out\b/.test(raw)
+      // The same thing said without the jargon.
+      const insideLoop = /\brecord(?:ing)?\b[\w\s]*\b(?:only )?(?:in|inside|within|between)\b[\w\s]*\bloop\b/.test(raw)
+      const startAtLoop = /\bstart(?:s)? recording\b[\w\s]*\bloop\b/.test(raw)
+      const stopAtLoop  = /\bstop(?:s)? recording\b[\w\s]*\b(?:end of the |at the end of the )?loop\b/.test(raw)
+      if (!punchIn && !punchOut && !insideLoop && !startAtLoop && !stopAtLoop) return null
+
+      // "off", "stop", "don't", "no longer" turn it off; anything else on.
+      const off = /\b(?:off|no|not|don'?t|stop|disable|turn off|cancel|clear)\b/.test(
+        // ⚠️ Only the words AROUND the punch phrase count. "Stop recording at
+        // the end of the loop" is switching punch-out ON, and reading its own
+        // "stop" as a negation would turn off the thing being asked for.
+        raw.replace(/\bstop(?:s)? recording\b/g, ' ').replace(/\bpunch[- ]?out\b/g, ' '),
+      )
+      const input: Record<string, boolean> = {}
+      if (punchIn || insideLoop || startAtLoop) input.punchIn = !off
+      if (punchOut || insideLoop || stopAtLoop) input.punchOut = !off
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'set_punch', input }], confidence: 0.95 }
     },
   },
   {
@@ -2516,6 +2856,9 @@ const COMMANDS: VoiceCommand[] = [
       // Shaping a clip's loop — cropping to it, doubling it, its length, the
       // notes in it — is clip_time's; this only switches looping on and off.
       if (/\bcrop\b|\bduplicate\b|\bdouble\b|\bselect\b|\bloop\b.*\bto\b.*\b(?:bars?|beats?)\b|\bloop (?:length|end)\b/.test(rest)) return null
+      // A launch setting names a percentage too ("launch velocity amount to
+      // 50%"), and that is the SESSION's, not this clip's level (set_launch).
+      if (/\blaunch|\bvelocity\b/.test(rest)) return null
       // Warping a clip AS a loop, straight, at a tempo, or its markers is warp_markers'; here Warp only switches on and off.
       if (/\bwarp/.test(rest) && /\bas an? \S+[- ]bars?\b|\bas a loop\b|\bstraight\b|\bat\s+\d+(?:\.\d+)?\s*bpm\b|\bmarkers?\b/.test(rest)) return null
       // Slip: the audio slides under the clip (lib/sample-editor.ts).
@@ -2649,10 +2992,10 @@ const COMMANDS: VoiceCommand[] = [
       // A view word beside a thing to do to a track is not a view change:
       // "the mixer channel for the pad", "mixer volume".
       if (/\b(?:volume|level|fader|channel|pan|mute|solo|track|effects?|devices?|clip)\b/.test(raw)) return null
-      // ⚠️ "Session" is also the name of the grid a slot lives in: "put the
-      // session take slot in gate mode" is a launch setting, not a request to
-      // look at the session. A sentence about a slot is never a view change.
-      if (/\bslots?\b|\blaunch/.test(raw)) return null
+      // ⚠️ "Session" is also the grid a clip can live in: "launch the session
+      // take clip on the bar" is a launch setting, not a request to look at the
+      // session. (The clip word above already excludes most of these.)
+      if (/\blaunch/.test(raw)) return null
       if (!/\b(?:show|switch|go|open|back|view|take me|bring up|see|let'?s|to the|the)\b/.test(raw)) return null
       for (const word of w.all) w.markWord(word, 0)
       return { calls: [{ name: 'workspace', input: { view } }], confidence: 0.9 }
@@ -4868,6 +5211,23 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
   {
+    id: 'workspace.undoHistory',
+    tool: 'workspace',
+    group: 'View',
+    what: 'Open the Undo History — everything you have done, and a way back to it',
+    say: ['show me the undo history', 'open the undo history', 'let me see the edit history'],
+    match(w) {
+      // ⚠️ Named explicitly rather than left to the palette-by-name rule, which
+      // scored the sentence against the label "Undo" and won with it — "undo
+      // history" says all of a one-word label and half of a long one. Two
+      // panels answer to "history" here (this and the voice transcript), so
+      // which one a sentence means is a decision, not a similarity score.
+      if (!/\bundo history\b|\bedit history\b|\bhistory of (?:my |the )?edits\b/i.test(w.raw)) return null
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'workspace', input: { command: 'Undo History' } }], confidence: 0.95 }
+    },
+  },
+  {
     id: 'show_view.transcript',
     tool: 'show_view',
     group: 'View',
@@ -4880,6 +5240,10 @@ const COMMANDS: VoiceCommand[] = [
       const asked = w.has('show', 'open', 'see', 'bring', 'read') || didYou
       const noun = w.has('transcript', 'log', 'history', 'conversation') || didYou
       if (!asked || !noun) return null
+      // ⚠️ "History" is the one word these two panels share, and they are
+      // genuinely different: this is what was SAID, the undo history is what
+      // was DONE. "Undo history" and "edit history" belong to the other one.
+      if (/\bundo\b|\bedit history\b/i.test(w.raw)) return null
       // "what did you do TO the pad" is a question about the pad, not the log.
       if (w.has('track', 'clip', 'pad', 'bass', 'drums')) return null
       return { calls: [{ name: 'show_view', input: { view: 'transcript', open: !w.has('close', 'hide') } }], confidence: 0.9 }

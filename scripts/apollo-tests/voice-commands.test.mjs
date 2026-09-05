@@ -54,6 +54,8 @@ defineMacro({
   shape: 'fall',
 })
 const { planVoiceCall } = await importTs('lib/voice/execute-music.ts')
+const { setProposal } = await importTs('lib/voice/proposal.ts')
+const { PLAIN_WORDS } = await importTs('lib/voice/plain-words.ts')
 const { PRESET_VARIANTS } = await importTs('lib/preset-variants.ts')
 
 // ⚠️ The library is not part of the project — it lives on the machine — so the
@@ -194,7 +196,28 @@ const PROJECT = {
     t9: [{ kind: 'audio', id: 'sl1', trackId: 't9', name: 'Session take', startBeat: 0, durationBeats: 8, gain: 1, loopEnabled: true, reverse: false, fadeIn: 0, fadeOut: 0, trimStart: 0, trimEnd: 0, bufferDuration: 4 }],
   },
   loopStart: 0, loopEnd: 16, loopEnabled: false,
-  masterVolume: 1, automationLanes: [], clipEffects: [], returnTracks: [],
+  masterVolume: 1,
+  // ⚠️ A real project has automation in it. This was empty, which meant every
+  // lane command in the suite passed by being correctly refused — the shape and
+  // simplify commands are the first to notice.
+  // Two tracks, because a fixture with one automated track cannot tell a
+  // command that finds the right lane from one that always takes the first.
+  automationLanes: [
+    {
+      id: 'lane1', trackId: 't2', parameter: 'volume', label: 'Volume',
+      min: 0, max: 1, defaultValue: 0.8, expanded: true,
+      points: [
+        { id: 'ap1', beat: 0, value: 0.2 }, { id: 'ap2', beat: 2, value: 0.5 },
+        { id: 'ap3', beat: 4, value: 0.8 }, { id: 'ap4', beat: 6, value: 0.5 },
+      ],
+    },
+    {
+      id: 'lane2', trackId: 't1', parameter: 'pan', label: 'Pan',
+      min: -1, max: 1, defaultValue: 0, expanded: false,
+      points: [{ id: 'bp1', beat: 0, value: 0.5 }, { id: 'bp2', beat: 8, value: 0.9 }],
+    },
+  ],
+  clipEffects: [], returnTracks: [],
   takeLanes: [], crossfaderValue: 0.5, waveformZoom: 1, swing: 0,
   // Markers, so removing one is testable.
   // Added for the commands that need them, and ADDED rather than changed: a
@@ -206,9 +229,21 @@ const PROJECT = {
   ],
 }
 
+// Something is under discussion, because half a conversation cannot be tested
+// without the other half: "a little bit less of that" is only a sentence while
+// a change is on the table (lib/voice/proposal.ts). The store is seeded to
+// match, so the planner can carry the example out as well as read it.
+const PROPOSAL_WORD = 'fuzzy'
+setProposal({
+  word: PROPOSAL_WORD,
+  sense: PLAIN_WORDS.find(w => w.word === PROPOSAL_WORD).senses[1],
+  target: 'Pad', span: { start: 0, end: 16 }, amount: 50, at: Date.now(),
+})
+
 const CTX = {
   tracks: PROJECT.tracks,
   tempo: PROJECT.tempo,
+  proposal: { word: PROPOSAL_WORD },
   // The studio's own command palette, as the editor registers it — so "hide
   // the sidebar" is a sentence the rules can read.
   commands: [

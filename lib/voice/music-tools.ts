@@ -819,6 +819,34 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'sound_like',
+    description:
+      'A SOUND ASKED FOR BY FEEL, not by parameter — "I want it to sound fuzzier", "let\'s make the pad wiggle", "can the drums be harder". Use this whenever somebody describes a SOUND rather than naming a control; the studio knows what its own words can mean and will ASK when one of them is genuinely two different sounds ("do you mean more like static, or more muffled?"), then make it and play it back. Do NOT use it when a parameter is named — "low-pass to 800" is set_effect, and "make the pad brighter" is shape_tone. `sense` is only for answering the studio\'s own question.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: { ...TARGET, description: 'What should sound that way. The selected track when nothing is named.' },
+        like: { type: 'string', description: 'The word they used, as they used it: "fuzzier", "wiggle", "dreamy", "bigger", "harder".' },
+        sense: { type: 'string', description: 'Which reading, when the studio asked and they answered: "muffled", "static", "tremolo", "warble", "sway", "space", "body", "wash", "echoes", "grit", "punch".' },
+        amount: { type: 'number', description: 'How much, 0-100. Omit for a sensible starting point they can then bend.' },
+      },
+      required: ['like'],
+    },
+  },
+  {
+    name: 'adjust_it',
+    description:
+      'BENDING WHAT WAS JUST MADE — only ever about the change still under discussion. "A little bit less of it", "more", "make it start that way then come down", "undo that", "that\'s good". There is no target: it is whatever was just done. Nothing else in the studio understands these sentences, because on their own they mean nothing.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        how: { type: 'string', enum: ['less', 'more', 'ramp_down', 'ramp_up', 'undo', 'keep'] },
+        size: { type: 'string', enum: ['little', 'normal', 'lot'], description: '"a little bit less" is little, "way more" is lot.' },
+      },
+      required: ['how'],
+    },
+  },
+  {
     name: 'set_launch',
     description:
       'HOW A SESSION SLOT ANSWERS A PRESS (Live\'s Launch box) — "put the drum loop slot in gate mode" (mode gate: it plays while held), "trigger" (press starts it from the top), "toggle" (press again to stop — the default), "repeat" (it starts again every step while held). Also "make the pad slot legato" (legato: a clip launched over a playing one picks up where that one had got to), "set the bass slot\'s velocity amount to 50%" (velocity), and "launch the drums slot on the bar" (quantize). These are the SESSION grid\'s clips, not the arrangement\'s.',
@@ -830,8 +858,100 @@ export const MUSIC_TOOLS = [
         legato: { type: 'boolean', description: 'Launch legato — inherit the playing clip\'s position instead of starting over.' },
         velocity: { type: 'string', description: 'Velocity Amount as a percentage, "50%" — how much the press\'s velocity reaches the level. 0% ignores it.' },
         quantize: { type: 'string', enum: ['none', 'beat', 'bar', '2bar', '4bar'], description: 'When the launch lands.' },
+        follow: { type: 'string', enum: ['none', 'stop', 'again', 'previous', 'next', 'first', 'last', 'any', 'other', 'jump'], description: 'What happens when its turn is over — "when the drum loop ends, play the next one" (next), "stop after it plays" (stop), "then any other clip" (other). This is Live\'s Follow Action.' },
+        followB: { type: 'string', enum: ['none', 'stop', 'again', 'previous', 'next', 'first', 'last', 'any', 'other'], description: 'A second thing it might do instead, chosen by `followChance`.' },
+        followChance: { type: 'string', description: 'How often the FIRST follow action happens rather than the second, as a percentage — "half the time" is 50%.' },
+        followTime: { ...LENGTH, description: 'How long it plays before the follow action fires. Omit to use the clip\'s own length.' },
       },
       required: ['target'],
+    },
+  },
+  {
+    name: 'envelope_shape',
+    description:
+      'A KNOWN SHAPE INTO AN AUTOMATION LANE, OR THE POINTS BACK OUT (Live\'s Insert Shape / Simplify Envelope) — "put a sine into the pad\'s automation" (shape sine; also triangle, saw, inverse saw, square, ramp up, ramp down, adsr), "insert four cycles of a square on the bass" (cycles 4), "simplify the pad\'s envelope" (op simplify). It lands on the song loop when there is one, else the whole lane, and leaves everything outside that span alone. NOT `automate_parameter`, which is a sweep you describe in words.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: { ...TARGET, description: 'The track whose lane to shape.' },
+        op: { type: 'string', enum: ['insert', 'simplify'] },
+        shape: { type: 'string', description: 'sine, triangle, saw, inverse saw, square, ramp up, ramp down, adsr.' },
+        cycles: { type: 'number', description: 'How many times it repeats across the span. Default 1.' },
+      },
+      required: ['target'],
+    },
+  },
+  {
+    name: 'set_automation_arm',
+    description:
+      'WHETHER MOVING A CONTROL WHILE RECORDING WRITES ITS MOVE INTO A LANE (Live\'s Automation Arm) — "record my knob moves" / "arm automation" (mode touch: written while you hold the control, then the lane goes back to what it said), "latch automation" (mode latch: written while you hold and HELD to the end, replacing what was there), "stop recording automation" (mode off). Latch is destructive; touch is not.',
+    input_schema: {
+      type: 'object',
+      properties: { mode: { type: 'string', enum: ['off', 'touch', 'latch'] } },
+      required: ['mode'],
+    },
+  },
+  {
+    name: 'set_global_quantization',
+    description:
+      'WHEN A SESSION LAUNCH LANDS, FOR EVERY SLOT (Live\'s Global Quantization) — "launch everything on the bar" (quantization "bar"), "quantize launches to a beat" ("beat"), "launch clips instantly" ("none"), "wait four bars before clips come in" ("4bar"). This is the DEFAULT for slots that name none of their own; `set_launch` sets one slot\'s.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        quantization: { type: 'string', enum: ['none', 'beat', 'bar', '2bar', '4bar'] },
+      },
+      required: ['quantization'],
+    },
+  },
+  {
+    name: 'bounce_track',
+    description:
+      'A TRACK\'S DEVICES PRINTED AS AUDIO (Live\'s Bounce to New Track / Bounce Track in Place) — "bounce the pad to a new track", "print the drums as audio", "bounce the bass in place". The result is a normal audio clip you can then cut, warp and reverse — not a freeze, which is a cache that thaws back. To a new track, the originals are PARKED rather than deleted. Takes real seconds: the render happens after the reply.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: { ...TARGET, description: 'The track to bounce.' },
+        where: { type: 'string', description: '"new track" (default — the audio lands beside it, originals parked) or "in place" (it replaces the track\'s own clips).' },
+      },
+      required: ['target'],
+    },
+  },
+  {
+    name: 'set_metronome',
+    description:
+      'WHAT THE CLICK SOUNDS LIKE AND HOW OFTEN (Live\'s metronome preferences) — "use a cowbell for the metronome" (sound cowbell; also click, beep, stick, wood, rimshot), "click on eighths" (rhythm "1/8"; also auto, 1/4, 1/8T, 1/16, 1/16T), "only click while I\'m recording" (onlyWhileRecording true), "count me in two bars" (countInBars 2). NOT the metronome on/off switch — that is `transport`.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        sound: { type: 'string', enum: ['click', 'beep', 'stick', 'wood', 'cowbell', 'rimshot'] },
+        rhythm: { type: 'string', description: 'auto, 1/4, 1/8, 1/8T, 1/16 or 1/16T.' },
+        onlyWhileRecording: { type: 'boolean', description: 'Silent for ordinary playback; the click is there for takes.' },
+        countInBars: { type: 'number', description: 'Bars of clicks before a take starts. 0 = none.' },
+      },
+    },
+  },
+  {
+    name: 'set_record_quantize',
+    description:
+      'THE GRID RECORDED NOTES LAND ON AS THEY ARE PLAYED (Live\'s Record Quantization) — "quantize what I record to sixteenths" (grid "1/16"), "record quantization to eighth triplets" ("1/8T"), "snap what I play to the beat" ("1/4"), "turn record quantization off" ("none"). NOT the same as quantizing a clip afterwards (that is `quantize_notes`): this changes what a take becomes at the moment it is captured, and only the note starts move.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        grid: { type: 'string', description: 'One of: none, 1/4, 1/8, 1/8T, 1/8+T, 1/16, 1/16T, 1/16+T, 1/32.' },
+      },
+      required: ['grid'],
+    },
+  },
+  {
+    name: 'set_punch',
+    description:
+      'RECORDING THAT STARTS AND STOPS AT THE LOOP BRACE BY ITSELF (Live\'s Punch In / Punch Out) — "punch in at the loop" (punchIn true: the recorder waits for the start of the brace, so you can play along from a few bars early), "stop recording at the end of the loop" (punchOut true), "record only inside the loop" / "punch in and out" (both true), "turn punch in off" (punchIn false). The loop brace IS the punch region. This only decides WHEN a take would begin and end — it never starts one.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        punchIn: { type: 'boolean', description: 'Wait for the start of the loop brace before the recorder starts.' },
+        punchOut: { type: 'boolean', description: 'Stop the recorder at the end of the loop brace.' },
+      },
     },
   },
   {
@@ -1764,6 +1884,20 @@ export const MUSIC_SYSTEM_HINT = [
   // worse than a refused one, so this says it twice and gives the example.
   'ONE SENTENCE OFTEN CONTAINS SEVERAL REQUESTS. Emit a tool call for EVERY request in it, in the order they were said, all in this one reply. "Move everything over by one bar and have a 1 bar long crash at the beginning, then restart" is THREE calls: move_clips, insert_clip, transport. Do not stop after the first.',
   'Use the names they used for tracks and clips; the app resolves them against the real project and will refuse rather than guess if a name is ambiguous.',
+  // Brae: "I'm worried that the AI voice assistant is bound by enough rules
+  // that users won't be able to use natural language with it… 'I want it to
+  // sound fuzzy'."
+  //
+  // ⚠️ THE INSTINCT TO FIX HERE IS GUESSING. Faced with a word it has no
+  // parameter for, a model picks the nearest control and commits — and the
+  // person who said "fuzzier" gets a filter when they meant grit, with no
+  // sign that a choice was ever made. `sound_like` hands the word to the
+  // studio instead, which knows which of ITS OWN sounds that word can mean,
+  // asks when there are two, describes both in words a beginner has, makes it
+  // for real and plays it back. Handing the word over is the whole job; the
+  // conversation after it costs no further turn, because the studio runs it.
+  'A SOUND DESCRIBED BY FEEL IS `sound_like`, NOT A GUESS AT A CONTROL. "Fuzzier", "wiggly", "dreamy", "bigger", "harder", "muffled" — pass the word they used and let the studio ask which sound they meant and demonstrate it. Only reach for a specific control when THEY named one ("low-pass to 800"), or when the word is one shape_tone already covers exactly (brighter, darker, warmer, cleaner, punchier, softer, fuller, thinner).',
+  'AND THE FOLLOW-UP IS `adjust_it`. Once something has been made this way, "a little bit less of that", "make it start that way then come down", "undo that" and "that\'s good" are all about it and nothing else. They carry no target because there is only one thing they can mean.',
   // Brae: "I told it 'change reverb so that it stays at 100% until the 6th
   // bar'. It told me 'Reverb at 100%' without changing anything, and moved
   // the playhead to the 6th bar." Three mistakes in one sentence: the span

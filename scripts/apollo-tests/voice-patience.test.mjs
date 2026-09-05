@@ -42,7 +42,14 @@ const check = (label, pass, extra = '') => {
   check('the editor tags every dispatch with the open group', /group: g\.id, label: g\.label/.test(editor))
   check('and undoes a group with N precise reverts', /const taken = takeUndoGroup\(historyRef\.current\)/.test(editor) && /for \(const entry of taken\)/.test(editor))
   check('redo takes the group back the same way', /const taken = takeUndoGroup\(redoRef\.current\)/.test(editor))
-  check('and reports how many came off', /return taken\.length/.test(editor))
+  // ⚠️ Was `return taken.length`. It now counts across the whole call, because
+  // undo takes a `groups` argument: calling it twice in one tick used to
+  // corrupt the redo stack (projectRef.current is only refreshed after a
+  // render, so the second call started from the state before the first), and
+  // the Undo History panel walks back several steps at once.
+  check('and reports how many came off', /let done = 0/.test(editor) && /done\+\+/.test(editor) && /return done/.test(editor))
+  check('and walks several groups inside ONE call, so the redo stack stays true',
+    /const doUndo = useCallback\(\(groups = 1\)/.test(editor) && /const doRedo = useCallback\(\(groups = 1\)/.test(editor))
   // ⚠️ Seen on the real path: two reverts computed against the same stale
   // snapshot, and the second put the first's target back. Each is computed
   // against the state the one before it produced.

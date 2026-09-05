@@ -109,7 +109,7 @@ export async function measureTrackLoudness(
 // master DynamicsCompressor is bypassed (tap post-analyser, pre-compressor), so the
 // sum of dry stems reconstructs the full pre-compressor bus EXACTLY (everything up
 // to the compressor is linear), and the compressor is re-applied once to the sum.
-async function renderChannels(
+export async function renderChannels(
   project: DawProject,
   opts: { startBeat: number; endBeat: number },
   o?: { soloTrackId?: string; dryMaster?: boolean },
