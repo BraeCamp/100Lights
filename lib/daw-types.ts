@@ -748,6 +748,8 @@ export interface DawTrack {
   armed: boolean
   frozen?: boolean    // freeze: render to audio buffer, disable instrument
   inputSource?: string | null  // 'mic' | 'system' | null — audio input for recording
+  /** A note the owner wrote (Edit Info Text…), shown in the Info View when the pointer is over the track. */
+  infoText?: string
   height: number      // arrangement lane height in px
   /** Collapsed = a thin row. On a group it also hides (folds) its children. */
   collapsed?: boolean
@@ -805,6 +807,8 @@ export interface AudioClip {
    *  dimmed, never played or rendered. Absent or `true` = active. "Deactivate,
    *  don't delete" is how an idea is parked while auditioning others. */
   active?: boolean
+  /** A note the owner wrote (Edit Info Text…), shown in the Info View when the pointer is over the clip. */
+  infoText?: string
   startBeat: number
   durationBeats: number
   r2Key?: string
@@ -958,6 +962,8 @@ export interface MidiClip {
   createdAt?: string
   /** Live's Clip Activator — see AudioClip.active. */
   active?: boolean
+  /** A note the owner wrote (Edit Info Text…), shown in the Info View when the pointer is over the clip. */
+  infoText?: string
   startBeat: number
   durationBeats: number
   notes: MidiNote[]

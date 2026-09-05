@@ -31,13 +31,15 @@ export type DisplaySettings = {
   follow: FollowMode
   /** Waveform heights: linear amplitude, or a 60 dB scale that shows the quiet parts. */
   waveformScale: 'linear' | 'db'
+  /** The status bar along the bottom: Info View on the left, selection on the right. */
+  infoView: boolean
 }
 
 export type FollowMode = 'off' | 'page' | 'scroll'
 
 export const DISPLAY_DEFAULT: DisplaySettings = {
   clipEditor: 'pane', uiScale: 100, arrangementMixer: { open: false, section: 'mixer' },
-  overview: true, follow: 'off', waveformScale: 'linear',
+  overview: true, follow: 'off', waveformScale: 'linear', infoView: true,
 }
 
 export const UI_SCALE_MIN = 50
@@ -67,6 +69,7 @@ function load() {
     overview: saved.overview !== false,
     follow: saved.follow === 'page' || saved.follow === 'scroll' ? saved.follow : 'off',
     waveformScale: saved.waveformScale === 'db' ? 'db' : 'linear',
+    infoView: saved.infoView !== false,
   }
 }
 

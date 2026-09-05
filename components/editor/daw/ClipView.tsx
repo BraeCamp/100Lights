@@ -638,6 +638,8 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
       } as MenuItem,
     ]),
     ...(isMulti ? [] : [{ label: 'Rename…', fn: () => { setNameDraft(clip.name); setRenaming(true) } }]),
+    // A note that the Info View shows whenever the pointer is over this clip.
+    ...(isMulti ? [] : [{ label: clip.infoText ? 'Edit Info Text…' : 'Add Info Text…', fn: () => window.dispatchEvent(new CustomEvent('100lights:edit-info', { detail: { kind: 'clip', id: clip.id } })) }]),
     { separator: true },
     // Everything else lives below the second divider.
     ...(isAudioClip(clip)

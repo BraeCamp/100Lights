@@ -122,6 +122,7 @@ const ReturnDeviceChain = dynamic(() => import('./daw/DeviceChain').then(m => ({
 const InstrumentPicker = dynamic(() => import('./daw/InstrumentPicker'), { ssr: false })
 const DetailArea = dynamic(() => import('./daw/DetailArea'), { ssr: false })
 const ArrangementMixer = dynamic(() => import('./daw/ArrangementMixer'), { ssr: false })
+const StatusBar = dynamic(() => import('./daw/StatusBar'), { ssr: false })
 const PadInput = dynamic(() => import('./daw/PadInput'), { ssr: false })
 // Liveblocks only loads for saved projects — keeps collab out of the main editor chunk
 const CollabLayer = dynamic(() => import('./daw/CollabLayer'), { ssr: false })
@@ -2667,6 +2668,7 @@ export default function AudioEditor(props: AudioEditorProps) {
       case 'detail.device': toggleDetail('device'); return true
       case 'detail.full': toggleDetail('full'); return true
       case 'detail.flip': window.dispatchEvent(new CustomEvent('100lights:detail-flip')); return true
+      case 'view.info': setDisplay({ infoView: !display.infoView }); return true
       case 'view.arrangementMixer': {
         if (view !== 'arrangement') setView('arrangement')
         const am = display.arrangementMixer
@@ -2819,6 +2821,9 @@ export default function AudioEditor(props: AudioEditorProps) {
     { id: 'audio.view.arrMixer', group: 'Audio', label: `${display.arrangementMixer.open ? 'Hide' : 'Show'} the mixer under the arrangement`,
       keywords: 'mixer strip arrangement faders sends returns crossfader in out section', shortcut: keysFor('view.arrangementMixer'), when: () => !isPodcast,
       run: () => { if (view !== 'arrangement') setView('arrangement'); setDisplay({ arrangementMixer: { ...display.arrangementMixer, open: !display.arrangementMixer.open } }) } },
+    { id: 'audio.view.info', group: 'Audio', label: `${display.infoView ? 'Hide' : 'Show'} the status bar (Info View)`,
+      keywords: 'info view status bar help text hover selection readout', shortcut: keysFor('view.info'),
+      run: () => setDisplay({ infoView: !display.infoView }) },
     { id: 'audio.view.follow', group: 'Audio', label: `Follow the playhead: ${display.follow === 'off' ? 'off → page' : display.follow === 'page' ? 'page → scroll' : 'scroll → off'}`,
       keywords: 'follow playhead auto scroll page tape view', shortcut: keysFor('view.follow'), when: () => !isPodcast,
       run: () => setDisplay({ follow: display.follow === 'off' ? 'page' : display.follow === 'page' ? 'scroll' : 'off' }) },
@@ -3998,6 +4003,7 @@ export default function AudioEditor(props: AudioEditorProps) {
             <DetailArea />
           </div>
         </div>
+        <StatusBar />
       </div>
 
       {/* Floating pad / keyboard overlay */}

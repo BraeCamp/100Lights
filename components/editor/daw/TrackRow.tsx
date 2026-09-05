@@ -1294,6 +1294,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             </div>
             {[
               { label: 'Rename', action: () => { setEditing(true); setDraft(track.name) } },
+              { label: track.infoText ? 'Edit Info Text…' : 'Add Info Text…', action: () => window.dispatchEvent(new CustomEvent('100lights:edit-info', { detail: { kind: 'track', id: track.id } })) },
               { label: isFolded ? 'Expand group' : 'Fold group', action: () => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { collapsed: !collapsed } }) },
               { label: track.mute ? 'Unmute' : 'Mute', action: () => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { mute: !track.mute } }) },
               { label: track.solo ? 'Unsolo' : 'Solo', action: () => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { solo: !track.solo } }) },
@@ -1554,6 +1555,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             {/* Actions */}
             {[
               { label: 'Rename',    action: () => { setEditing(true); setDraft(track.name) } },
+              { label: track.infoText ? 'Edit Info Text…' : 'Add Info Text…', action: () => window.dispatchEvent(new CustomEvent('100lights:edit-info', { detail: { kind: 'track', id: track.id } })) },
               { label: 'Duplicate', action: () => dispatch({ type: 'DUPLICATE_TRACK', trackId: track.id }) },
               { label: 'Delete',    action: () => dispatch({ type: 'REMOVE_TRACK',    trackId: track.id }), danger: true },
             ].map(({ label, action, danger }) => (
