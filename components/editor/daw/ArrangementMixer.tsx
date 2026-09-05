@@ -20,7 +20,7 @@ import { ChannelStrip, ReturnChannelStrip } from './Mixer'
 import Knob from './Knob'
 import { useResizable, ResizeHandle } from './useResizable'
 import { useDisplaySettings, setDisplay, MIXER_SECTIONS, type MixerSection } from '@/lib/display-settings'
-import { crossfadeGain, describeCrossfader } from '@/lib/crossfader'
+import { crossfadeGain, describeCrossfader, CROSSFADER_CURVES, CURVE_LABEL, CURVE_HELP, type CrossfaderCurve } from '@/lib/crossfader'
 import { describeLatency } from '@/lib/latency'
 import { keysFor } from '@/lib/keymap'
 
@@ -166,6 +166,16 @@ export default function ArrangementMixer() {
             format={describeCrossfader}
             onChange={v => dispatch({ type: 'SET_CROSSFADER', value: v })} />
           <span style={small}>{describeCrossfader(value)}</span>
+          {/* The shape of the fade (lib/crossfader.ts) */}
+          <select
+            data-help-id="crossfader-curve" aria-label="Crossfader curve"
+            value={project.crossfaderCurve ?? 'equal-power'}
+            title={CURVE_HELP[project.crossfaderCurve ?? 'equal-power']}
+            onChange={e => dispatch({ type: 'SET_CROSSFADER_CURVE', curve: e.target.value as CrossfaderCurve })}
+            style={{ fontSize: 9, marginTop: 2, background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 3, padding: '1px 2px' }}
+          >
+            {CROSSFADER_CURVES.map(c => <option key={c} value={c}>{CURVE_LABEL[c]}</option>)}
+          </select>
         </div>
         {project.tracks.map(t => {
           const side: CrossfaderSide = t.crossfader ?? 'none'

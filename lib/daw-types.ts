@@ -4,6 +4,7 @@ import type { FMPatch, FMAlgorithm, FMOperator } from './fm-synth'
 import type { WavetablePatch } from './wavetable-synth'
 import type { MidiPreset } from './midi-presets'   // type-only — no runtime cycle
 import type { FollowSettings } from './follow-actions'   // type-only, as above
+import type { CrossfaderCurve } from './crossfader'      // type-only, as above
 
 // Re-exported synth engine patch types, used as instrument params
 export type Fm4OpInstrumentParams     = FMPatch
@@ -1146,6 +1147,8 @@ export interface DawProject {
   returnTracks: ReturnTrack[]
   takeLanes: TakeLane[]
   crossfaderValue: number   // 0–1 (0=A, 0.5=center, 1=B)
+  /** The shape of the crossfade (lib/crossfader.ts). Absent = equal power. */
+  crossfaderCurve?: CrossfaderCurve
   waveformZoom: number      // 1–8 vertical zoom multiplier for arrangement waveforms
   swing: number             // 0–1 (0 = straight, 0.5 = full swing)
   cueMarkers: CueMarker[]

@@ -111,6 +111,8 @@ const EXPECTED = [
   ['clip as tempo leader', ['leader']],
   ['short samples land as one-shot', ['one-shot']],
   ['auto-warp long samples', ['auto-warp']],
+  ['crossfader curve hard cut', ['hard cut']],
+  ['crossfader curve slow fade', ['slow fade']],
   ['follow action next',    ['follow action: play the next']],
   ['follow action any other', ['any other clip']],
   ['launch mode gate',      ['gate']],

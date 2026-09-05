@@ -2875,6 +2875,18 @@ export default function AudioEditor(props: AudioEditorProps) {
     { id: 'audio.import.autoWarpLong', group: 'Audio', label: importSettings.autoWarpLong ? 'Stop auto-warping long samples on import' : 'Auto-warp long samples on import',
       keywords: 'import long samples auto-warp auto warp song stem straight follow tempo land',
       run: () => setImportSettings({ autoWarpLong: !importSettings.autoWarpLong }) },
+    // The shape of the crossfade (lib/crossfader.ts). Spelled out rather than
+    // mapped: the discoverability check reads these literally.
+    { id: 'audio.xfade.equalPower', group: 'Mixer', label: 'Crossfader curve: Equal power — two sources at the centre are as loud as one at an end',
+      keywords: 'crossfader curve equal power fade shape a b dj', run: () => dispatch({ type: 'SET_CROSSFADER_CURVE', curve: 'equal-power' }) },
+    { id: 'audio.xfade.linear', group: 'Mixer', label: 'Crossfader curve: Linear — the levels add, so the middle sounds louder',
+      keywords: 'crossfader curve linear constant gain fade shape a b', run: () => dispatch({ type: 'SET_CROSSFADER_CURVE', curve: 'linear' }) },
+    { id: 'audio.xfade.slowFade', group: 'Mixer', label: 'Crossfader curve: Slow fade — a long overlap between the sides',
+      keywords: 'crossfader curve slow fade long overlap shape a b', run: () => dispatch({ type: 'SET_CROSSFADER_CURVE', curve: 'slow-fade' }) },
+    { id: 'audio.xfade.fastCut', group: 'Mixer', label: 'Crossfader curve: Fast cut — the outgoing side drops away quickly',
+      keywords: 'crossfader curve fast cut sharp scratch shape a b', run: () => dispatch({ type: 'SET_CROSSFADER_CURVE', curve: 'fast-cut' }) },
+    { id: 'audio.xfade.hardCut', group: 'Mixer', label: 'Crossfader curve: Hard cut — a switch, not a fade',
+      keywords: 'crossfader curve hard cut switch shape a b', run: () => dispatch({ type: 'SET_CROSSFADER_CURVE', curve: 'hard-cut' }) },
     { id: 'audio.view.info', group: 'Audio', label: `${display.infoView ? 'Hide' : 'Show'} the status bar (Info View)`,
       keywords: 'info view status bar help text hover selection readout', shortcut: keysFor('view.info'),
       run: () => setDisplay({ infoView: !display.infoView }) },

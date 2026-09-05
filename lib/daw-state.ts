@@ -21,6 +21,7 @@ import { legacyToBar } from './effect-bar'
 import { resolveOverlaps } from './note-ops'
 import { clipDefaultsFor, clipDefaultsKey } from './clip-defaults'
 import { followLeader, releaseLeader, setLeader, touchesLeader } from './tempo-leader'
+import type { CrossfaderCurve } from './crossfader'
 
 // ── Action types ────────────────────────────────────────────────────────
 
@@ -126,6 +127,7 @@ export type DawAction =
   | { type: 'UPDATE_TAKE_LANE'; laneId: string; patch: Partial<TakeLane> }
   // Crossfader / waveform zoom
   | { type: 'SET_CROSSFADER'; value: number }
+  | { type: 'SET_CROSSFADER_CURVE'; curve: CrossfaderCurve }
   | { type: 'SET_WAVEFORM_ZOOM'; zoom: number }
   // Swing + key/scale
   | { type: 'SET_SWING'; swing: number }
@@ -994,6 +996,10 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
 
     case 'SET_CROSSFADER':
       return { ...project, crossfaderValue: Math.max(0, Math.min(1, action.value)) }
+
+    // The shape of the fade (lib/crossfader.ts).
+    case 'SET_CROSSFADER_CURVE':
+      return { ...project, crossfaderCurve: action.curve }
 
     case 'SET_WAVEFORM_ZOOM':
       return { ...project, waveformZoom: Math.max(1, Math.min(8, action.zoom)) }

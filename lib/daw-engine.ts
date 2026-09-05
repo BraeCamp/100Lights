@@ -33,9 +33,6 @@ import { validMarkers, markersKey, warpStraight, beatToSec } from './warp'
 import { renderWarped } from './warp-render'
 import { DEFAULT_BEATS, DEFAULT_TONES, DEFAULT_TEXTURE, type WarpModeName } from './warp-modes'
 import { onPress, onRelease, repeats, repeatBeats, velocityGain, legatoOffset } from './launch'
-// ⚠️ Math.random, deliberately: a follow action's shuffle happens while
-// somebody is playing, never inside a render, so it cannot make two renders of
-// the same song differ (npm run check:determinism).
 import { followOf, isIdle, followBeats, pickAction, followTarget, filledScenes } from './follow-actions'
 import { detectOnsets, monoOf } from './onsets'
 import { libraryGetByFolder, libraryGetById } from './sound-library'
@@ -1625,7 +1622,7 @@ export class DawEngine extends EventTarget {
       const groupNodes = group ? this.trackNodes.get(group.id) : undefined
       this._routeTrackOutput(t.id, groupNodes ? groupNodes.effectsInput : this.masterGain)
       const silenced = this._trackSilenced(t, group, anySoloed, project.tracks)
-      const xf = crossfadeGain(t.crossfader, project.crossfaderValue ?? 0.5)
+      const xf = crossfadeGain(t.crossfader, project.crossfaderValue ?? 0.5, project.crossfaderCurve)
       if (Math.abs(xf - 1) < 1e-6) this._xfGain.delete(t.id); else this._xfGain.set(t.id, xf)
       this.setTrackVolume(t.id, silenced ? 0 : t.volume)
       this.setTrackPan(t.id, t.pan)
@@ -1806,8 +1803,12 @@ export class DawEngine extends EventTarget {
       this._followFired.set(trackId, started)
       const filled = filledScenes(this._sessionGrid[trackId])
       const at = (this._sessionGrid[trackId] ?? []).findIndex(c => c?.id === clip.id)
-      const action = pickAction(settings!, Math.random())
-      const target = followTarget(action, at, filled, Math.random(), settings!.jumpTo)
+      // ⚠️ Seeded on this launch, not Math.random. Two renders of one song
+      // have to come out the same, and the start time already differs from
+      // turn to turn in a performance, which is where the variety comes from.
+      const roll = rngFor(`follow:${clip.id}:${started.toFixed(4)}`)
+      const action = pickAction(settings!, roll())
+      const target = followTarget(action, at, filled, roll(), settings!.jumpTo)
       if (target === null) continue
       if (target === 'stop') { this.stopSessionTrack(trackId); continue }
       const next = (this._sessionGrid[trackId] ?? [])[target]
