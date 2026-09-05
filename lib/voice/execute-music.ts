@@ -60,6 +60,7 @@ import { setSegBpm, slipByDrag, cropSample } from '../sample-editor'
 import { warpAsLoop, warpAtBpm, warpStraight } from '../warp'
 import { SHORT_SAMPLE_LABEL, type ShortSampleMode } from '../import-settings'
 import { LAUNCH_MODE_LABEL, LAUNCH_MODE_HELP } from '../launch'
+import { describeFollow, type FollowAction } from '../follow-actions'
 import { plainWordIn, needsAsking, senseFromAnswer, defaultSense, describeSense, askText } from './plain-words'
 import {
   getProposal, describeSpan, playbackSpan, rampParameter, rampEnds, stepAmount, clampAmount,
@@ -4788,7 +4789,40 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         patch.launchQuantization = lq
         said.push(`launching on ${lq === 'none' ? 'the press' : lq === 'beat' ? 'the beat' : lq === 'bar' ? 'the bar' : `${lq[0]} bars`}`)
       }
-      if (!said.length) return fail('Say what to change — the launch mode, legato, the velocity amount, or when it launches.')
+      // What it does when its turn is over (lib/follow-actions.ts).
+      const followWord = str(i.follow).toLowerCase()
+      if (followWord || str(i.followB) || i.followTime != null) {
+        const readAction = (w: string): FollowAction | null => {
+          const s = w.toLowerCase()
+          if (/stop|end|silence/.test(s)) return 'stop'
+          if (/again|repeat|itself/.test(s)) return 'again'
+          if (/next/.test(s)) return 'next'
+          if (/prev|before|back/.test(s)) return 'previous'
+          if (/first|top/.test(s)) return 'first'
+          if (/last/.test(s)) return 'last'
+          if (/other/.test(s)) return 'other'
+          if (/any|random/.test(s)) return 'any'
+          if (/jump/.test(s)) return 'jump'
+          if (/none|nothing/.test(s)) return 'none'
+          return null
+        }
+        const a = followWord ? readAction(followWord) : 'none'
+        if (!a) return fail('Say what it should do when it ends — stop, play again, next, any other, or nothing.')
+        const b = str(i.followB) ? readAction(str(i.followB)) : null
+        const pct = i.followChance != null ? spokenFraction(str(i.followChance)) : null
+        const time = i.followTime != null ? spanOf(i.followTime, 0, maps).beats ?? undefined : undefined
+        const follow = {
+          a, ...(b && b !== 'none' ? { b } : {}),
+          chanceA: pct != null ? Math.round(pct * 100) : 1,
+          chanceB: b && b !== 'none' ? (pct != null ? Math.round((1 - pct) * 100) : 1) : 0,
+          ...(time != null ? { linked: false, time } : { linked: true }),
+        }
+        patch.follow = follow
+        patch.followAction = undefined
+        patch.followActionTime = undefined
+        said.push(describeFollow(follow, slot.clip.durationBeats))
+      }
+      if (!said.length) return fail('Say what to change — the launch mode, legato, the velocity amount, when it launches, or what it does when it ends.')
       return {
         actions: [{ type: 'SET_SESSION_SLOT', trackId: slot.trackId, sceneIndex: slot.sceneIndex, clip: { ...slot.clip, ...patch } }],
         say: `${slot.clip.name ?? 'That slot'}: ${said.join(', ')}.`,

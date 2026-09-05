@@ -6,10 +6,11 @@ import { useRegisterCommands } from '@/lib/commands'
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Plus, Square, Circle, ChevronRight, X } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip } from '@/lib/daw-state'
-import type { DawTrack, DawClip, LaunchQuantization, FollowAction, CrossfaderSide, Scene } from '@/lib/daw-types'
+import type { DawTrack, DawClip, LaunchQuantization, CrossfaderSide, Scene } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip } from '@/lib/daw-types'
 import { sessionCaptureToClips } from '@/lib/daw-session'
 import { LAUNCH_MODES, LAUNCH_MODE_LABEL, LAUNCH_MODE_HELP, modeOf } from '@/lib/launch'
+import { FOLLOW_ACTIONS, FOLLOW_LABEL, DEFAULT_FOLLOW, followOf, isIdle, describeFollow, type FollowSettings, type FollowAction } from '@/lib/follow-actions'
 import { apHeader, apTitle, apControl, apSelect, apDivider, apReadout } from './apollo-chrome'
 import { libraryGetAll } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
@@ -208,12 +209,12 @@ interface ClipSlotProps {
   setSlotRecording: (r: SlotRecording) => void
   onDragStart: (e: React.DragEvent, trackId: string, sceneIndex: number) => void
   onDrop: (e: React.DragEvent, destTrackId: string, destSceneIndex: number) => void
-  onFollowAction: (trackId: string, action: FollowAction, fromSceneIndex: number) => void
+  // (follow actions moved to the engine — lib/follow-actions.ts)
   /** The slot last pressed or right-clicked — what the ⌘K launch commands act on. */
   onTouch: (trackId: string, sceneIndex: number) => void
 }
 
-function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, onDragStart, onDrop, onFollowAction, onTouch }: ClipSlotProps) {
+function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, onDragStart, onDrop, onTouch }: ClipSlotProps) {
   const { dispatch, engine, project } = useDaw()
   const [displayState, setDisplayState] = useState<SlotDisplayState>('idle')
   const [progress, setProgress]         = useState(0)
@@ -256,11 +257,11 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
       prevState.current = d.state
       setDisplayState(d.state)
       if (d.state !== 'playing') setProgress(0)
-      // Follow action fires when clip transitions from playing → idle
-      if (prev === 'playing' && d.state === 'idle') {
-        const fa = clip!.followAction
-        if (fa && fa !== 'none') onFollowAction(track.id, fa, sceneIndex)
-      }
+      // ⚠️ FOLLOW ACTIONS ARE THE ENGINE'S NOW (lib/follow-actions.ts). They
+      // used to fire here, on a clip going from playing to idle — which for a
+      // LOOPING clip never happens, so they silently did nothing on the normal
+      // case. They also stopped working the moment you left this view.
+      void prev
     }
 
     engine.addEventListener('session-state', onState)
@@ -268,7 +269,7 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
     setDisplayState(init)
     prevState.current = init
     return () => engine.removeEventListener('session-state', onState)
-  }, [engine, track.id, clip, sceneIndex, onFollowAction])
+  }, [engine, track.id, clip, sceneIndex])
 
   // ── Track whether any clip on this track is playing (empty-slot stop hint) ──
   useEffect(() => {
@@ -464,16 +465,6 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
   function renderCtxMenu() {
     if (!ctxMenu || !clip) return null
 
-    const followActions: { val: FollowAction; label: string }[] = [
-      { val: 'none',   label: 'None' },
-      { val: 'stop',   label: 'Stop' },
-      { val: 'again',  label: 'Play Again' },
-      { val: 'next',   label: 'Next' },
-      { val: 'prev',   label: 'Prev' },
-      { val: 'first',  label: 'First' },
-      { val: 'last',   label: 'Last' },
-      { val: 'random', label: 'Random' },
-    ]
 
     const quantOptions: { val: LaunchQuantization | undefined; label: string }[] = [
       { val: undefined, label: 'Use Global' },
@@ -484,9 +475,13 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
       { val: '4bar',    label: '4 Bars' },
     ]
 
-    const currentFA  = clip.followAction ?? 'none'
     const currentLQ  = clip.launchQuantization
-    const currentFAT = clip.followActionTime ?? 1
+    // The follow settings as they stand, and one way to change a piece of them
+    // (lib/follow-actions.ts). The old single `followAction` is read through
+    // followOf, so a project saved before this keeps its behaviour.
+    const follow: FollowSettings = followOf(clip) ?? { ...DEFAULT_FOLLOW }
+    const setFollow = (patch: Partial<FollowSettings>) =>
+      dispatch({ type: 'SET_SESSION_SLOT', trackId: track.id, sceneIndex, clip: { ...clip, follow: { ...follow, ...patch }, followAction: undefined, followActionTime: undefined } })
 
     return (
       <div
@@ -581,26 +576,67 @@ function ClipSlot({ track, sceneIndex, clip, slotRecording, setSlotRecording, on
         <CtxSep />
 
         {/* Follow action */}
-        <div style={{ padding: '4px 12px' }}>
+        {/* Follow actions (lib/follow-actions.ts): two, with a chance between them */}
+        <div style={{ padding: '4px 12px' }} data-help-id="follow-actions">
           <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>Follow Action</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-            {followActions.map(fa => (
-              <button
-                key={fa.val}
-                onClick={() => { dispatch({ type: 'SET_SESSION_SLOT', trackId: track.id, sceneIndex, clip: { ...clip, followAction: fa.val === 'none' ? undefined : fa.val } }); setCtxMenu(null) }}
-                style={{ textAlign: 'left', padding: '3px 6px', fontSize: 10, cursor: 'pointer', background: currentFA === fa.val ? 'rgba(255,255,255,0.1)' : 'transparent', border: 'none', color: 'var(--text-primary)', borderRadius: 2 }}
-              >{fa.label}</button>
-            ))}
-          </div>
-          {currentFA !== 'none' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 5 }}>
-              <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>Time (bars):</span>
-              <input
-                type="number" min={1} max={64} step={1} value={currentFAT}
-                onChange={e => dispatch({ type: 'SET_SESSION_SLOT', trackId: track.id, sceneIndex, clip: { ...clip, followActionTime: parseInt(e.target.value) || 1 } })}
+          {([['a', 'Then'], ['b', 'Or']] as const).map(([slot, label]) => (
+            <div key={slot} style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 3 }}>
+              <span style={{ fontSize: 9, color: 'var(--text-muted)', width: 22 }}>{label}</span>
+              <select
+                data-help-id={`follow-${slot}`}
+                aria-label={`Follow action ${slot.toUpperCase()}`}
+                value={(slot === 'a' ? follow.a : follow.b) ?? 'none'}
+                onChange={e => setFollow({ [slot]: e.target.value as FollowAction, ...(slot === 'b' && follow.chanceB == null ? { chanceB: 1 } : {}) })}
                 onClick={e => e.stopPropagation()}
-                style={{ width: 44, fontSize: 10, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', borderRadius: 3, padding: '1px 4px', outline: 'none' }}
+                style={{ flex: 1, fontSize: 10, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', borderRadius: 3, padding: '1px 4px' }}
+              >
+                {FOLLOW_ACTIONS.map(a => <option key={a} value={a}>{FOLLOW_LABEL[a]}</option>)}
+              </select>
+            </div>
+          ))}
+          {follow.b && follow.b !== 'none' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 3 }}>
+              <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>Chance</span>
+              <input
+                data-help-id="follow-chance" type="range" min={0} max={100} step={5}
+                aria-label="Chance of the first action"
+                value={Math.round(((follow.chanceA ?? 1) / Math.max(1e-6, (follow.chanceA ?? 1) + (follow.chanceB ?? 1))) * 100)}
+                onChange={e => { const pct = Number(e.target.value) / 100; setFollow({ chanceA: Math.round(pct * 100), chanceB: Math.round((1 - pct) * 100) }) }}
+                onClick={e => e.stopPropagation()}
+                style={{ flex: 1, accentColor: 'var(--accent)' }}
               />
+              <span style={{ fontSize: 9, color: 'var(--text-muted)', minWidth: 26, textAlign: 'right' }}>
+                {Math.round(((follow.chanceA ?? 1) / Math.max(1e-6, (follow.chanceA ?? 1) + (follow.chanceB ?? 1))) * 100)}%
+              </span>
+            </div>
+          )}
+          {follow.a === 'jump' || follow.b === 'jump' ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 3 }}>
+              <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>Jump to</span>
+              <select data-help-id="follow-jump" aria-label="Jump to scene" value={follow.jumpTo ?? 0}
+                onChange={e => setFollow({ jumpTo: Number(e.target.value) })} onClick={e => e.stopPropagation()}
+                style={{ flex: 1, fontSize: 10, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', borderRadius: 3, padding: '1px 4px' }}>
+                {(project.scenes ?? []).map((s, i) => <option key={s.id} value={i}>{s.name || `Scene ${i + 1}`}</option>)}
+              </select>
+            </div>
+          ) : null}
+          {!isIdle(follow) && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
+              <button data-help-id="follow-linked" onClick={() => setFollow({ linked: follow.linked === false })}
+                style={{ fontSize: 9, padding: '2px 5px', borderRadius: 3, cursor: 'pointer', border: '1px solid var(--border)', color: 'var(--text-primary)',
+                  background: follow.linked !== false ? 'rgba(255,255,255,0.1)' : 'transparent' }}
+                title="Linked — it fires after the clip's own length. Unlink to set your own.">
+                {follow.linked !== false ? 'Linked' : 'After'}
+              </button>
+              {follow.linked === false && (
+                <input data-help-id="follow-time" type="number" min={0.25} max={256} step={0.25}
+                  aria-label="Follow action time in beats"
+                  value={follow.time ?? clip.durationBeats}
+                  onChange={e => setFollow({ time: Number(e.target.value) || clip.durationBeats })}
+                  onClick={e => e.stopPropagation()}
+                  style={{ width: 52, fontSize: 10, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', borderRadius: 3, padding: '1px 4px' }} />
+              )}
+              <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{follow.linked === false ? 'beats' : `${+clip.durationBeats.toFixed(2)} beats`}</span>
             </div>
           )}
         </div>
@@ -1006,6 +1042,15 @@ export default function SessionView() {
       keywords: 'launch mode toggle press again stop session slot clip', when: () => !!touched, run: () => patchTouched({ launchMode: 'toggle' }) },
     { id: 'session.launch.repeat', group: 'Session', label: `Launch mode: Repeat — it starts again every step while held${touched ? ` (${touched.name})` : ''}`,
       keywords: 'launch mode repeat stutter retrigger held roll session slot clip', when: () => !!touched, run: () => patchTouched({ launchMode: 'repeat' }) },
+    // Follow actions for the slot last touched (lib/follow-actions.ts).
+    { id: 'session.follow.next', group: 'Session', label: `Follow action: play the next clip when it ends${touched ? ` (${touched.name})` : ''}`,
+      keywords: 'follow action next clip when it ends chain session slot', when: () => !!touched, run: () => patchTouched({ follow: { a: 'next', chanceA: 1, chanceB: 0, linked: true }, followAction: undefined }) },
+    { id: 'session.follow.other', group: 'Session', label: `Follow action: play any other clip when it ends${touched ? ` (${touched.name})` : ''}`,
+      keywords: 'follow action any other clip shuffle random when it ends session slot', when: () => !!touched, run: () => patchTouched({ follow: { a: 'other', chanceA: 1, chanceB: 0, linked: true }, followAction: undefined }) },
+    { id: 'session.follow.stop', group: 'Session', label: `Follow action: stop when it ends${touched ? ` (${touched.name})` : ''}`,
+      keywords: 'follow action stop when it ends once one shot session slot', when: () => !!touched, run: () => patchTouched({ follow: { a: 'stop', chanceA: 1, chanceB: 0, linked: true }, followAction: undefined }) },
+    { id: 'session.follow.off', group: 'Session', label: `Follow action: none — leave it playing${touched ? ` (${touched.name})` : ''}`,
+      keywords: 'follow action none off leave playing session slot', when: () => !!touched, run: () => patchTouched({ follow: undefined, followAction: undefined }) },
     { id: 'session.launch.legato', group: 'Session', label: touched?.legatoLaunch ? 'Legato launch off — the next clip starts from its own beginning' : 'Legato launch — a clip picks up where the playing one had got to',
       keywords: 'legato launch position inherit continue swap fill session slot clip', when: () => !!touched, run: () => patchTouched({ legatoLaunch: !touched?.legatoLaunch }) },
   ], [dispatch, stopAll, touched, lastSlot])
@@ -1049,38 +1094,8 @@ export default function SessionView() {
   }
 
   // Follow action executor — needs full project context via ref
-  const handleFollowAction = useCallback(async (trackId: string, action: FollowAction, fromSceneIndex: number) => {
-    const proj  = projectRef.current
-    const grid  = proj.sessionGrid[trackId] ?? []
-    const total = proj.scenes.length
-
-    if (action === 'stop') {
-      engine.stopSessionTrack(trackId)
-      return
-    }
-    if (action === 'again') {
-      const c = grid[fromSceneIndex]
-      if (c) await (isAudioClip(c) ? engine.queueSession(trackId, c) : engine.queueSessionMidi(trackId, c))
-      return
-    }
-
-    let targetIdx = -1
-    if (action === 'next')  targetIdx = fromSceneIndex + 1
-    if (action === 'prev')  targetIdx = fromSceneIndex - 1
-    if (action === 'first') targetIdx = 0
-    if (action === 'last') {
-      for (let i = grid.length - 1; i >= 0; i--) { if (grid[i]) { targetIdx = i; break } }
-    }
-    if (action === 'random') {
-      const filled = grid.map((c, i) => (c ? i : -1)).filter(i => i >= 0)
-      if (filled.length) targetIdx = filled[Math.floor(Math.random() * filled.length)]
-    }
-
-    if (targetIdx >= 0 && targetIdx < total) {
-      const c = grid[targetIdx]
-      if (c) await (isAudioClip(c) ? engine.queueSession(trackId, c) : engine.queueSessionMidi(trackId, c))
-    }
-  }, [engine])
+  // Follow actions live in the engine now (lib/follow-actions.ts): they have
+  // to keep working when nobody is looking at the session view.
 
   const quantOptions: { val: LaunchQuantization; label: string }[] = [
     { val: 'none',  label: 'None' },
@@ -1234,7 +1249,6 @@ export default function SessionView() {
                   setSlotRecording={setSlotRecording}
                   onDragStart={handleClipDragStart}
                   onDrop={handleClipDrop}
-                  onFollowAction={handleFollowAction}
                   onTouch={touchSlot}
                 />
               ))}

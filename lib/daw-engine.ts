@@ -33,6 +33,10 @@ import { validMarkers, markersKey, warpStraight, beatToSec } from './warp'
 import { renderWarped } from './warp-render'
 import { DEFAULT_BEATS, DEFAULT_TONES, DEFAULT_TEXTURE, type WarpModeName } from './warp-modes'
 import { onPress, onRelease, repeats, repeatBeats, velocityGain, legatoOffset } from './launch'
+// ⚠️ Math.random, deliberately: a follow action's shuffle happens while
+// somebody is playing, never inside a render, so it cannot make two renders of
+// the same song differ (npm run check:determinism).
+import { followOf, isIdle, followBeats, pickAction, followTarget, filledScenes } from './follow-actions'
 import { detectOnsets, monoOf } from './onsets'
 import { libraryGetByFolder, libraryGetById } from './sound-library'
 import { libraryFulfill, renderPresetAtPitch } from './default-samples'
@@ -287,6 +291,18 @@ export class DawEngine extends EventTarget {
    * Keyed by track, since a track plays one slot at a time.
    */
   private _sessionHeld = new Map<string, { clipId: string; kind: 'audio' | 'midi' }>()
+  /**
+   * The session grid, so a FOLLOW ACTION knows what else there is to play
+   * (lib/follow-actions.ts).
+   *
+   * ⚠️ The engine holds it because a follow action has to keep working when
+   * nobody is looking at the session view. It used to be fired by that view,
+   * off a clip going from playing to idle — which for a LOOPING clip never
+   * happens, so follow actions silently did nothing on the normal case.
+   */
+  private _sessionGrid: Record<string, (DawClip | null)[]> = {}
+  /** The launch each track has already acted on, so a follow fires once per turn. */
+  private _followFired = new Map<string, number>()
   private _sessionMidiQueue  = new Map<string, { clip: MidiClip; launchBeat: number; launchCtxTime: number }>()
   private _sessionStopQueue  = new Map<string, { stopBeat: number; stopCtxTime: number }>()
   private _sessionSlots      = new Map<string, SessionSlot>()
@@ -1452,6 +1468,8 @@ export class DawEngine extends EventTarget {
     this._delayCompensation = project.delayCompensation !== false
     this._beatsPerBar = project.timeSignatureNum ?? 4
     this._meterSegs   = meterSegments(project)
+    // The grid, for follow actions (lib/follow-actions.ts).
+    this._sessionGrid = project.sessionGrid ?? {}
     // A deactivated clip (Live's Clip Activator, `active: false`) is parked:
     // it is simply not in the lists the scheduler and the renderers read.
     this._clips       = project.arrangementClips.filter(isAudioClip).filter(c => c.active !== false)
@@ -1754,11 +1772,50 @@ export class DawEngine extends EventTarget {
         this._sessionStopQueue.delete(trackId)
       }
     }
+    this._checkFollowActions(now)
     // Held Repeat slots keep the ticker alive even between retriggers.
     const hasActive = this._sessionHeld.size > 0 || this._sessionQueue.size > 0 || this._sessionSlots.size > 0
                    || this._sessionMidiQueue.size > 0 || this._sessionMidiSlots.size > 0
                    || this._sessionStopQueue.size > 0
     if (!hasActive) this._stopSessionTicker()
+  }
+
+  /**
+   * A clip that has had its turn: stop, play again, move on, or hand over to
+   * another clip in the column (lib/follow-actions.ts).
+   *
+   * Wall-clock rather than transport beats on purpose — a session clip plays
+   * whether or not the arrangement is rolling, and a follow action that only
+   * fired while the transport ran would be dead in exactly the way anybody
+   * uses the session view.
+   */
+  private _checkFollowActions(now: number) {
+    const beatsPerSecond = (this.tempo || 120) / 60
+    const playing: Array<{ trackId: string; clip: DawClip; started: number }> = []
+    for (const [trackId, s] of this._sessionSlots) playing.push({ trackId, clip: s.clip, started: s.startContextTime })
+    for (const [trackId, s] of this._sessionMidiSlots) playing.push({ trackId, clip: s.clip, started: s.startCtxTime })
+
+    for (const { trackId, clip, started } of playing) {
+      const settings = followOf(clip)
+      if (isIdle(settings)) continue
+      if (this._followFired.get(trackId) === started) continue
+      if (this._sessionHeld.has(trackId)) continue   // still under a finger: Gate and Repeat decide
+      const due = followBeats(settings, clip.durationBeats) / beatsPerSecond
+      if (now - started < due) continue
+
+      this._followFired.set(trackId, started)
+      const filled = filledScenes(this._sessionGrid[trackId])
+      const at = (this._sessionGrid[trackId] ?? []).findIndex(c => c?.id === clip.id)
+      const action = pickAction(settings!, Math.random())
+      const target = followTarget(action, at, filled, Math.random(), settings!.jumpTo)
+      if (target === null) continue
+      if (target === 'stop') { this.stopSessionTrack(trackId); continue }
+      const next = (this._sessionGrid[trackId] ?? [])[target]
+      if (!next) continue
+      // ⚠️ Through the ordinary launch, so quantization, legato, velocity and
+      // the launch mode all behave exactly as they do from a press.
+      void (isAudioClip(next) ? this.queueSession(trackId, next) : this.queueSessionMidi(trackId, next as MidiClip))
+    }
   }
 
   /**

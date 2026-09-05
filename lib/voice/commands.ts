@@ -2465,7 +2465,8 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'set_launch',
     group: 'Arrangement',
     what: 'How a session slot answers a press: trigger, gate, toggle, repeat, legato',
-    say: ['put the session take slot in gate mode', 'make the session take slot legato', 'launch the session take slot on the bar'],
+    say: ['put the session take slot in gate mode', 'make the session take slot legato', 'launch the session take slot on the bar',
+      'when the session take clip ends play the next one'],
     match(w, ctx) {
       const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
       // ⚠️ "Slot" reads as "clip" by the time a rule sees it (lib/voice/interpret
@@ -2479,18 +2480,25 @@ const COMMANDS: VoiceCommand[] = [
       // the bass" is a note, not a launch quantization. "Make the strings
       // legato" is how they are played. So every branch below needs the
       // sentence to be about LAUNCHING as well as about the thing.
+      // What it does when its turn is over. "When it ends", "after it plays",
+      // "then" — the words people use for a follow action without knowing the
+      // name (lib/follow-actions.ts).
+      const aboutEnd = /\bwhen it ends\b|\bwhen (?:the|it)[\w\s]*\bends\b|\bafter it plays\b|\bfollow action\b|\bwhen it(?:'s| is) done\b|\bthen play\b/.test(raw)
+      const followM = aboutEnd ? /\b(stop|play again|again|next|previous|the first|the last|any other|another|any)\b/.exec(raw) : null
       const aboutLaunch = /\blaunch/.test(raw)
       const modeM = aboutLaunch || /\bmode\b/.test(raw) ? /\b(trigger|gate|toggle|repeat)\b/.exec(raw) : null
       const legato = /\blegato\b/.test(raw) && (aboutLaunch || /\bclips?\b/.test(raw))
       const velM = aboutLaunch || /\bvelocity\s+amount\b/.test(raw) ? /(\d{1,3})\s*(?:%|percent)/.exec(raw) : null
       const quantM = aboutLaunch ? /\bon (?:the )?(beat|bar)\b|\bevery (\d) bars?\b|\bno quantiz|\binstant/.exec(raw) : null
-      if (!modeM && !legato && !velM && !quantM) return null
+      if (!modeM && !legato && !velM && !quantM && !followM) return null
       // ⚠️ A session slot is NOT in ctx.clips — that list is the arrangement's,
       // and the grid is a different place entirely. So the name is not resolved
       // here at all: whatever is left once the command's own words are taken
       // out is handed to the planner, which owns the grid and looks it up there.
       const target = raw
         .replace(/\b(?:put|set|sets|make|makes|launch|launches|launching|the|a|an|its|it|this|that|slots?|clips?|in|into|on|off|to|at|mode|amount|percent|quantize|quantization|every|no|instant|trigger|gate|toggle|repeat|legato|velocity|beats?|bars?)\b/g, ' ')
+        // The follow-action words too — they say what to do, never which clip.
+        .replace(/\b(?:when|ends?|ended|after|then|done|follow|action|play|plays|played|again|next|previous|prev|first|last|any|other|another|one|stop|stops|nothing|none)\b/g, ' ')
         .replace(/\d+\s*%?/g, ' ')
         .replace(/\s+/g, ' ')
         .trim()
@@ -2501,6 +2509,7 @@ const COMMANDS: VoiceCommand[] = [
       if (legato) input.legato = !/\b(?:no|not|stop|off|un-?set)\s+legato\b|\blegato\s+off\b/.test(raw)
       if (velM) input.velocity = `${velM[1]}%`
       if (quantM) input.quantize = quantM[2] ? `${quantM[2]}bar` : quantM[1] ? quantM[1] : 'none'
+      if (followM) input.follow = /another|any other/.test(followM[1]) ? 'other' : followM[1].replace(/^the /, '').replace('play ', '')
       for (const word of w.all) w.markWord(word, 0)
       return { calls: [{ name: 'set_launch', input }], confidence: 0.94, needsName: true }
     },

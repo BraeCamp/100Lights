@@ -3,6 +3,7 @@
 import type { FMPatch, FMAlgorithm, FMOperator } from './fm-synth'
 import type { WavetablePatch } from './wavetable-synth'
 import type { MidiPreset } from './midi-presets'   // type-only — no runtime cycle
+import type { FollowSettings } from './follow-actions'   // type-only, as above
 
 // Re-exported synth engine patch types, used as instrument params
 export type Fm4OpInstrumentParams     = FMPatch
@@ -882,6 +883,8 @@ export interface AudioClip {
   legatoLaunch?: boolean
   velocityAmount?: number
   followAction?: FollowAction
+  /** Two follow actions with a chance each, and when they fire (lib/follow-actions.ts). */
+  follow?: FollowSettings
   followActionTime?: number  // beats after which follow action fires
 }
 
@@ -1058,6 +1061,8 @@ export interface MidiClip {
   legatoLaunch?: boolean
   velocityAmount?: number
   followAction?: FollowAction
+  /** Two follow actions with a chance each, and when they fire (lib/follow-actions.ts). */
+  follow?: FollowSettings
   followActionTime?: number
 }
 
