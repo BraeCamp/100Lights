@@ -245,7 +245,7 @@ partial. **No**: absent. **Ours**: Beacon has something Live does not.
 | Ableton | Since | Beacon | Notes |
 |---|---|---|---|
 | Device title bar: activator, breakout, sidechain header (12.2), scale-aware toggle, Learn, lock, hot-swap, save preset, options button, A/B (12.3), fold | 12.x | **Part** — on/off, remove; no hot-swap, save-preset, A/B, fold | |
-| Racks (Instrument/Audio Effect/Drum/MIDI), chains, chain selector, 16 macros, Map mode, Rand, Variations | old/11 | **No** — Apollo macros only | |
+| Racks (Instrument/Audio Effect/Drum/MIDI), chains, chain selector, 16 macros, Map mode, Rand, Variations | old/11 | **Part** — saved chain presets ("Save as rack…", `DeviceChain.tsx:1802`); no macros, parallel chains or nesting; Apollo has macros | corrected by the second pass |
 | Spectrum behind the curve (EQ Eight, Auto Filter, Saturator, Erosion) | 12.1–12.4 | **No** — EQ3/filter curve without spectrum | Apollo has the analyser code |
 | Compressor transfer curve + activity view + GR; Glue needle; Limiter GR; Gate history | old | **Part** — GR bar with dB | |
 | Spectrum, Tuner (strobe/histogram), Utility phase | old | **Part** — PadTuner exists; no Spectrum device | |
@@ -373,6 +373,91 @@ crossfader L.
 17. **Cue output**, track delay, crossfader curves, scene follow actions,
     launch modes, Groove Pool panel with extract-from-audio, tuning
     panel, key/MIDI-map mode, Link.
+
+## 4b. Second pass — what the first pass missed
+
+Brae asked for another sweep because each pass has found more. The
+second pass read the chapters the first pass leaned on least, the whole
+keyboard-shortcut appendix and a "hidden features" list, and diffed the
+manual's full table of contents against this file. New items live in
+`second-pass.md` (grouped, with Beacon status from the code) and
+`second-pass-toc-diff.md` (the chapter-by-chapter diff). The headline
+additions, none of which appear above:
+
+- **Launching**: Launch Mode Trigger/Gate/Toggle/Repeat, Legato,
+  Velocity Amount, follow actions with **A/B chances**, Linked/Unlinked
+  time, Jump/Any/Other, scene follow actions, Select on Launch, Capture
+  and Insert Scene, add/remove stop buttons, keyboard launching, track
+  status fields.
+- **Recording**: exclusive arm/solo, Monitor In/Auto/Off, record-time
+  quantization, step recording with arrow keys, session automation
+  recording (touch vs latch), metronome only-while-recording.
+- **Routing**: Resampling as an input, track-to-track Pre/Post FX/Post
+  Mixer, Sends Only, per-channel MIDI routing, cue out with cue volume,
+  individual outs from a drum rack.
+- **Files**: Undo History panel, Save as Default Set / default track /
+  default device presets, Live Clips (a clip with its device chain as a
+  file), merging one Set into another, File Manager for missing/unused
+  files.
+- **Export dialog**: Include Return and Main Effects, Render as Loop,
+  Convert to Mono, peak Normalize, Bit Depth + Dither (Triangular /
+  Rectangular / Pow-r), AIFF/FLAC, MP3, Create Video, real-time render
+  with auto-restart.
+- **Mixer**: Split Stereo pan mode, solo with/without returns, numbered
+  activators + F1–F8, multi-select faders, Assign Track Color to Clips,
+  per-track Performance Impact.
+- **Devices/racks**: hot-swap `Q`, Save Preset / Default Preset, Group to
+  Rack, key/velocity/chain-select zones with fades, Auto Select, Drum
+  Rack 128-pad view with Receive/Play/Choke and six return chains, Copy
+  Value to Siblings, device delay compensation toggle.
+- **Grooves**: Groove Pool parameters (Base/Quantize/Timing/Random/
+  Velocity/Global Amount), Extract Groove from any clip, Commit.
+- **Clip box**: Clip Activator (deactivate with `0`), Save Default Clip,
+  Bank/Program change, RAM/Hi-Q/Fade toggles.
+- **Automation**: Show Automated Parameters Only, selection handles
+  (stretch/skew), Simplify Envelope, Insert Shape, Lock Envelopes,
+  envelope copy/paste, Delete Automation per control.
+- **Video scoring in the DAW**: video window, video as tempo leader,
+  warp markers as hit points, Export Audio/Video.
+- **Resources**: CPU meter, disk overload, Performance Impact, audio
+  engine on/off, RAM mode, smart device deactivation.
+- **Keyboard vocabulary**: ~29 shortcut categories including momentary
+  latching (hold A/B/S/Z ~500 ms), value entry by typing, loop-brace
+  keys F9–F12, view show/hide keys, focus keys `Alt+0…8`.
+
+The chapter-by-chapter diff (`second-pass-toc-diff.md`) added these and
+corrected three of the rows above:
+
+- **Corrections**: Beacon *does* host native AU/VST3 through the Beacon
+  Bridge and web plug-ins by manifest; it *does* have saved rack presets
+  (a chain saved as Apollo units — still no macros, parallel chains or
+  nesting); Collect All is partial — presets embed, clip audio stays as
+  references, so a `.cfproj` is not self-contained.
+- **Quality, not settings**: takes are recorded lossy (Opus/WebM via
+  MediaRecorder) and WAV export is 16-bit without dither; Live records
+  WAV/AIFF/FLAC at a chosen bit depth.
+- **MIDI is input-only**: no MIDI out, no External Instrument, no
+  program/bank change, no MIDI clock or MTC, no control-surface scripts,
+  no relative encoders, no MPE over Web MIDI.
+- **Devices never named in the first pass**: Beat Repeat (Beacon has a
+  note-level voice "stutter"), Looper, Amp / Cabinet / Pedal, Drum Buss,
+  Resonators, Grain Delay and Filter Delay, Vinyl Distortion, Shifter;
+  MIDI effects Note Length, Pitch, Random, CC Control and Chord's Strum;
+  no round-robin sampling; physical modelling is one Karplus-Strong
+  guitar.
+- **Audio settings**: a hidden latency override exists in localStorage
+  and the input chooser recognises loopback drivers, but there is no
+  output-device choice, test tone or latency readout.
+- **Smaller "no" items with a manual home**: clip time signature,
+  tempo-leader clip, MIDI clip crop, in-clip time commands, slip edit,
+  return-track reorder, Chase MIDI Notes, per-clip send modulation, Rank
+  sort, `#`/Tab renaming.
+- **Accessibility**: the Knob has no role, aria attributes, tabIndex or
+  key handler, so it is unreachable by keyboard or screen reader; Live 12
+  made every control keyboard-navigable.
+- **Keep**: whole-project MIDI export, record-N-bars, the rolling 30 s
+  jam capture, the tone strip, the drum synths, Firefly/mobile as the
+  Move/Note analogue.
 
 ## 5. Things the crawler could not verify (check in-app or ask)
 
